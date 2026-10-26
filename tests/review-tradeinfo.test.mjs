@@ -105,3 +105,31 @@ test('without top fields nothing about the top level is shown', () => {
   assert.ok(!entryLines(entry).some(r => r.label === '顶层方向'));
   assert.equal(entrySummary(entry), '15m 判断 · 3m 入场');
 });
+
+test('head-on MA and pin fields: entry rows, direction wording, hidden when absent', () => {
+  const long = { entry_side: 1, entry_headon_tf: 240, entry_headon_period: 100, entry_headon_value: 80852.4, entry_pin_tf: 60 };
+  const rows = Object.fromEntries(entryLines(long).map(r => [r.label, r.text]));
+  assert.equal(rows['迎头均线'], '4 小时 SMA100 = 80,852.40（上方，向下压）');
+  assert.equal(rows['插针判断'], '1 小时');
+  const short = Object.fromEntries(entryLines({ ...long, entry_side: -1, entry_pin_tf: 15 }).map(r => [r.label, r.text]));
+  assert.equal(short['迎头均线'], '4 小时 SMA100 = 80,852.40（下方，向上托）');
+  assert.equal(short['插针判断'], '15 分钟');
+  const noSide = Object.fromEntries(entryLines({ entry_headon_tf: 60, entry_headon_period: 20, entry_headon_value: 5 }).map(r => [r.label, r.text]));
+  assert.equal(noSide['迎头均线'], '1 小时 SMA20 = 5.00');
+  const none = entryLines({ entry_side: 1, entry_atr: 5 }).map(r => r.label);
+  assert.ok(!none.includes('迎头均线') && !none.includes('插针判断'));
+});
+
+test('exit reasons 5 and 6 with head-on value and pin candle prices', () => {
+  assert.equal(exitReasonText(5, true), '触及迎头均线止盈');
+  assert.equal(exitReasonText(5, false), '触及迎头均线止盈');
+  assert.equal(exitReasonText(6, true), '插针冲出布林上轨后离场');
+  assert.equal(exitReasonText(6, false), '插针冲出布林下轨后离场');
+  assert.match(exitReasonText(6), /插针冲出布林外轨/);
+  assert.deepEqual(exitLines({ exit_reason: 5, exit_trigger_price: 80852.4, exit_headon_value: 80852.4 }, { type: 'long' }), [
+    { label: '原因', text: '触及迎头均线止盈' }, { label: '触发价位', text: '80,852.40' }, { label: '迎头均线', text: '80,852.40' }]);
+  assert.deepEqual(exitLines({ exit_reason: 6, exit_trigger_price: 82000, exit_pin_high: 82500, exit_pin_low: 81900 }, { type: 'short' }), [
+    { label: '原因', text: '插针冲出布林下轨后离场' }, { label: '触发价位', text: '82,000.00' },
+    { label: '插针最高价', text: '82,500.00' }, { label: '插针最低价', text: '81,900.00' }]);
+  assert.ok(!exitLines({ exit_reason: 1 }, { type: 'long' }).some(r => r.label === '迎头均线'));
+});

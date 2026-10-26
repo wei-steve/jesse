@@ -80,6 +80,15 @@ export function entryLines(entry) {
     const name = finite(entry.entry_ma_period) ? `SMA${entry.entry_ma_period}` : '均线';
     add('沿着的均线', finite(entry.entry_ma_value) ? `${name} = ${fixed(entry.entry_ma_value)}` : name);
   }
+  if (finite(entry.entry_headon_tf) || finite(entry.entry_headon_period) || finite(entry.entry_headon_value)) {
+    const name = [finite(entry.entry_headon_tf) ? tfLong(entry.entry_headon_tf) : '',
+      finite(entry.entry_headon_period) ? `SMA${entry.entry_headon_period}` : '均线'].filter(Boolean).join(' ');
+    const value = finite(entry.entry_headon_value) ? ` = ${fixed(entry.entry_headon_value)}` : '';
+    const side = finite(entry.entry_side) && entry.entry_side !== 0
+      ? (entry.entry_side > 0 ? '（上方，向下压）' : '（下方，向上托）') : '';
+    add('迎头均线', `${name}${value}${side}`);
+  }
+  if (finite(entry.entry_pin_tf)) add('插针判断', tfLong(entry.entry_pin_tf));
   if (finite(entry.entry_limit_price) || finite(entry.entry_offset_atr)) {
     const parts = [];
     if (finite(entry.entry_limit_price)) parts.push(`挂单价 ${fixed(entry.entry_limit_price)}`);
@@ -107,6 +116,8 @@ export function exitReasonText(code, isLong) {
     case 2: return isLong === undefined ? '收盘穿过均线离场' : isLong ? '收盘跌破均线离场' : '收盘升破均线离场';
     case 3: return '紧急止损';
     case 4: return '成交时已在外轨外，立即止盈';
+    case 5: return '触及迎头均线止盈';
+    case 6: return isLong === undefined ? '插针冲出布林外轨后离场' : isLong ? '插针冲出布林上轨后离场' : '插针冲出布林下轨后离场';
     default: return '其他（例如回测结束强平）';
   }
 }
@@ -118,6 +129,9 @@ export function exitLines(exit, trade) {
   const add = (label, value) => { if (finite(value)) rows.push({ label, text: fixed(value) }); };
   add('触发价位', exit.exit_trigger_price);
   add('当时均线', exit.exit_ma_value);
+  add('迎头均线', exit.exit_headon_value);
+  add('插针最高价', exit.exit_pin_high);
+  add('插针最低价', exit.exit_pin_low);
   add('布林上轨', exit.exit_bb_upper);
   add('布林下轨', exit.exit_bb_lower);
   add('收盘价', exit.exit_close);
