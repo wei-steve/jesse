@@ -1,11 +1,12 @@
 // Reuse the dependency already shipped with this Jesse dashboard. No CDN or
 // third-party requests are needed; the adapter is isolated for future rebuilds.
 import { t as createChart } from '../_nuxt/eDEyLi0S.js';
-import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261026b';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261026b';
-import { calculateIndicator } from './indicators.mjs?v=20261026b';
-import { mountControls } from './controls.mjs?v=20261026b';
-import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261026b';
+import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261026d';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261026d';
+import { calculateIndicator } from './indicators.mjs?v=20261026d';
+import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines } from './tradeinfo.mjs?v=20261026d';
+import { mountControls } from './controls.mjs?v=20261026d';
+import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261026d';
 
 const $ = id => document.getElementById(id);
 const money = value => Number.isFinite(value) ? value.toFixed(2) : '—';
@@ -19,6 +20,7 @@ let sessionId = null;
 const SCALE_WIDTH = 72;
 const UP = '#16a082', DOWN = '#dd6070';
 let session, chartData, route, trades = [], orderedTrades = [], selected, panels = [], views = [], anchor, syncing = false;
+let tradeIndex = null;
 let entryTime, contextPoints = [], token, loadVersion = 0, rangeLink, preferences, wantedRange;
 
 try { preferences = restorePreferences(localStorage.getItem(STORAGE_KEY)); }
@@ -300,6 +302,38 @@ function updateMarkers() {
   }
 }
 
+// Entry / exit conditions of the selected trade. All text goes in through textContent.
+function conditionBlock(title, rows) {
+  const block = document.createElement('div'); block.className = 'condition-block';
+  const heading = document.createElement('h4'); heading.textContent = title; block.append(heading);
+  if (!rows.length) {
+    const none = document.createElement('p'); none.textContent = '这一笔没有匹配到记录'; block.append(none);
+    return block;
+  }
+  const list = document.createElement('dl');
+  for (const row of rows) {
+    const term = document.createElement('dt'); term.textContent = row.label;
+    const value = document.createElement('dd'); value.textContent = row.text;
+    list.append(term, value);
+  }
+  block.append(list);
+  return block;
+}
+
+function renderConditions(trade, entry, exit) {
+  const body = $('conditions-body');
+  $('conditions').hidden = false;
+  $('conditions-body').hidden = !preferences.showConditions;
+  $('conditions-toggle').textContent = preferences.showConditions ? '收起' : '展开';
+  $('conditions-toggle').setAttribute('aria-expanded', String(preferences.showConditions));
+  if (!tradeIndex || tradeIndex.empty) {
+    const none = document.createElement('p'); none.textContent = '此回测没有记录入场/离场条件';
+    body.replaceChildren(none);
+    return;
+  }
+  body.replaceChildren(conditionBlock('入场条件', entryLines(entry)), conditionBlock('离场条件', exitLines(exit, trade)));
+}
+
 function selectTrade(trade, focus = true) {
   selected = trade; entryTime = trade.opened_at / 1000;
   const context = contextAt(contextPoints, entryTime, 1);
@@ -307,10 +341,15 @@ function selectTrade(trade, focus = true) {
   const firstOrder = [...entryOrders].sort((a, b) => a.created_at - b.created_at)[0];
   const createdContext = firstOrder ? contextAt(contextPoints, firstOrder.created_at / 1000, 1) : null;
   $('trade-info').textContent = `${trade.type === 'long' ? '做多' : '做空'} · ${stamp(entryTime)} UTC · 净盈亏 ${money(trade.PNL)} USDT`;
-  $('context').textContent = `入场前最近记录的周期：${context > 0 ? `${context}m` : context === 0 ? '无趋势' : '未记录'}`;
+  const { entry, exit } = tradeConditions(tradeIndex, trade);
+  const summary = entrySummary(entry);
+  // With trade_info the top line shows the trend / entry timeframes; V1 keeps the MA5 context.
+  $('context').textContent = summary ? `入场前最近记录的周期：${summary}`
+    : `入场前最近记录的周期：${context > 0 ? `${context}m` : context === 0 ? '无趋势' : '未记录'}`;
+  renderConditions(trade, entry, exit);
   $('order-info').textContent = `入场 ${money(trade.entry_price)} → 离场 ${money(trade.exit_price)} · ${entryOrders.map(o => o.type).join(' / ') || '缺少成交记录'}${firstOrder ? ` · 入场单创建 ${stamp(firstOrder.created_at / 1000)} UTC，创建前最近记录周期 ${createdContext > 0 ? `${createdContext}m` : createdContext === 0 ? '无趋势' : '未知'}` : ''}`;
   for (const panel of panels) {
-    panel.card.classList.toggle('chosen', panel.interval === context);
+    panel.card.classList.toggle('chosen', summary && Number.isFinite(entry.entry_exec_tf) ? panel.interval === entry.entry_exec_tf : panel.interval === context);
     if (panel.empty) continue;
     const closed = lastClosedCandle(panel.candles, panel.interval, entryTime);
     const avg = closed ? panel.averages.find(v => v.time === closed.time)?.value : null;
@@ -368,6 +407,7 @@ async function loadRoute() {
   if (!chartData?.candles?.length) throw new Error('该回测没有保存 K 线图数据。请使用已有 1m 图表的回测。');
   trades = (session.trades ?? []).filter(t => t.exchange === route.exchange && t.symbol === route.symbol && Number.isFinite(t.opened_at));
   contextPoints = contextPointsFor(chartData.strategy_charts);
+  tradeIndex = tradeInfoIndex(chartData.strategy_charts);
   mountControls(session.state.form, route, preferences, rebuild);
   buildPanels();
   for (const control of document.querySelectorAll('.toolbar button, .toolbar input, #span')) control.disabled = false;
@@ -456,9 +496,10 @@ function clearSession() {
   loadVersion++;
   for (const view of views) { view.observer.disconnect(); view.chart.remove(); }
   panels = []; views = []; session = chartData = route = selected = anchor = wantedRange = entryTime = undefined;
-  trades = []; orderedTrades = []; contextPoints = [];
+  trades = []; orderedTrades = []; contextPoints = []; tradeIndex = null;
   for (const id of ['charts', 'trades', 'route']) $(id).replaceChildren();
   for (const id of ['trade-info', 'context', 'order-info', 'trade-count']) $(id).textContent = '';
+  $('conditions-body').replaceChildren(); $('conditions').hidden = true;
   $('workspace').hidden = true; document.querySelector('main').hidden = true;
 }
 
@@ -523,6 +564,12 @@ async function start() {
   $('exit').onclick = () => { if (selected?.closed_at) focusAt(selected.closed_at / 1000); };
   $('span').onchange = () => focusAt(anchor);
   $('all-markers').onchange = updateMarkers;
+  // Entry/exit conditions can be folded away; remembered with the display settings.
+  $('conditions-toggle').onclick = () => {
+    preferences.showConditions = !preferences.showConditions;
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences)); } catch { /* still works for this page */ }
+    if (selected) { const { entry, exit } = tradeConditions(tradeIndex, selected); renderConditions(selected, entry, exit); }
+  };
   // Indicator values above the charts: a CSS class only, so no chart is rebuilt.
   const applyValues = () => {
     $('charts').classList.toggle('hide-values', !preferences.showValues);

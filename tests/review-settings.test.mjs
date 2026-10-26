@@ -47,7 +47,7 @@ test('display preferences recover from invalid JSON and validate saved settings'
   const restored = restorePreferences(JSON.stringify({ version: 1, intervals: [1, 60, 240],
     indicators: [{ type: 'RSI', period: 14, color: '#aabbcc' }], authToken: 'ignored' }));
   assert.deepEqual(restored.intervals, [1, 60, 240]);
-  assert.deepEqual(Object.keys(restored).sort(), ['indicators', 'intervals', 'showPanes', 'showValues', 'version']);
+  assert.deepEqual(Object.keys(restored).sort(), ['indicators', 'intervals', 'showConditions', 'showPanes', 'showValues', 'version']);
   assert.deepEqual(restorePreferences(JSON.stringify({ version: 1, intervals: [60, 15, 5, 3, 1], indicators: [] })).intervals, [1, 3, 5, 15, 60]);
   assert.equal(restorePreferences(JSON.stringify({ version: 1, intervals: [], indicators: [] })).intervals, null);
   assert.equal(restorePreferences(JSON.stringify({ version: 1, intervals: [1, 7], indicators: [] })).intervals, null);
