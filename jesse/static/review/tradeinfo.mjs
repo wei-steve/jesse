@@ -81,12 +81,16 @@ export function entryLines(entry) {
     add('沿着的均线', finite(entry.entry_ma_value) ? `${name} = ${fixed(entry.entry_ma_value)}` : name);
   }
   if (finite(entry.entry_headon_tf) || finite(entry.entry_headon_period) || finite(entry.entry_headon_value)) {
+    if (finite(entry.entry_headon_tf) && !finite(entry.entry_headon_period) && !finite(entry.entry_headon_value)) {
+      add('迎头均线', `${tfLong(entry.entry_headon_tf)}：入场时没有迎头均线`);
+    } else {
     const name = [finite(entry.entry_headon_tf) ? tfLong(entry.entry_headon_tf) : '',
       finite(entry.entry_headon_period) ? `SMA${entry.entry_headon_period}` : '均线'].filter(Boolean).join(' ');
     const value = finite(entry.entry_headon_value) ? ` = ${fixed(entry.entry_headon_value)}` : '';
     const side = finite(entry.entry_side) && entry.entry_side !== 0
       ? (entry.entry_side > 0 ? '（上方，向下压）' : '（下方，向上托）') : '';
     add('迎头均线', `${name}${value}${side}`);
+    }
   }
   if (finite(entry.entry_pin_tf)) add('插针判断', tfLong(entry.entry_pin_tf));
   if (finite(entry.entry_limit_price) || finite(entry.entry_offset_atr)) {
