@@ -46,12 +46,16 @@ export function tradeConditions(index, trade) {
 
 const fixed = value => value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const utc = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 19) + ' UTC';
-const tfText = minutes => minutes === 1440 ? '1D' : minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
+export const tfText = minutes => minutes === 1440 ? '1D' : minutes >= 60 && minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
+// Long form for panel text: 60 -> "1 小时", 240 -> "4 小时", 15 -> "15 分钟".
+const tfLong = minutes => minutes >= 60 && minutes % 60 === 0 ? `${minutes / 60} 小时` : `${minutes} 分钟`;
 
-// Short text for the top line, e.g. "15m 判断 · 3m 入场 · SMA20". Empty string when unknown.
+// Short text for the top line, e.g. "15m 判断 · 3m 入场 · SMA20" or, for top-down strategies,
+// "4h 定方向 · 1h 判断 · 15m 入场 · SMA20". Empty string when unknown.
 export function entrySummary(entry) {
   if (!entry) return '';
   const parts = [];
+  if (finite(entry.entry_top_tf)) parts.push(`${tfText(entry.entry_top_tf)} 定方向`);
   if (finite(entry.entry_trend_tf)) parts.push(`${tfText(entry.entry_trend_tf)} 判断`);
   if (finite(entry.entry_exec_tf)) parts.push(`${tfText(entry.entry_exec_tf)} 入场`);
   if (finite(entry.entry_ma_period)) parts.push(`SMA${entry.entry_ma_period}`);
@@ -64,8 +68,14 @@ export function entryLines(entry) {
   const rows = [];
   const add = (label, text) => { if (text) rows.push({ label, text }); };
   if (finite(entry.entry_side)) add('方向', entry.entry_side > 0 ? '做多' : entry.entry_side < 0 ? '做空' : '');
-  if (finite(entry.entry_trend_tf)) add('趋势周期', `${entry.entry_trend_tf} 分钟判断趋势`);
-  if (finite(entry.entry_exec_tf)) add('入场周期', `${entry.entry_exec_tf} 分钟找入场`);
+  if (finite(entry.entry_top_tf) || finite(entry.entry_top_dir)) {
+    const dir = finite(entry.entry_top_dir) ? (entry.entry_top_dir > 0 ? '多' : entry.entry_top_dir < 0 ? '空' : '中性') : '';
+    const stack = finite(entry.entry_top_stack) ? `均线排列 ${fixed(entry.entry_top_stack)}` : '';
+    const head = finite(entry.entry_top_tf) ? `${tfLong(entry.entry_top_tf)}定方向` : '顶层定方向';
+    add('顶层方向', dir ? `${head}：${dir}${stack ? `（${stack}）` : ''}` : `${head}${stack ? `（${stack}）` : ''}`);
+  }
+  if (finite(entry.entry_trend_tf)) add('趋势周期', `${tfLong(entry.entry_trend_tf)}判断趋势`);
+  if (finite(entry.entry_exec_tf)) add('入场周期', `${tfLong(entry.entry_exec_tf)}找入场`);
   if (finite(entry.entry_ma_period) || finite(entry.entry_ma_value)) {
     const name = finite(entry.entry_ma_period) ? `SMA${entry.entry_ma_period}` : '均线';
     add('沿着的均线', finite(entry.entry_ma_value) ? `${name} = ${fixed(entry.entry_ma_value)}` : name);
