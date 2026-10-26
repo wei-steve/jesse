@@ -19,8 +19,30 @@
       <label>共同时间窗口 <select id="span" aria-label="共同时间窗口"><option value="21600">6 小时</option><option value="43200" selected>12 小时</option><option value="86400">24 小时</option></select></label>
       <button id="previous">← 上一笔</button><button id="next">下一笔 →</button>
       <button id="entry">定位入场</button><button id="exit">定位离场</button>
+      <button id="open-settings" aria-controls="display-settings" aria-expanded="false">周期与指标</button>
       <label class="toggle"><input id="all-markers" type="checkbox">显示全部成交</label>
     </section>
+    <details id="display-settings" class="display-settings">
+      <summary>周期与指标设置 <span>仅影响复盘显示，应用到所有已选周期</span></summary>
+      <section aria-label="周期选择">
+        <div class="settings-heading"><h2>显示周期 <small>同时最多 4 个</small></h2><button id="strategy-periods">使用策略配置周期</button></div>
+        <div id="timeframe-list" class="timeframe-list"></div>
+        <p id="timeframe-note"></p>
+      </section>
+      <section aria-label="指标设置">
+        <div class="settings-heading"><h2>添加主图 / 附图指标</h2><span>SMA / EMA / 布林带叠加主图，其余显示为独立附图</span></div>
+        <form id="indicator-form" class="indicator-form">
+          <label>指标 <select id="indicator-type" aria-label="指标类型"></select></label>
+          <div id="indicator-params" class="indicator-params"></div>
+          <label>颜色 <input id="indicator-color" aria-label="指标颜色" type="color" value="#dd9a23"></label>
+          <button id="save-indicator" type="submit">添加指标</button>
+          <button id="cancel-indicator" type="button" hidden>取消编辑</button>
+        </form>
+        <div id="indicator-list" class="indicator-list" aria-label="已添加指标"></div>
+        <p>参数为当前 K 线周期的根数，例如 EMA20 在 1h 图上表示 20 根小时 K 线。设置保存在当前浏览器。</p>
+      </section>
+      <p id="settings-message" role="status"></p>
+    </details>
     <main>
       <aside>
         <div class="aside-head"><h2>交易记录 <span id="trade-count"></span></h2>
@@ -33,7 +55,7 @@
           <div id="trade-info"></div><strong id="context"></strong>
           <p id="order-info"></p>
         </section>
-        <div class="notice">四图时间联动 · 时间统一为 UTC · 蓝色竖线定位事件所在 K 线。图上包含事件后的历史走势；判断信号请看每张图的“当时已收盘”数值。高周期由保存的 1m 数据合成。</div>
+        <div class="notice">所选周期与附图时间联动 · 时间统一为 UTC · 蓝色竖线定位事件所在 K 线。图上包含事件后的历史走势；判断信号请看“入场时已收盘”数值。高周期由保存的 1m 数据合成。</div>
         <div id="charts" class="chart-grid"></div>
         <p class="footnote">SMA5 使用各周期收盘价。缺失分钟或不完整的高周期 K 线不绘制；开头不足 5 根时不计算 SMA。图表上下文在 1m 收盘后记录，不等同于原始挂单产生时的完整信号。成交时间按 Jesse 回测记录，无法还原分钟内的先后顺序。</p>
       </section>
