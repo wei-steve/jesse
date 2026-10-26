@@ -47,7 +47,7 @@ test('display preferences recover from invalid JSON and validate saved settings'
   const restored = restorePreferences(JSON.stringify({ version: 1, intervals: [1, 60, 240],
     indicators: [{ type: 'RSI', period: 14, color: '#aabbcc' }], authToken: 'ignored' }));
   assert.deepEqual(restored.intervals, [1, 60, 240]);
-  assert.deepEqual(Object.keys(restored).sort(), ['indicators', 'intervals', 'showPanes', 'version']);
+  assert.deepEqual(Object.keys(restored).sort(), ['indicators', 'intervals', 'showPanes', 'showValues', 'version']);
   assert.deepEqual(restorePreferences(JSON.stringify({ version: 1, intervals: [60, 15, 5, 3, 1], indicators: [] })).intervals, [1, 3, 5, 15, 60]);
   assert.equal(restorePreferences(JSON.stringify({ version: 1, intervals: [], indicators: [] })).intervals, null);
   assert.equal(restorePreferences(JSON.stringify({ version: 1, intervals: [1, 7], indicators: [] })).intervals, null);
@@ -60,4 +60,19 @@ test('the sub-chart switch defaults to on and only an explicit false turns it of
   assert.equal(restorePreferences(JSON.stringify({ version: 1, indicators: [] })).showPanes, true);
   assert.equal(restorePreferences(JSON.stringify({ version: 1, showPanes: false, indicators: [] })).showPanes, false);
   assert.equal(restorePreferences(JSON.stringify({ version: 1, showPanes: 'no', indicators: [] })).showPanes, true);
+});
+
+test('showValues defaults to off and only an explicit true turns it on', () => {
+  assert.equal(restorePreferences(null).showValues, false);
+  assert.equal(restorePreferences('garbage').showValues, false);
+  // Settings saved before this switch existed have no showValues field.
+  const old = JSON.stringify({ version: 1, intervals: [1, 15], showPanes: false, indicators: [{ type: 'SMA', period: 5, color: '#dd9a23' }] });
+  const restored = restorePreferences(old);
+  assert.equal(restored.showValues, false);
+  assert.equal(restored.showPanes, false);
+  assert.deepEqual(restored.intervals, [1, 15]);
+  assert.equal(restorePreferences(JSON.stringify({ version: 1, showValues: true })).showValues, true);
+  assert.equal(restorePreferences(JSON.stringify({ version: 1, showValues: 'yes' })).showValues, false);
+  const round = restorePreferences(JSON.stringify({ ...restorePreferences(null), showValues: true }));
+  assert.equal(round.showValues, true);
 });

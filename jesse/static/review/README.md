@@ -32,6 +32,26 @@
 - 采用实际 EXECUTED 订单画标记，不用交易均价伪造单次成交；缺少订单记录时不生成标记。
 - minute OHLC 及回测成交时间不能证明分钟内的撮合先后、排队或滑点。
 
+## 指标数值开关与悬停提示
+
+- 工具栏“显示指标数值”（在“显示副图”左边），**默认关**。关时隐藏每张图上方的“入场时最后已收盘”摘要和图例，只留卡片标题和指标标签（附图自己的标题行不受影响）；开时恢复原样。状态随显示设置保存（`showValues`，旧数据缺省为关）。切换只改 `#charts` 的 CSS class `hide-values`，不重建图表，不改交易和时间窗口。
+- 关时，鼠标悬停在某张图的主图上，图内右上或左上（避开鼠标所在半边）显示小浮动提示：所指 K 线的 UTC 时间，加上主图各指标的数值（MA 每条线带颜色方块和名称，BOLL 显示上/中/下轨）；移开消失。附图不显示提示。提示内容由 `tooltip.mjs`（纯函数）整理，页面只用 `textContent` / `createElement` 生成。
+
+## 更新后让浏览器用新版本（缓存）
+
+Jesse 的静态服务没有 `Cache-Control`，浏览器会按启发式缓存 `.mjs` 和 CSS，旧脚本可能一直用到被强制刷新。解决办法是给所有文件加版本号查询参数，版本号一变，浏览器就把它当新地址：
+
+- `index.html` 里的内联加载器用 `const REVIEW_VERSION = '…'` 动态 `import(`./app.mjs?v=${REVIEW_VERSION}`)`，样式表是 `review.css?v=…`。`index.html` 本身是页面请求，普通刷新会重新校验。
+- 每个 `.mjs` 里的相对 import 都写成 `'./xxx.mjs?v=…'`（同一个版本号；`../_nuxt/…` 图表库文件名自带哈希，不需要）。
+
+**以后改了 `jesse/static/review/` 里任何文件（`.mjs`、`.css`、`index.html`），提交前必须换版本号：**
+
+1. 选一个新版本号，建议日期加字母，如 `20261027a`（当天再改就 `b`）。
+2. 把 `index.html` 里的 `REVIEW_VERSION`、`review.css?v=` 和所有 `.mjs` 文件里 `?v=` 后面的旧版本号全部替换成新的（可用 `grep -rn "?v=" jesse/static/review/` 找，或全局替换旧版本号字符串）。
+3. 新增模块时，import 也要写成带同一个 `?v=` 的形式。
+4. 运行 `node --test tests/review-*.test.mjs`。`tests/review-version.test.mjs` 会检查 `index.html` 和所有 import 的版本号一致，漏改会报错（它不能检查你“有没有换新版本号”，所以第 1 步要自己记得）。
+5. 用户普通刷新（Cmd+R）即可拿到新版本。
+
 ## 测试与安装
 
 从 Jesse 仓库根目录执行（不需要新依赖）：
