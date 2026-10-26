@@ -1,12 +1,11 @@
 // Reuse the dependency already shipped with this Jesse dashboard. No CDN or
 // third-party requests are needed; the adapter is isolated for future rebuilds.
 import { t as createChart } from '../_nuxt/eDEyLi0S.js';
-import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261026a';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261026a';
-import { calculateIndicator } from './indicators.mjs?v=20261026a';
-import { tooltipData } from './tooltip.mjs?v=20261026a';
-import { mountControls } from './controls.mjs?v=20261026a';
-import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261026a';
+import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261026b';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261026b';
+import { calculateIndicator } from './indicators.mjs?v=20261026b';
+import { mountControls } from './controls.mjs?v=20261026b';
+import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261026b';
 
 const $ = id => document.getElementById(id);
 const money = value => Number.isFinite(value) ? value.toFixed(2) : '—';
@@ -79,14 +78,7 @@ function makeView(panel, chart, host, kind, series, lookup) {
   const view = { panel, chart, host, kind, series, lookup, line: host.querySelector('.event-line') };
   for (const event of ['pointerdown', 'wheel']) host.addEventListener(event,
     () => rangeLink?.activate(view), { capture: true, passive: true });
-  if (kind === 'main') {
-    view.tip = document.createElement('div'); view.tip.className = 'value-tip'; view.tip.hidden = true;
-    host.append(view.tip);
-    host.addEventListener('mouseenter', () => { view.hover = true; });
-    host.addEventListener('mouseleave', () => { view.hover = false; view.tip.hidden = true; });
-  }
   chart.subscribeCrosshairMove(event => {
-    if (view.tip) updateTip(view, event);
     syncCrosshair(view, typeof event.time === 'number' ? event.time : null);
   });
   view.observer = new ResizeObserver(() => {
@@ -100,34 +92,6 @@ function makeView(panel, chart, host, kind, series, lookup) {
   });
   view.observer.observe(host);
   return view;
-}
-
-// While the values above the charts are hidden, hovering a chart shows the
-// hovered bar's time and indicator values inside that chart. Text nodes only.
-function updateTip(view, event) {
-  const tip = view.tip;
-  const data = !preferences.showValues && view.hover && event.point && typeof event.time === 'number'
-    ? tooltipData(view.panel.overlays, event.time) : null;
-  if (!data) { tip.hidden = true; return; }
-  const rows = [];
-  const head = document.createElement('div'); head.className = 'value-tip-time';
-  head.textContent = `${stamp(data.time)} UTC`; rows.push(head);
-  for (const group of data.groups) {
-    const row = document.createElement('div');
-    row.append(document.createTextNode(group.title));
-    for (const item of group.items) {
-      const part = document.createElement('span'); part.className = 'legend-item';
-      part.append(swatch(item.color), document.createTextNode(`${item.label ? `${item.label} ` : ''}${number(item.value)}`));
-      row.append(document.createTextNode(' '), part);
-    }
-    rows.push(row);
-  }
-  tip.replaceChildren(...rows);
-  // Keep the tip away from the pointer: left half of the chart -> tip on the right.
-  const onLeft = event.point.x < view.host.clientWidth / 2;
-  tip.style.left = onLeft ? 'auto' : '6px';
-  tip.style.right = onLeft ? `${SCALE_WIDTH + 6}px` : 'auto';
-  tip.hidden = false;
 }
 
 function addPane(panel, result) {
@@ -562,7 +526,6 @@ async function start() {
   // Indicator values above the charts: a CSS class only, so no chart is rebuilt.
   const applyValues = () => {
     $('charts').classList.toggle('hide-values', !preferences.showValues);
-    for (const view of views) if (view.tip) view.tip.hidden = true;
   };
   $('show-values').checked = preferences.showValues; applyValues();
   $('show-values').onchange = () => {
