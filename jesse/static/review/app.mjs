@@ -5,13 +5,15 @@ import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, c
 import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs';
 import { calculateIndicator } from './indicators.mjs';
 import { mountControls } from './controls.mjs';
+import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs';
 
 const $ = id => document.getElementById(id);
 const money = value => Number.isFinite(value) ? value.toFixed(2) : '—';
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 19);
 const number = value => !Number.isFinite(value) ? '—'
   : Math.abs(value) >= 100 ? value.toFixed(2) : Math.abs(value) >= 1 ? value.toFixed(3) : value.toFixed(4);
-const sessionId = new URLSearchParams(location.search).get('session');
+// The session shown now; changes when the user picks another backtest.
+let sessionId = null;
 // Every chart (candles and sub-panes) uses the same price-scale width, so their
 // time axes line up vertically inside a card.
 const SCALE_WIDTH = 72;
@@ -277,7 +279,8 @@ function paintTrades() {
     pnl.textContent = `${trade.PNL >= 0 ? '+' : ''}${money(trade.PNL)} USDT`;
     row.append(title, pnl);
     const details = document.createElement('small');
-    details.textContent = `${stamp(trade.opened_at / 1000)} UTC · ${Math.round(trade.holding_period / 60)} 分钟`;
+    const held = formatHolding(trade.holding_period);
+    details.textContent = `${stamp(trade.opened_at / 1000)} UTC${held ? ` · 持仓 ${held}` : ''}`;
     button.append(row, details); button.onclick = () => selectTrade(trade);
     button.setAttribute('aria-label', `交易 ${index + 1} ${title.textContent} ${pnl.textContent}`);
     $('trades').append(button);
@@ -355,8 +358,10 @@ async function loadRoute() {
   status('正在读取保存的 K 线…');
   route = session.state.form.routes[Number($('route').value)];
   if (route.timeframe !== '1m') throw new Error('此扩展页需要 1m 交易路由及其已保存图表。不会用高周期数据虚构 1m K 线。');
+  const loadingSession = sessionId;
   const result = await post(`/backtest/sessions/${sessionId}/chart-data`, route);
-  if (version !== loadVersion) return;
+  // Ignore an answer for a route or backtest the user has already moved away from.
+  if (version !== loadVersion || loadingSession !== sessionId) return;
   chartData = result.chart_data;
   if (!chartData?.candles?.length) throw new Error('该回测没有保存 K 线图数据。请使用已有 1m 图表的回测。');
   trades = (session.trades ?? []).filter(t => t.exchange === route.exchange && t.symbol === route.symbol && Number.isFinite(t.opened_at));
@@ -374,20 +379,138 @@ async function loadRoute() {
   }
 }
 
+// ---- Backtest picker -------------------------------------------------------
+let listRows = [], listOffset = 0, listMore = false, listSearch = '', listVersion = 0, searchTimer;
+
+function paintList() {
+  const list = $('picker-list');
+  list.replaceChildren();
+  for (const session of listRows) {
+    const row = sessionRow(session);
+    const item = document.createElement('li');
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'session-item'; button.dataset.sessionId = row.id;
+    button.disabled = !row.selectable;
+    if (!row.selectable) button.title = '只有已完成的回测可以查看';
+    if (row.id === sessionId) button.setAttribute('aria-current', 'true');
+    const head = document.createElement('strong'); head.textContent = row.title;
+    const meta = document.createElement('small');
+    // Absent fields are skipped; every part is plain text.
+    for (const [text, sign] of [[row.range], [row.status], [row.trades], [row.profit && `净收益 ${row.profit}`, row.profitSign]]) {
+      if (!text) continue;
+      const part = document.createElement('span'); part.textContent = text;
+      if (sign) part.className = sign;
+      meta.append(part);
+    }
+    button.append(head, meta);
+    button.onclick = () => choose(row.id);
+    item.append(button); list.append(item);
+  }
+  $('picker-more').hidden = !listMore; $('picker-more').disabled = false;
+  $('picker-message').textContent = listRows.length
+    ? `已加载 ${listRows.length} 个回测${listMore ? '，还有更多' : ''}`
+    : (listSearch.trim() ? '没有标题匹配的回测' : '还没有回测');
+}
+
+async function loadList(reset) {
+  const version = ++listVersion;
+  if (reset) { listRows = []; listOffset = 0; listMore = false; paintList(); }
+  $('picker-message').classList.remove('error');
+  $('picker-message').textContent = '正在读取回测列表…';
+  $('picker-more').disabled = true;
+  try {
+    const result = await post('/backtest/sessions', listRequest(listSearch, listOffset));
+    if (version !== listVersion) return;
+    const page = result.sessions ?? [];
+    listRows = mergePages(listRows, page); listOffset += page.length; listMore = hasMore(page);
+    paintList();
+  } catch (error) {
+    if (version !== listVersion) return;
+    paintList();
+    $('picker-message').classList.add('error');
+    $('picker-message').textContent = error.message;
+  }
+}
+
+function setPicker(open) {
+  $('picker-panel').hidden = !open;
+  $('picker-toggle').setAttribute('aria-expanded', String(open));
+}
+
+function choose(id) {
+  setPicker(false);
+  if (id === sessionId) return;
+  // A history entry per backtest, so the browser back button returns to the previous one.
+  history.pushState(null, '', searchForSession(location.search, id));
+  openSession(id);
+}
+
+// ---- Opening a backtest ----------------------------------------------------
+let openVersion = 0;
+
+// Forgets everything tied to the previous backtest. Display preferences
+// (timeframes, indicators, sub-chart switch) and the toolbar choices stay.
+function clearSession() {
+  loadVersion++;
+  for (const view of views) { view.observer.disconnect(); view.chart.remove(); }
+  panels = []; views = []; session = chartData = route = selected = anchor = wantedRange = entryTime = undefined;
+  trades = []; orderedTrades = []; contextPoints = [];
+  for (const id of ['charts', 'trades', 'route']) $(id).replaceChildren();
+  for (const id of ['trade-info', 'context', 'order-info', 'trade-count']) $(id).textContent = '';
+  $('workspace').hidden = true; document.querySelector('main').hidden = true;
+}
+
+async function openSession(id) {
+  const version = ++openVersion;
+  sessionId = id;
+  clearSession();
+  for (const element of document.querySelectorAll('#picker-list [aria-current]')) element.removeAttribute('aria-current');
+  if (!id) {
+    // No (valid) session in the address: the list is the starting point.
+    $('status').hidden = true;
+    $('session-title').textContent = '请选择要复盘的回测';
+    $('dashboard').href = '/';
+    setPicker(true);
+    return;
+  }
+  status('正在读取回测…');
+  $('session-title').textContent = '正在读取 Jesse 回测…';
+  $('dashboard').href = `/#/backtest/${id}`;
+  paintList();
+  try {
+    const result = await post(`/backtest/sessions/${id}`);
+    if (version !== openVersion) return;
+    session = result.session;
+    if (!session?.state?.form?.routes?.length) throw new Error('此回测没有保存交易路由。');
+    $('session-title').textContent = `${session.state.form.start_date} — ${session.state.form.finish_date} · ${session.title || session.id}`;
+    session.state.form.routes.forEach((item, index) => {
+      const option = document.createElement('option'); option.value = index;
+      option.textContent = `${item.symbol} · ${item.timeframe}`; $('route').append(option);
+    });
+    await loadRoute();
+  } catch (error) {
+    if (version === openVersion) { status(error.message, true); setPicker(true); }
+  }
+}
+
 async function start() {
-  if (!/^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i.test(sessionId ?? '')) throw new Error('链接缺少有效的回测 session 参数。');
-  $('dashboard').href = `/#/backtest/${sessionId}`;
   // Same-origin Jesse auth only. Never place credentials in URLs or logs.
   try { token = JSON.parse(localStorage.getItem('main') ?? '{}').authToken; } catch { token = null; }
   if (!token) throw new Error('请先在同一地址的 Jesse 页面登录，再刷新此页。localhost 与 127.0.0.1 的登录状态不同。');
-  const result = await post(`/backtest/sessions/${sessionId}`);
-  session = result.session;
-  if (!session?.state?.form?.routes?.length) throw new Error('此回测没有保存交易路由。');
-  $('session-title').textContent = `${session.state.form.start_date} — ${session.state.form.finish_date} · ${session.title || session.id}`;
-  session.state.form.routes.forEach((item, index) => {
-    const option = document.createElement('option'); option.value = index;
-    option.textContent = `${item.symbol} · ${item.timeframe}`; $('route').append(option);
-  });
+  $('picker').hidden = false;
+  $('picker-toggle').onclick = () => {
+    setPicker($('picker-panel').hidden);
+  };
+  $('picker-search').oninput = () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { listSearch = $('picker-search').value; loadList(true); }, 300);
+  };
+  $('picker-search').onkeydown = event => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault(); clearTimeout(searchTimer);
+    listSearch = $('picker-search').value; loadList(true);
+  };
+  $('picker-more').onclick = () => loadList(false);
   $('route').onchange = () => { loadRoute().catch(error => status(error.message, true)); };
   $('sort').onchange = () => { paintTrades(); if (orderedTrades.length) selectTrade(orderedTrades[0]); };
   for (const [id, step] of [['previous', -1], ['next', 1]]) $(id).onclick = () => {
@@ -405,6 +528,14 @@ async function start() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences)); } catch { /* still works for this page */ }
     rebuild();
   };
-  await loadRoute();
+  // Back/forward between backtests re-reads the address.
+  addEventListener('popstate', () => { openSession(sessionFromSearch(location.search)); });
+  loadList(true);
+  const wanted = new URLSearchParams(location.search).get('session');
+  if (wanted !== null && !sessionFromSearch(location.search)) {
+    clearSession(); sessionId = null; setPicker(true);
+    throw new Error('链接中的回测 session 参数无效，请从列表中选择。');
+  }
+  await openSession(sessionFromSearch(location.search));
 }
 start().catch(error => status(error.message, true));
