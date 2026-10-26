@@ -12,6 +12,15 @@
     <div><span class="brand">J</span><div><h1>多周期复盘</h1><p id="session-title">正在读取 Jesse 回测…</p></div></div>
     <a id="dashboard" href="/">返回 Jesse 回测 ↗</a>
   </header>
+  <section id="picker" class="picker" aria-label="选择回测" hidden>
+    <button id="picker-toggle" type="button" aria-expanded="false" aria-controls="picker-panel">选择回测</button>
+    <div id="picker-panel" hidden>
+      <input id="picker-search" type="search" placeholder="按标题搜索（回车立即搜索）" aria-label="按标题搜索回测" autocomplete="off">
+      <p id="picker-message" role="status"></p>
+      <ul id="picker-list" aria-label="回测列表"></ul>
+      <button id="picker-more" type="button" hidden>加载更多</button>
+    </div>
+  </section>
   <div id="status" role="status">正在加载…</div>
   <div id="workspace" hidden>
     <section class="toolbar" aria-label="查看设置">
