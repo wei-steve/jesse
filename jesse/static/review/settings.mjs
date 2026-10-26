@@ -1,6 +1,20 @@
 export const STORAGE_KEY = 'jesse.review.display.v1';
 export const TIMEFRAMES = [1, 3, 5, 15, 30, 45, 60, 120, 180, 240, 360, 480, 720, 1440];
+export const MA_LINE_COUNT = 12;
+export const MA_DEFAULT_PERIODS = [5, 7, 10, 14, 20, 30, 50, 60, 100, 120, 150, 200];
+export const MA_DEFAULT_ENABLED = [5, 7, 10, 20, 30];
+// Twelve clearly different colours that stay readable on a white background.
+export const MA_DEFAULT_COLORS = ['#e6194b', '#f58231', '#c9a000', '#3cb44b', '#0f9d9a', '#4363d8',
+  '#7b2cbf', '#e91e8c', '#8c5a2b', '#6b7a00', '#00a6d6', '#555555'];
+export const MA_MODES = ['SMA', 'EMA'];
+const HEX_COLOR = /^#[a-f\d]{6}$/i;
+export function defaultMaLines() {
+  return MA_DEFAULT_PERIODS.map((period, i) => ({ enabled: MA_DEFAULT_ENABLED.includes(period),
+    period, color: MA_DEFAULT_COLORS[i] }));
+}
+
 export const INDICATORS = {
+  MAGROUP: { label: 'MA 均线组（12 条）', pane: 'main', defaults: {}, color: '#dd9a23' },
   SMA: { label: 'SMA 简单均线', pane: 'main', defaults: { period: 5 }, color: '#dd9a23' },
   EMA: { label: 'EMA 指数均线', pane: 'main', defaults: { period: 20 }, color: '#8b5dc8' },
   BOLL: { label: 'BOLL 布林带', pane: 'main', defaults: { period: 20, deviation: 2 }, color: '#5488c9' },
@@ -32,11 +46,27 @@ export function chooseIntervals(configured) {
   return [...new Set(configured)].sort((a, b) => a - b);
 }
 
+function validateMaGroup(input) {
+  const mode = input.mode ?? 'SMA';
+  if (!MA_MODES.includes(mode)) throw new Error('均线算法必须是 SMA 或 EMA');
+  const source = input.lines ?? defaultMaLines();
+  if (!Array.isArray(source) || source.length !== MA_LINE_COUNT) throw new Error(`均线组必须正好有 ${MA_LINE_COUNT} 条线`);
+  const lines = source.map(line => {
+    if (typeof line?.enabled !== 'boolean') throw new Error('均线组每条线的勾选状态无效');
+    if (!Number.isInteger(line.period) || line.period < 1 || line.period > 5000) throw new Error('周期必须为 1–5000 的整数');
+    if (typeof line.color !== 'string' || !HEX_COLOR.test(line.color)) throw new Error('颜色必须是有效的十六进制颜色');
+    return { enabled: line.enabled, period: line.period, color: line.color };
+  });
+  if (!lines.some(line => line.enabled)) throw new Error('均线组至少需要勾选 1 条线');
+  return { type: 'MAGROUP', mode, lines };
+}
+
 export function validateIndicator(input) {
   const definition = Object.hasOwn(INDICATORS, input?.type ?? '') ? INDICATORS[input.type] : null;
   if (!definition) throw new Error('不支持的指标类型');
+  if (input.type === 'MAGROUP') return validateMaGroup(input);
   const color = input.color ?? definition.color;
-  if (typeof color !== 'string' || !/^#[a-f\d]{6}$/i.test(color)) throw new Error('颜色必须是有效的十六进制颜色');
+  if (typeof color !== 'string' || !HEX_COLOR.test(color)) throw new Error('颜色必须是有效的十六进制颜色');
   const output = { type: input.type };
   for (const [key, fallback] of Object.entries(definition.defaults)) {
     const value = input[key] ?? fallback;
@@ -50,7 +80,7 @@ export function validateIndicator(input) {
 }
 
 export function restorePreferences(serialized) {
-  const defaults = () => ({ version: 1, intervals: null, showPanes: true, indicators: [validateIndicator({ type: 'SMA' })] });
+  const defaults = () => ({ version: 1, intervals: null, showPanes: true, indicators: [validateIndicator({ type: 'MAGROUP' })] });
   try {
     const value = JSON.parse(serialized);
     if (value?.version !== 1) return defaults();

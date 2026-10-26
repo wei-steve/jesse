@@ -42,7 +42,7 @@ test('validates parameter ranges and prevents unsupported indicator/placement co
 
 test('display preferences recover from invalid JSON and validate saved settings', () => {
   const defaults = restorePreferences('bad json');
-  assert.deepEqual(defaults.indicators.map(i => i.type), ['SMA']);
+  assert.deepEqual(defaults.indicators.map(i => i.type), ['MAGROUP']);
   assert.equal(defaults.intervals, null);
   const restored = restorePreferences(JSON.stringify({ version: 1, intervals: [1, 60, 240],
     indicators: [{ type: 'RSI', period: 14, color: '#aabbcc' }], authToken: 'ignored' }));
@@ -51,7 +51,7 @@ test('display preferences recover from invalid JSON and validate saved settings'
   assert.deepEqual(restorePreferences(JSON.stringify({ version: 1, intervals: [60, 15, 5, 3, 1], indicators: [] })).intervals, [1, 3, 5, 15, 60]);
   assert.equal(restorePreferences(JSON.stringify({ version: 1, intervals: [], indicators: [] })).intervals, null);
   assert.equal(restorePreferences(JSON.stringify({ version: 1, intervals: [1, 7], indicators: [] })).intervals, null);
-  assert.equal(restorePreferences(JSON.stringify({ version: 1, indicators: [{ type: 'EMA', period: -5 }] })).indicators[0].type, 'SMA');
+  assert.equal(restorePreferences(JSON.stringify({ version: 1, indicators: [{ type: 'EMA', period: -5 }] })).indicators[0].type, 'MAGROUP');
   assert.deepEqual(restorePreferences(JSON.stringify({ version: 1, indicators: [] })).indicators, []);
 });
 

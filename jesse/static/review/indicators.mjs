@@ -15,6 +15,8 @@ function segmentValues(bars, config) {
   const close = bars.map(c => c.close);
   const mean = xs => xs.reduce((a, b) => a + b, 0) / xs.length;
   switch (config.type) {
+    case 'MAGROUP': return config.lines.filter(l => l.enabled)
+      .map(l => config.mode === 'EMA' ? ema(close, l.period) : rolling(close, l.period, mean));
     case 'SMA': return [rolling(close, config.period, mean)];
     case 'EMA': return [ema(close, config.period)];
     case 'BOLL': {
@@ -57,15 +59,18 @@ function segmentValues(bars, config) {
 
 export function indicatorTitle(input) {
   const config = validateIndicator(input);
+  if (config.type === 'MAGROUP') return `${config.mode === 'EMA' ? 'EMA' : 'MA'}(${config.lines.filter(l => l.enabled).map(l => l.period).join(',')})`;
   return config.type === 'VOLUME' ? '成交量' : `${config.type}(${Object.keys(INDICATORS[config.type].defaults).map(k => config[k]).join(',')})`;
 }
 
 export function calculateIndicator(candles, input, interval) {
   const config = validateIndicator(input);
-  const names = config.type === 'BOLL' ? ['上轨', '中轨', '下轨'] : config.type === 'MACD' ? ['DIF', 'DEA', '柱 DIF−DEA'] : [indicatorTitle(config)];
+  const enabled = config.type === 'MAGROUP' ? config.lines.filter(l => l.enabled) : [];
+  const names = config.type === 'MAGROUP' ? enabled.map(l => `${config.mode}${l.period}`) : config.type === 'BOLL' ? ['上轨', '中轨', '下轨'] : config.type === 'MACD' ? ['DIF', 'DEA', '柱 DIF−DEA'] : [indicatorTitle(config)];
   const series = names.map((name, i) => ({ name,
     kind: config.type === 'VOLUME' || (config.type === 'MACD' && i === 2) ? 'histogram' : 'line',
-    color: config.color, data: [] }));
+    color: config.type === 'MAGROUP' ? enabled[i].color : config.color,
+    dashed: config.type === 'BOLL' && i === 1, data: [] }));
   let segment = [];
   function flush() {
     if (!segment.length) return;
@@ -81,6 +86,6 @@ export function calculateIndicator(candles, input, interval) {
     segment.push(candle);
   }
   flush();
-  return { title: indicatorTitle(config), pane: INDICATORS[config.type].pane,
+  return { title: indicatorTitle(config), group: config.type === 'MAGROUP' ? { mode: config.mode, periods: enabled.map(l => l.period) } : undefined, pane: INDICATORS[config.type].pane,
     thresholds: config.type === 'RSI' ? [30, 70] : config.type === 'MACD' ? [0] : [], series };
 }

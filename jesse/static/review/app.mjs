@@ -60,11 +60,16 @@ function addOverlay(chart, result) {
   const lines = result.series.map(withLookup);
   lines.forEach((line, i) => {
     const series = chart.addLineSeries({ color: line.color, lineWidth: 1.5,
-      lineStyle: result.series.length === 3 && i === 1 ? 2 : 0,
+      lineStyle: line.dashed ? 2 : 0,
       lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
     series.setData(line.data);
   });
-  return { title: result.title, lines };
+  return { title: result.title, lines, group: result.group };
+}
+
+// Colours are validated as #rrggbb in settings.mjs before they reach a style.
+function swatch(color) {
+  const dot = document.createElement('i'); dot.className = 'ma-dot'; dot.style.background = color; return dot;
 }
 
 function makeView(panel, chart, host, kind, series, lookup) {
@@ -156,8 +161,18 @@ function makePanel(interval, source) {
     }
   }
   const tags = card.querySelector('h3');
+  // One tag per indicator; a MA group lists each line's period next to its colour swatch.
   for (const overlay of panel.overlays) {
-    const tag = document.createElement('span'); tag.textContent = overlay.title; tags.append(tag);
+    const tag = document.createElement('span'); tag.className = 'ma-tag';
+    if (overlay.group) {
+      tag.append(document.createTextNode(overlay.group.mode === 'EMA' ? 'EMA(' : 'MA('));
+      overlay.lines.forEach((line, i) => {
+        if (i) tag.append(document.createTextNode(','));
+        tag.append(swatch(line.color), document.createTextNode(String(overlay.group.periods[i])));
+      });
+      tag.append(document.createTextNode(')'));
+    } else tag.textContent = overlay.title;
+    tags.append(tag);
   }
   card.querySelector('.chart-meta').textContent = `${candles.length.toLocaleString()} 根完整 K 线 · 略过 ${omittedBuckets} 个不完整区间`;
   return panel;
@@ -175,8 +190,19 @@ function renderLegend(panel, time, hovered) {
   const prefix = time === null || time === undefined ? '入场时无已收盘 K 线'
     : hovered ? `${stamp(time)} UTC` : '入场时已收盘';
   const legend = panel.card.querySelector('.legend');
-  legend.textContent = panel.overlays.length && time !== null && time !== undefined
-    ? `${prefix} · ${panel.overlays.map(o => valuesText(o, time)).join(' · ')}` : '';
+  legend.replaceChildren();
+  if (panel.overlays.length && time !== null && time !== undefined) {
+    legend.append(document.createTextNode(`${prefix} · `));
+    panel.overlays.forEach((overlay, k) => {
+      if (k) legend.append(document.createTextNode(' · '));
+      legend.append(document.createTextNode(`${overlay.title} `));
+      overlay.lines.forEach((line, i) => {
+        const item = document.createElement('span'); item.className = 'legend-item';
+        item.append(swatch(line.color), document.createTextNode(`${overlay.lines.length > 1 ? `${line.name} ` : ''}${number(line.values.get(time))}`));
+        legend.append(i ? document.createTextNode(' ') : document.createTextNode(''), item);
+      });
+    });
+  }
   for (const pane of panel.panes) {
     pane.head.textContent = !pane.hasValues
       ? `${pane.title} · 数据不足：此周期的完整 K 线少于指标所需的根数`
