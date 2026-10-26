@@ -1,12 +1,12 @@
 // Reuse the dependency already shipped with this Jesse dashboard. No CDN or
 // third-party requests are needed; the adapter is isolated for future rebuilds.
 import { t as createChart } from '../_nuxt/eDEyLi0S.js';
-import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261026e';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261026e';
-import { calculateIndicator } from './indicators.mjs?v=20261026e';
-import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines } from './tradeinfo.mjs?v=20261026e';
-import { mountControls } from './controls.mjs?v=20261026e';
-import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261026e';
+import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261026f';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261026f';
+import { calculateIndicator } from './indicators.mjs?v=20261026f';
+import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261026f';
+import { mountControls } from './controls.mjs?v=20261026f';
+import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261026f';
 
 const $ = id => document.getElementById(id);
 const money = value => Number.isFinite(value) ? value.toFixed(2) : '—';
@@ -345,9 +345,9 @@ function selectTrade(trade, focus = true) {
   const summary = entrySummary(entry);
   // With trade_info the top line shows the trend / entry timeframes; V1 keeps the MA5 context.
   $('context').textContent = summary ? `入场前最近记录的周期：${summary}`
-    : `入场前最近记录的周期：${context > 0 ? `${context}m` : context === 0 ? '无趋势' : '未记录'}`;
+    : `入场前最近记录的周期：${context > 0 ? tfText(context) : context === 0 ? '无趋势' : '未记录'}`;
   renderConditions(trade, entry, exit);
-  $('order-info').textContent = `入场 ${money(trade.entry_price)} → 离场 ${money(trade.exit_price)} · ${entryOrders.map(o => o.type).join(' / ') || '缺少成交记录'}${firstOrder ? ` · 入场单创建 ${stamp(firstOrder.created_at / 1000)} UTC${tradeIndex && !tradeIndex.empty ? '' : `，创建前最近记录周期 ${createdContext > 0 ? `${createdContext}m` : createdContext === 0 ? '无趋势' : '未知'}`}` : ''}`;
+  $('order-info').textContent = `入场 ${money(trade.entry_price)} → 离场 ${money(trade.exit_price)} · ${entryOrders.map(o => o.type).join(' / ') || '缺少成交记录'}${firstOrder ? ` · 入场单创建 ${stamp(firstOrder.created_at / 1000)} UTC${tradeIndex && !tradeIndex.empty ? '' : `，创建前最近记录周期 ${createdContext > 0 ? tfText(createdContext) : createdContext === 0 ? '无趋势' : '未知'}`}` : ''}`;
   for (const panel of panels) {
     panel.card.classList.toggle('chosen', summary && Number.isFinite(entry.entry_exec_tf) ? panel.interval === entry.entry_exec_tf : panel.interval === context);
     if (panel.empty) continue;

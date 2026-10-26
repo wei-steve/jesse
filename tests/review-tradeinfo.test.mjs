@@ -80,3 +80,28 @@ test('showConditions defaults to expanded and survives old saved data', () => {
   assert.equal(restorePreferences(JSON.stringify({ version: 1 })).showConditions, true);
   assert.equal(restorePreferences(JSON.stringify({ version: 1, showConditions: false })).showConditions, false);
 });
+
+test('top-down fields: top direction row, summary prefix, hour names', () => {
+  const T = 1_700_000_040;
+  const s = points => ({ data: points.map(([time, value]) => ({ time, value })) });
+  const c = { extra_charts: { trade_info: {
+    entry_top_tf: s([[T, 240]]), entry_top_dir: s([[T, 1]]), entry_top_stack: s([[T, 0.75]]),
+    entry_trend_tf: s([[T, 60]]), entry_exec_tf: s([[T, 15]]), entry_ma_period: s([[T, 20]]),
+  } } };
+  const { entry } = tradeConditions(tradeInfoIndex(c), { opened_at: (T + 60) * 1000 });
+  assert.equal(entrySummary(entry), '4h 定方向 · 1h 判断 · 15m 入场 · SMA20');
+  const rows = entryLines(entry);
+  assert.deepEqual(rows.slice(0, 3).map(r => r.label), ['顶层方向', '趋势周期', '入场周期']);
+  assert.equal(rows[0].text, '4 小时定方向：多（均线排列 0.75）');
+  assert.equal(rows[1].text, '1 小时判断趋势');
+  assert.equal(rows[2].text, '15 分钟找入场');
+  assert.equal(entryLines({ entry_top_tf: 240, entry_top_dir: -1 })[0].text, '4 小时定方向：空');
+  assert.equal(entrySummary({ entry_trend_tf: 240 }), '4h 判断');
+  assert.equal(entrySummary({ entry_trend_tf: 90 }), '90m 判断');
+});
+
+test('without top fields nothing about the top level is shown', () => {
+  const entry = { entry_side: 1, entry_trend_tf: 15, entry_exec_tf: 3 };
+  assert.ok(!entryLines(entry).some(r => r.label === '顶层方向'));
+  assert.equal(entrySummary(entry), '15m 判断 · 3m 入场');
+});
