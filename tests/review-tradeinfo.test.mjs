@@ -14,17 +14,21 @@ const charts = { extra_charts: { trade_info: {
   entry_filter_1h: series([[T0, -1]]), entry_order_created: series([[T0, T0 - 180]]), entry_stop: series([[T0, 80000]]),
   exit_reason: series([[T1, 1]]), exit_trigger_price: series([[T1, 82000]]), exit_bb_upper: series([[T1, 82000.5]]),
 } } };
-// opened_at/closed_at are milliseconds and may be a few seconds into the minute.
-const trade = { type: 'long', opened_at: (T0 + 17) * 1000, closed_at: (T1 + 3) * 1000 };
+// opened_at/closed_at are candle close times in ms: point time + 60 s.
+const trade = { type: 'long', opened_at: (T0 + 60) * 1000, closed_at: (T1 + 60) * 1000 };
 
-test('matches entry and exit points by the minute of opened_at / closed_at', () => {
+test('matches points at opened_at/closed_at minus 60 s, falling back to the same minute', () => {
   const { entry, exit } = tradeConditions(tradeInfoIndex(charts), trade);
   assert.equal(entry.entry_exec_tf, 3);
   assert.equal(exit.exit_reason, 1);
   assert.equal(entry.exit_reason, undefined);
-  const other = tradeConditions(tradeInfoIndex(charts), { ...trade, opened_at: (T0 + 60) * 1000, closed_at: (T1 + 60) * 1000 });
+  const other = tradeConditions(tradeInfoIndex(charts), { ...trade, opened_at: (T0 + 180) * 1000, closed_at: (T1 + 180) * 1000 });
   assert.equal(other.entry, null);
   assert.equal(other.exit, null);
+  // Fallback: no point at -60 s, but one in the same minute as the timestamp.
+  const same = tradeConditions(tradeInfoIndex(charts), { ...trade, opened_at: (T0 + 17) * 1000, closed_at: (T1 + 3) * 1000 });
+  assert.equal(same.entry.entry_exec_tf, 3);
+  assert.equal(same.exit.exit_reason, 1);
 });
 
 test('summary and entry lines use plain Chinese with 2 decimals; missing values are skipped', () => {

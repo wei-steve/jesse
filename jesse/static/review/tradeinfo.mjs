@@ -1,35 +1,40 @@
 // Pure helpers for the per-trade entry/exit conditions that a strategy records in
 // chart_data.strategy_charts.extra_charts.trade_info (one series per field, one
 // point per event on the 1m candle where the event happened; values are numbers).
-// Points are matched to a trade by the UTC minute of opened_at / closed_at.
+// A point's time is the opening time of the 1m candle; the trade's opened_at / closed_at is that
+// candle's close time in ms, so the point is at (ms / 1000 - 60). If that exact second has no
+// point, the point in the same UTC minute as the trade timestamp is used.
 const minuteOf = seconds => Math.floor(seconds / 60);
 const finite = value => Number.isFinite(value);
 
 export function tradeInfoIndex(charts) {
   const series = charts?.extra_charts?.trade_info;
-  const byMinute = new Map();
-  if (!series || typeof series !== 'object') return { byMinute, empty: true };
+  const byMinute = new Map(), byTime = new Map();
+  if (!series || typeof series !== 'object') return { byMinute, byTime, empty: true };
   for (const [name, line] of Object.entries(series)) {
     const data = Array.isArray(line?.data) ? line.data : [];
     for (const point of data) {
       if (!finite(point?.time) || !finite(point?.value)) continue;
       const minute = minuteOf(point.time);
+      if (!byTime.has(point.time)) byTime.set(point.time, {});
+      byTime.get(point.time)[name] = point.value;
       if (!byMinute.has(minute)) byMinute.set(minute, {});
       byMinute.get(minute)[name] = point.value;
     }
   }
-  return { byMinute, empty: byMinute.size === 0 };
+  return { byMinute, byTime, empty: byMinute.size === 0 };
 }
 
 // Trade timestamps are milliseconds. Returns null when nothing is recorded at that minute
 // or the minute holds no field of the wanted kind (entry_* / exit_*).
 function infoAt(index, ms, prefix) {
   if (!index || !finite(ms)) return null;
-  const all = index.byMinute.get(minuteOf(ms / 1000));
-  if (!all) return null;
-  const picked = {};
-  for (const [name, value] of Object.entries(all)) if (name.startsWith(prefix)) picked[name] = value;
-  return Object.keys(picked).length ? picked : null;
+  const pick = all => {
+    const picked = {};
+    for (const [name, value] of Object.entries(all ?? {})) if (name.startsWith(prefix)) picked[name] = value;
+    return Object.keys(picked).length ? picked : null;
+  };
+  return pick(index.byTime.get(Math.round(ms / 1000) - 60)) ?? pick(index.byMinute.get(minuteOf(ms / 1000)));
 }
 
 export function tradeConditions(index, trade) {

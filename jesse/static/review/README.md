@@ -76,5 +76,5 @@ docker cp jesse/static/review jesse:/jesse-docker/jesse/static/
 ## 入场 / 离场条件
 
 - 选中交易后，交易信息区下方显示“入场 / 离场条件”，“收起/展开”按钮的状态随显示设置保存（`showConditions`，旧数据缺省展开）。
-- 数据来自策略写入的 `chart_data.strategy_charts.extra_charts.trade_info`（格式见项目仓库 `tasks/T-13-trade-info-contract.md`）。按“入场点时间 = 交易 `opened_at` 所在 UTC 分钟、离场点时间 = `closed_at` 所在 UTC 分钟”匹配；没写的字段不显示。解析与文字在 `tradeinfo.mjs`（纯函数，`tests/review-tradeinfo.test.mjs`）。
+- 数据来自策略写入的 `chart_data.strategy_charts.extra_charts.trade_info`（格式见项目仓库 `tasks/T-13-trade-info-contract.md`）。图表点的 time 是 1m K 线开盘时间，交易 `opened_at` / `closed_at` 是收盘时间，所以按“点 time = opened_at/1000 − 60（离场用 closed_at）”整数秒精确匹配，找不到再试同一 UTC 分钟；没写的字段不显示。解析与文字在 `tradeinfo.mjs`（纯函数，`tests/review-tradeinfo.test.mjs`）。
 - 有入场记录时，顶部“入场前最近记录的周期”显示如“15m 判断 · 3m 入场 · SMA20”，入场周期那张图高亮；没有 `trade_info`（V1、旧回测）时保持 MA5 context 的原逻辑，条件区显示“此回测没有记录入场/离场条件”。
