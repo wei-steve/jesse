@@ -2,15 +2,25 @@
 // third-party requests are needed; the adapter is isolated for future rebuilds.
 import { t as createChart } from '../_nuxt/eDEyLi0S.js';
 import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs';
+import { STORAGE_KEY, timeframeLabel, restorePreferences } from './settings.mjs';
+import { calculateIndicator } from './indicators.mjs';
+import { mountControls } from './controls.mjs';
 
 const $ = id => document.getElementById(id);
 const money = value => Number.isFinite(value) ? value.toFixed(2) : '—';
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 19);
+const number = value => !Number.isFinite(value) ? '—'
+  : Math.abs(value) >= 100 ? value.toFixed(2) : Math.abs(value) >= 1 ? value.toFixed(3) : value.toFixed(4);
 const sessionId = new URLSearchParams(location.search).get('session');
-const intervals = [15, 5, 3, 1];
-let session, chartData, trades = [], orderedTrades = [], selected, panels = [], anchor, syncing = false;
-let entryTime, contextPoints = [], token, loadVersion = 0;
-let rangeLink;
+// Every chart (candles and sub-panes) uses the same price-scale width, so their
+// time axes line up vertically inside a card.
+const SCALE_WIDTH = 72;
+const UP = '#16a082', DOWN = '#dd6070';
+let session, chartData, route, trades = [], orderedTrades = [], selected, panels = [], views = [], anchor, syncing = false;
+let entryTime, contextPoints = [], token, loadVersion = 0, rangeLink, preferences, wantedRange;
+
+try { preferences = restorePreferences(localStorage.getItem(STORAGE_KEY)); }
+catch { preferences = restorePreferences(null); }
 
 async function post(path, body = {}) {
   const response = await fetch(path, { method: 'POST', headers: {
@@ -27,73 +37,203 @@ function status(message, error = false) {
   $('status').textContent = message;
 }
 
-function makePanel(interval, source) {
-  const { candles, omittedBuckets } = aggregateCandles(source, interval);
-  if (!candles.length) throw new Error(`${interval}m 没有完整 K 线，无法展示。`);
-  const card = document.createElement('article');
-  card.className = 'chart-card'; card.dataset.interval = interval;
-  // Only fixed application markup goes through innerHTML; session data is text.
-  card.innerHTML = `<div class="chart-head"><h3>${interval} 分钟 <span>SMA5</span></h3><div class="closed-summary"></div></div><div class="chart-host"><div class="event-line"></div></div><div class="chart-meta"></div>`;
-  $('charts').append(card);
-  const host = card.querySelector('.chart-host');
-  const chart = createChart(host, {
+function newChart(host, pane) {
+  return createChart(host, {
     autoSize: true,
     layout: { background: { type: 'solid', color: '#ffffff' }, textColor: '#72819a', fontSize: 10 },
     grid: { vertLines: { color: '#f2f5fa' }, horzLines: { color: '#f2f5fa' } },
-    rightPriceScale: { borderColor: '#edf0f5', minimumWidth: 66 },
-    timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#edf0f5' },
+    rightPriceScale: { borderColor: '#edf0f5', minimumWidth: SCALE_WIDTH,
+      scaleMargins: pane ? { top: 0.12, bottom: 0.06 } : { top: 0.1, bottom: 0.1 } },
+    // A low minimum bar spacing lets the 1m chart fit the same window as the others.
+    timeScale: { visible: !pane, timeVisible: true, secondsVisible: false, borderColor: '#edf0f5', minBarSpacing: 0.05 },
     localization: { locale: 'zh-CN', timeFormatter: t => `${stamp(t)} UTC` },
     handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
   });
-  const series = chart.addCandlestickSeries({ upColor: '#16a082', downColor: '#dd6070',
-    wickUpColor: '#16a082', wickDownColor: '#dd6070', borderVisible: false,
+}
+
+// Values are looked up by bar time for legends and crosshair syncing.
+function withLookup(line) {
+  return { ...line, values: new Map(line.data.filter(p => Number.isFinite(p.value)).map(p => [p.time, p.value])) };
+}
+
+function addOverlay(chart, result) {
+  const lines = result.series.map(withLookup);
+  lines.forEach((line, i) => {
+    const series = chart.addLineSeries({ color: line.color, lineWidth: 1.5,
+      lineStyle: result.series.length === 3 && i === 1 ? 2 : 0,
+      lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+    series.setData(line.data);
+  });
+  return { title: result.title, lines };
+}
+
+function makeView(panel, chart, host, kind, series, lookup) {
+  const view = { panel, chart, host, kind, series, lookup, line: host.querySelector('.event-line') };
+  for (const event of ['pointerdown', 'wheel']) host.addEventListener(event,
+    () => rangeLink?.activate(view), { capture: true, passive: true });
+  chart.subscribeCrosshairMove(event => syncCrosshair(view, typeof event.time === 'number' ? event.time : null));
+  view.observer = new ResizeObserver(() => {
+    // A chart told its window before it had a size shows the wrong span, so
+    // the latest programmatic window is applied again when it is first sized.
+    if (!view.sized && host.clientWidth > 0) {
+      view.sized = true;
+      if (wantedRange) view.chart.timeScale().setVisibleRange(wantedRange);
+    }
+    drawAnchor(view);
+  });
+  view.observer.observe(host);
+  return view;
+}
+
+function addPane(panel, result) {
+  const element = document.createElement('div');
+  element.className = 'pane';
+  element.innerHTML = '<div class="pane-head"></div><div class="pane-host"><div class="event-line"></div></div>';
+  panel.card.querySelector('.panes').append(element);
+  const host = element.querySelector('.pane-host');
+  const chart = newChart(host, true);
+  const lines = result.series.map(withLookup);
+  let primary;
+  lines.forEach(line => {
+    const histogram = line.kind === 'histogram';
+    const options = { color: line.color, lastValueVisible: false, priceLineVisible: false };
+    // RSI keeps a fixed 0–100 scale so its 30/70 lines are always visible.
+    if (result.title.startsWith('RSI')) options.autoscaleInfoProvider = () => ({ priceRange: { minValue: 0, maxValue: 100 } });
+    const series = histogram
+      ? chart.addHistogramSeries({ ...options, priceFormat: result.title === '成交量' ? { type: 'volume' } : { type: 'price', precision: 2, minMove: 0.01 } })
+      : chart.addLineSeries({ ...options, lineWidth: 1.5, crosshairMarkerVisible: false });
+    // MACD histogram bars show their sign; volume keeps the chosen colour.
+    series.setData(histogram && result.title !== '成交量'
+      ? line.data.map(p => Number.isFinite(p.value) ? { ...p, color: p.value >= 0 ? UP : DOWN } : p)
+      : line.data);
+    primary ??= { series, line };
+  });
+  for (const price of result.thresholds) primary.series.createPriceLine({ price, color: '#9aa7ba',
+    lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '' });
+  const hasValues = lines.some(line => line.values.size);
+  const pane = { title: result.title, lines, head: element.querySelector('.pane-head'), hasValues };
+  if (!hasValues) element.classList.add('no-data');
+  pane.view = makeView(panel, chart, host, 'pane', primary.series, primary.line.values);
+  return pane;
+}
+
+function makePanel(interval, source) {
+  const { candles, omittedBuckets } = aggregateCandles(source, interval);
+  const label = timeframeLabel(interval);
+  const card = document.createElement('article');
+  card.className = 'chart-card'; card.dataset.interval = interval;
+  // Only fixed application markup goes through innerHTML; session data is text.
+  card.innerHTML = '<div class="chart-head"><h3></h3><div class="closed-summary"></div><div class="legend"></div></div><div class="chart-host"><div class="event-line"></div></div><div class="panes"></div><div class="chart-meta"></div>';
+  card.querySelector('h3').textContent = label;
+  $('charts').append(card);
+  const panel = { interval, label, card, candles, overlays: [], panes: [], views: [], line: null, asOf: null };
+  if (!candles.length) {
+    panel.empty = true;
+    card.classList.add('empty');
+    card.querySelector('.chart-host').replaceChildren();
+    card.querySelector('.chart-host').textContent = `${label} 没有完整 K 线：保存的 1m 数据不够合成一根完整的 ${label} K 线。请换更小的周期，或使用更长的回测区间。`;
+    return panel;
+  }
+  const host = card.querySelector('.chart-host');
+  const chart = newChart(host, false);
+  const series = chart.addCandlestickSeries({ upColor: UP, downColor: DOWN,
+    wickUpColor: UP, wickDownColor: DOWN, borderVisible: false,
     lastValueVisible: false, priceLineVisible: false });
   series.setData(candles);
-  const averages = sma(candles, 5, interval);
-  const ma = chart.addLineSeries({ color: '#dd9a23', lineWidth: 2,
-    lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
-  ma.setData(averages);
-  const panel = { interval, card, chart, series, candles, averages, line: null };
-  card.querySelector('.chart-meta').textContent = `${candles.length.toLocaleString()} 根完整 K 线 · 略过 ${omittedBuckets} 个不完整区间 · 均线为该周期 SMA5`;
-  for (const event of ['pointerdown', 'wheel']) host.addEventListener(event,
-    () => rangeLink?.activate(panel), { capture: true, passive: true });
-  chart.subscribeCrosshairMove(event => {
-    if (syncing) return;
-    syncing = true;
-    try {
-      for (const other of panels) {
-        if (other === panel) continue;
-        const time = typeof event.time === 'number' ? Math.floor(event.time / (other.interval * 60)) * other.interval * 60 : null;
-        const bar = other.candles.find(c => c.time === time);
-        if (bar) other.chart.setCrosshairPosition(bar.close, bar.time, other.series);
-        else other.chart.clearCrosshairPosition();
-      }
-    } finally { syncing = false; }
-  });
-  panel.observer = new ResizeObserver(() => drawAnchor(panel));
-  panel.observer.observe(host);
+  // The strategy-reference SMA5 in the summary is independent of display overlays.
+  panel.averages = sma(candles, 5, interval);
+  panel.series = series;
+  panel.main = makeView(panel, chart, host, 'main', series, new Map(candles.map(c => [c.time, c.close])));
+  panel.views.push(panel.main);
+  for (const config of preferences.indicators) {
+    const result = calculateIndicator(candles, config, interval);
+    if (result.pane === 'main') panel.overlays.push(addOverlay(chart, result));
+    else {
+      const pane = addPane(panel, result);
+      panel.panes.push(pane);
+      panel.views.push(pane.view);
+    }
+  }
+  const tags = card.querySelector('h3');
+  for (const overlay of panel.overlays) {
+    const tag = document.createElement('span'); tag.textContent = overlay.title; tags.append(tag);
+  }
+  card.querySelector('.chart-meta').textContent = `${candles.length.toLocaleString()} 根完整 K 线 · 略过 ${omittedBuckets} 个不完整区间`;
   return panel;
 }
 
-function drawAnchor(panel) {
-  const line = panel.card.querySelector('.event-line');
-  const t = Math.floor(anchor / (panel.interval * 60)) * panel.interval * 60;
-  const x = panel.chart.timeScale().timeToCoordinate(t);
-  line.hidden = x === null || x < 0 || x > panel.card.clientWidth - 66;
-  if (!line.hidden) line.style.left = `${x}px`;
+function valuesText(item, time) {
+  const parts = item.lines.map(line => `${item.lines.length > 1 ? `${line.name} ` : ''}${number(line.values.get(time))}`);
+  return `${item.title} ${parts.join(' ')}`;
 }
 
-function rangeChanged(panel) {
+// Legends show either the hovered bar or, by default, the last bar that had
+// closed when the selected trade was entered (what the strategy could see).
+function renderLegend(panel, time, hovered) {
+  if (panel.empty) return;
+  const prefix = time === null || time === undefined ? '入场时无已收盘 K 线'
+    : hovered ? `${stamp(time)} UTC` : '入场时已收盘';
+  const legend = panel.card.querySelector('.legend');
+  legend.textContent = panel.overlays.length && time !== null && time !== undefined
+    ? `${prefix} · ${panel.overlays.map(o => valuesText(o, time)).join(' · ')}` : '';
+  for (const pane of panel.panes) {
+    pane.head.textContent = !pane.hasValues
+      ? `${pane.title} · 数据不足：此周期的完整 K 线少于指标所需的根数`
+      : time === null || time === undefined ? pane.title : `${valuesText(pane, time)}${hovered ? '' : ' · 入场时已收盘'}`;
+  }
+}
+
+function syncCrosshair(source, time) {
+  if (syncing) return;
+  syncing = true;
+  try {
+    for (const view of views) {
+      if (view === source) continue;
+      const step = view.panel.interval * 60;
+      const t = time === null ? null : Math.floor(time / step) * step;
+      const value = t === null ? undefined : view.lookup.get(t);
+      if (Number.isFinite(value)) view.chart.setCrosshairPosition(value, t, view.series);
+      else view.chart.clearCrosshairPosition();
+    }
+    for (const panel of panels) {
+      if (time === null) renderLegend(panel, panel.asOf, false);
+      else {
+        const step = panel.interval * 60;
+        renderLegend(panel, Math.floor(time / step) * step, true);
+      }
+    }
+  } finally { syncing = false; }
+}
+
+function drawAnchor(view) {
+  if (!view.line || anchor === undefined) return;
+  const step = view.panel.interval * 60;
+  const t = Math.floor(anchor / step) * step;
+  const x = view.chart.timeScale().timeToCoordinate(t);
+  view.line.hidden = x === null || x < 0 || x > view.host.clientWidth - SCALE_WIDTH;
+  if (!view.line.hidden) view.line.style.left = `${x}px`;
+}
+
+function rangeChanged(view, userRange) {
+  // Remember a window the user dragged or zoomed to, so a settings rebuild keeps it.
+  if (userRange) wantedRange = userRange;
   // Read the actual interval-rounded range after the chart's update event.
-  const actual = panel.chart.timeScale().getVisibleRange();
-  panel.card.dataset.rangeFrom = actual?.from ?? '';
-  panel.card.dataset.rangeTo = actual?.to ?? '';
-  drawAnchor(panel);
+  if (view.kind === 'main') {
+    const actual = view.chart.timeScale().getVisibleRange();
+    view.panel.card.dataset.rangeFrom = actual?.from ?? '';
+    view.panel.card.dataset.rangeTo = actual?.to ?? '';
+  }
+  drawAnchor(view);
+}
+
+function showRange(range) {
+  wantedRange = range;
+  rangeLink.set(range);
 }
 
 function focusAt(seconds) {
   anchor = seconds;
-  rangeLink.set(centeredRange(anchor, Number($('span').value)));
+  showRange(centeredRange(anchor, Number($('span').value)));
 }
 
 function paintTrades() {
@@ -119,6 +259,7 @@ function paintTrades() {
 
 function updateMarkers() {
   for (const panel of panels) {
+    if (panel.empty) continue;
     const shown = $('all-markers').checked ? trades : selected ? [selected] : [];
     panel.series.setMarkers(executionMarkers(shown, panel.candles, panel.interval));
     if (panel.line) panel.series.removePriceLine(panel.line);
@@ -127,7 +268,7 @@ function updateMarkers() {
   }
 }
 
-function selectTrade(trade) {
+function selectTrade(trade, focus = true) {
   selected = trade; entryTime = trade.opened_at / 1000;
   const context = contextAt(contextPoints, entryTime, 1);
   const entryOrders = (trade.orders ?? []).filter(o => !o.reduce_only && o.status === 'EXECUTED');
@@ -138,17 +279,43 @@ function selectTrade(trade) {
   $('order-info').textContent = `入场 ${money(trade.entry_price)} → 离场 ${money(trade.exit_price)} · ${entryOrders.map(o => o.type).join(' / ') || '缺少成交记录'}${firstOrder ? ` · 入场单创建 ${stamp(firstOrder.created_at / 1000)} UTC，创建前最近记录周期 ${createdContext > 0 ? `${createdContext}m` : createdContext === 0 ? '无趋势' : '未知'}` : ''}`;
   for (const panel of panels) {
     panel.card.classList.toggle('chosen', panel.interval === context);
+    if (panel.empty) continue;
     const closed = lastClosedCandle(panel.candles, panel.interval, entryTime);
     const avg = closed ? panel.averages.find(v => v.time === closed.time)?.value : null;
+    panel.asOf = closed?.time ?? null;
+    // Show the end date only when the candle ends on a different day (e.g. 1D).
+    const closeStamp = closed ? stamp(closed.time + panel.interval * 60) : '';
+    const closeText = closed && closeStamp.slice(0, 5) === stamp(closed.time).slice(0, 5) ? closeStamp.slice(6) : closeStamp;
     panel.card.querySelector('.closed-summary').textContent = closed
-      ? `入场时最后已收盘：${stamp(closed.time)} → ${stamp(closed.time + panel.interval * 60).slice(6)} UTC\n收盘 ${money(closed.close)} · SMA5 ${money(avg)}（含当前这根已收盘 K 线）`
+      ? `入场时最后已收盘：${stamp(closed.time)} → ${closeText} UTC\n收盘 ${money(closed.close)} · 策略参考 SMA5 ${money(avg)}（含当前这根已收盘 K 线）`
       : '入场时没有已保存的完整收盘 K 线';
+    renderLegend(panel, panel.asOf, false);
   }
   for (const button of $('trades').children) button.setAttribute('aria-pressed', String(button.dataset.tradeId === trade.id));
   const index = orderedTrades.findIndex(t => t.id === trade.id);
   $('previous').disabled = index <= 0; $('next').disabled = index >= orderedTrades.length - 1;
   $('exit').disabled = !Number.isFinite(trade.closed_at);
-  updateMarkers(); focusAt(entryTime);
+  updateMarkers();
+  if (focus) focusAt(entryTime);
+}
+
+function buildPanels() {
+  for (const view of views) { view.observer.disconnect(); view.chart.remove(); }
+  panels = []; views = []; $('charts').replaceChildren();
+  panels = preferences.intervals.map(interval => makePanel(interval, chartData.candles));
+  views = panels.flatMap(panel => panel.views);
+  rangeLink = linkTimeRanges(views, rangeChanged);
+}
+
+// Display settings changed: redraw from the already-loaded data and keep the
+// selected trade, the event line and the visible time window.
+function rebuild() {
+  if (!chartData) return;
+  const range = wantedRange;
+  try { buildPanels(); } catch (error) { status(error.message, true); return; }
+  if (selected) selectTrade(selected, false); else updateMarkers();
+  if (range) showRange(range); else if (anchor !== undefined) focusAt(anchor);
+  for (const view of views) drawAnchor(view);
 }
 
 async function loadRoute() {
@@ -159,7 +326,7 @@ async function loadRoute() {
   document.querySelector('main').hidden = true;
   for (const control of document.querySelectorAll('.toolbar button, .toolbar input, #span')) control.disabled = true;
   status('正在读取保存的 K 线…');
-  const route = session.state.form.routes[Number($('route').value)];
+  route = session.state.form.routes[Number($('route').value)];
   if (route.timeframe !== '1m') throw new Error('此扩展页需要 1m 交易路由及其已保存图表。不会用高周期数据虚构 1m K 线。');
   const result = await post(`/backtest/sessions/${sessionId}/chart-data`, route);
   if (version !== loadVersion) return;
@@ -167,15 +334,17 @@ async function loadRoute() {
   if (!chartData?.candles?.length) throw new Error('该回测没有保存 K 线图数据。请使用已有 1m 图表的回测。');
   trades = (session.trades ?? []).filter(t => t.exchange === route.exchange && t.symbol === route.symbol && Number.isFinite(t.opened_at));
   contextPoints = contextPointsFor(chartData.strategy_charts);
-  for (const panel of panels) { panel.observer.disconnect(); panel.chart.remove(); }
-  panels = []; $('charts').replaceChildren();
-  for (const interval of intervals) panels.push(makePanel(interval, chartData.candles));
-  rangeLink = linkTimeRanges(panels, rangeChanged);
+  mountControls(session.state.form, route, preferences, rebuild);
+  buildPanels();
   for (const control of document.querySelectorAll('.toolbar button, .toolbar input, #span')) control.disabled = false;
   selected = null; paintTrades(); $('trade-count').textContent = `${trades.length} 笔`;
-  if (orderedTrades.length) selectTrade(orderedTrades[0]);
-  else { $('trade-info').textContent = '此路由没有成交记录'; focusAt(panels.at(-1).candles.at(-1).time); }
   $('status').hidden = true; document.querySelector('main').hidden = false;
+  if (orderedTrades.length) selectTrade(orderedTrades[0]);
+  else {
+    $('trade-info').textContent = '此路由没有成交记录';
+    const last = panels.find(p => !p.empty)?.candles.at(-1);
+    if (last) focusAt(last.time);
+  }
 }
 
 async function start() {
@@ -188,9 +357,9 @@ async function start() {
   session = result.session;
   if (!session?.state?.form?.routes?.length) throw new Error('此回测没有保存交易路由。');
   $('session-title').textContent = `${session.state.form.start_date} — ${session.state.form.finish_date} · ${session.title || session.id}`;
-  session.state.form.routes.forEach((route, index) => {
+  session.state.form.routes.forEach((item, index) => {
     const option = document.createElement('option'); option.value = index;
-    option.textContent = `${route.symbol} · ${route.timeframe}`; $('route').append(option);
+    option.textContent = `${item.symbol} · ${item.timeframe}`; $('route').append(option);
   });
   $('route').onchange = () => { loadRoute().catch(error => status(error.message, true)); };
   $('sort').onchange = () => { paintTrades(); if (orderedTrades.length) selectTrade(orderedTrades[0]); };

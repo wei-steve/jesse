@@ -23,7 +23,7 @@ Persist only validated display settings. Allow recovery from invalid/old browser
 3. Add accessible period picker and indicator editor (type/parameters/color/edit/remove), preserving selection on rebuild and localStorage.
 4. Add main overlays and auxiliary panes, including value legends, thresholds and no-data states. Preserve synchronized timestamp domains, trade markers and as-of summaries.
 5. Review code for formula, timing, storage, indicator-gap and synchronization regressions. Address important findings.
-6. Copy only extension static files into the running container; no restart. Verify actual saved backtest, select a new period, add/edit/remove indicators on main/subcharts, verify persistence and real-data rendering, then save screenshots and update README/verification notes.
+6. Verify in the running app (source install serves the files directly; with the Docker image, copy them in). Verify actual saved backtest, select a new period, add/edit/remove indicators on main/subcharts, verify persistence and real-data rendering, then save screenshots and update README/verification notes.
 
 ## Acceptance
 
@@ -32,3 +32,7 @@ Persist only validated display settings. Allow recovery from invalid/old browser
 - Settings survive reload; invalid settings recover safely. No credentials or trading settings are written.
 - Existing trade selection, entry/exit navigation, markers, completed-candle summaries and time linking continue to work.
 - Source and currently installed copy are consistent; strategy and recorded result stay unchanged.
+
+## Status (2026-10-26)
+
+Steps 1–6 done. Verification: `docs/plans/2026-10-26-review-indicators-verification.md`.

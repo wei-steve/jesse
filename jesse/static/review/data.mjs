@@ -109,7 +109,8 @@ export function linkTimeRanges(panels, onChange = () => {}) {
     }
   }
   for (const panel of panels) panel.chart.timeScale().subscribeVisibleTimeRangeChange(range => {
-    onChange(panel);
+    // The second argument is the range only when a user gesture on this panel caused it.
+    onChange(panel, panel === active ? range : null);
     // The chart emits after drawing, outside the setVisibleRange call stack.
     // Only a panel activated by a real pointer/wheel gesture may drive peers;
     // their rounded, asynchronous programmatic updates never feed back.
