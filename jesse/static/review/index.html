@@ -20,12 +20,13 @@
       <button id="previous">← 上一笔</button><button id="next">下一笔 →</button>
       <button id="entry">定位入场</button><button id="exit">定位离场</button>
       <button id="open-settings" aria-controls="display-settings" aria-expanded="false">周期与指标</button>
-      <label class="toggle"><input id="all-markers" type="checkbox">显示全部成交</label>
+      <label class="toggle"><input id="show-panes" type="checkbox" checked>显示副图</label>
+      <label><input id="all-markers" type="checkbox">显示全部成交</label>
     </section>
     <details id="display-settings" class="display-settings">
       <summary>周期与指标设置 <span>仅影响复盘显示，应用到所有已选周期</span></summary>
       <section aria-label="周期选择">
-        <div class="settings-heading"><h2>显示周期 <small>同时最多 4 个</small></h2><button id="strategy-periods">使用策略配置周期</button></div>
+        <div class="settings-heading"><h2>显示周期 <small>可多选</small></h2><button id="strategy-periods">使用策略配置周期</button></div>
         <div id="timeframe-list" class="timeframe-list"></div>
         <p id="timeframe-note"></p>
       </section>

@@ -20,11 +20,12 @@ test('discovers only the selected exchange-symbol configured intervals', () => {
     { ...route, exchange: 'B', timeframe: '5m' },
   ] };
   assert.deepEqual(configuredIntervals(form, route), [1, 15, 60, 240, 1440]);
-  assert.deepEqual(chooseIntervals(configuredIntervals(form, route)), [1440, 240, 60, 1]);
+  assert.deepEqual(chooseIntervals(configuredIntervals(form, route)), [1440, 240, 60, 15, 1]);
 });
 
-test('initial selection preserves four currently configured periods', () => {
+test('initial selection keeps every configured period, largest first, with no upper limit', () => {
   assert.deepEqual(chooseIntervals([1, 3, 5, 15]), [15, 5, 3, 1]);
+  assert.deepEqual(chooseIntervals([1, 3, 5, 15, 60, 240]), [240, 60, 15, 5, 3, 1]);
   assert.deepEqual(chooseIntervals([60]), [60]);
 });
 
@@ -46,8 +47,17 @@ test('display preferences recover from invalid JSON and validate saved settings'
   const restored = restorePreferences(JSON.stringify({ version: 1, intervals: [1, 60, 240],
     indicators: [{ type: 'RSI', period: 14, color: '#aabbcc' }], authToken: 'ignored' }));
   assert.deepEqual(restored.intervals, [240, 60, 1]);
-  assert.deepEqual(Object.keys(restored).sort(), ['indicators', 'intervals', 'version']);
-  assert.deepEqual(restorePreferences(JSON.stringify({ version: 1, intervals: [1, 3, 5, 15, 60], indicators: [] })).intervals, null);
+  assert.deepEqual(Object.keys(restored).sort(), ['indicators', 'intervals', 'showPanes', 'version']);
+  assert.deepEqual(restorePreferences(JSON.stringify({ version: 1, intervals: [1, 3, 5, 15, 60], indicators: [] })).intervals, [60, 15, 5, 3, 1]);
+  assert.equal(restorePreferences(JSON.stringify({ version: 1, intervals: [], indicators: [] })).intervals, null);
+  assert.equal(restorePreferences(JSON.stringify({ version: 1, intervals: [1, 7], indicators: [] })).intervals, null);
   assert.equal(restorePreferences(JSON.stringify({ version: 1, indicators: [{ type: 'EMA', period: -5 }] })).indicators[0].type, 'SMA');
   assert.deepEqual(restorePreferences(JSON.stringify({ version: 1, indicators: [] })).indicators, []);
+});
+
+test('the sub-chart switch defaults to on and only an explicit false turns it off', () => {
+  assert.equal(restorePreferences('bad json').showPanes, true);
+  assert.equal(restorePreferences(JSON.stringify({ version: 1, indicators: [] })).showPanes, true);
+  assert.equal(restorePreferences(JSON.stringify({ version: 1, showPanes: false, indicators: [] })).showPanes, false);
+  assert.equal(restorePreferences(JSON.stringify({ version: 1, showPanes: 'no', indicators: [] })).showPanes, true);
 });

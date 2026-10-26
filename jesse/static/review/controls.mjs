@@ -24,7 +24,7 @@ export function mountControls(form, route, preferences, changed) {
       input.setAttribute('aria-label', `显示 ${timeframeLabel(interval)} 周期`);
       input.onchange = () => {
         const next = input.checked ? [...preferences.intervals, interval] : preferences.intervals.filter(n => n !== interval);
-        if (!next.length || next.length > 4) { input.checked = !input.checked; message('请保留 1–4 个显示周期。'); return; }
+        if (!next.length) { input.checked = true; message('请至少保留 1 个显示周期。'); return; }
         preferences.intervals = next.sort((a, b) => b - a); save();
       };
       label.append(input, document.createTextNode(timeframeLabel(interval)));

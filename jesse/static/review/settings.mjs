@@ -29,7 +29,7 @@ export function configuredIntervals(form, route) {
 
 export function chooseIntervals(configured) {
   const sorted = [...new Set(configured)].sort((a, b) => b - a);
-  return sorted.length <= 4 ? sorted : [...sorted.slice(0, 3), sorted.at(-1)];
+  return sorted;
 }
 
 export function validateIndicator(input) {
@@ -50,17 +50,18 @@ export function validateIndicator(input) {
 }
 
 export function restorePreferences(serialized) {
-  const defaults = () => ({ version: 1, intervals: null, indicators: [validateIndicator({ type: 'SMA' })] });
+  const defaults = () => ({ version: 1, intervals: null, showPanes: true, indicators: [validateIndicator({ type: 'SMA' })] });
   try {
     const value = JSON.parse(serialized);
     if (value?.version !== 1) return defaults();
-    const intervals = Array.isArray(value.intervals) && value.intervals.length > 0 && value.intervals.length <= 4
+    const intervals = Array.isArray(value.intervals) && value.intervals.length > 0
       && value.intervals.every(n => TIMEFRAMES.includes(n))
       ? [...new Set(value.intervals)].sort((a, b) => b - a) : null;
     // Bound saved configurations to keep accidental huge storage values from
     // creating hundreds of expensive charts. The UI uses the same limit.
     const indicators = Array.isArray(value.indicators) && value.indicators.length <= 10
       ? value.indicators.map(validateIndicator) : defaults().indicators;
-    return { version: 1, intervals, indicators };
+    // Sub-charts are shown unless the user switched them off.
+    return { version: 1, intervals, showPanes: value.showPanes !== false, indicators };
   } catch { return defaults(); }
 }

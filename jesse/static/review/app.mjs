@@ -2,7 +2,7 @@
 // third-party requests are needed; the adapter is isolated for future rebuilds.
 import { t as createChart } from '../_nuxt/eDEyLi0S.js';
 import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs';
-import { STORAGE_KEY, timeframeLabel, restorePreferences } from './settings.mjs';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs';
 import { calculateIndicator } from './indicators.mjs';
 import { mountControls } from './controls.mjs';
 
@@ -146,6 +146,7 @@ function makePanel(interval, source) {
   panel.main = makeView(panel, chart, host, 'main', series, new Map(candles.map(c => [c.time, c.close])));
   panel.views.push(panel.main);
   for (const config of preferences.indicators) {
+    if (!preferences.showPanes && INDICATORS[config.type].pane !== 'main') continue;
     const result = calculateIndicator(candles, config, interval);
     if (result.pane === 'main') panel.overlays.push(addOverlay(chart, result));
     else {
@@ -371,6 +372,13 @@ async function start() {
   $('exit').onclick = () => { if (selected?.closed_at) focusAt(selected.closed_at / 1000); };
   $('span').onchange = () => focusAt(anchor);
   $('all-markers').onchange = updateMarkers;
+  // Master switch for every timeframe's sub-charts; remembered with the display settings.
+  $('show-panes').checked = preferences.showPanes;
+  $('show-panes').onchange = () => {
+    preferences.showPanes = $('show-panes').checked;
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences)); } catch { /* still works for this page */ }
+    rebuild();
+  };
   await loadRoute();
 }
 start().catch(error => status(error.message, true));
