@@ -116,6 +116,10 @@ test('head-on MA and pin fields: entry rows, direction wording, hidden when abse
   assert.equal(short['插针判断'], '15 分钟');
   const noSide = Object.fromEntries(entryLines({ entry_headon_tf: 60, entry_headon_period: 20, entry_headon_value: 5 }).map(r => [r.label, r.text]));
   assert.equal(noSide['迎头均线'], '1 小时 SMA20 = 5.00');
+  for (const side of [1, -1]) {
+    const absent = Object.fromEntries(entryLines({ entry_side: side, entry_headon_tf: 240 }).map(r => [r.label, r.text]));
+    assert.equal(absent['迎头均线'], '4 小时：入场时没有迎头均线');
+  }
   const none = entryLines({ entry_side: 1, entry_atr: 5 }).map(r => r.label);
   assert.ok(!none.includes('迎头均线') && !none.includes('插针判断'));
 });
