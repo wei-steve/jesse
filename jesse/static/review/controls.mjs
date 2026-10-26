@@ -1,4 +1,4 @@
-import { TIMEFRAMES, INDICATORS, STORAGE_KEY, timeframeLabel, configuredIntervals, chooseIntervals, validateIndicator } from './settings.mjs';
+import { TIMEFRAMES, INDICATORS, MA_LINE_COUNT, STORAGE_KEY, timeframeLabel, configuredIntervals, chooseIntervals, validateIndicator } from './settings.mjs';
 import { indicatorTitle } from './indicators.mjs';
 
 const $ = id => document.getElementById(id);
@@ -35,11 +35,34 @@ export function mountControls(form, route, preferences, changed) {
     }
     $('timeframe-note').textContent = `策略配置：${configured.map(timeframeLabel).join(' / ') || '未找到可展示周期'}。可选固定周期 1m–1D；数据不足时会提示。`;
   }
+  function maFields(config) {
+    const mode = document.createElement('label'); mode.textContent = '均线算法';
+    const select = document.createElement('select'); select.id = 'indicator-mode'; select.setAttribute('aria-label', '均线算法');
+    for (const value of ['SMA', 'EMA']) {
+      const option = document.createElement('option'); option.value = value; option.textContent = value; select.append(option);
+    }
+    select.value = config.mode ?? 'SMA'; mode.append(select);
+    const grid = document.createElement('div'); grid.className = 'ma-rows';
+    config.lines.forEach((line, i) => {
+      const row = document.createElement('label'); row.className = 'ma-row';
+      const enabled = document.createElement('input'); enabled.type = 'checkbox'; enabled.id = `ma-enabled-${i}`;
+      enabled.checked = line.enabled; enabled.setAttribute('aria-label', `显示第 ${i + 1} 条均线`);
+      const period = document.createElement('input'); period.type = 'number'; period.id = `ma-period-${i}`;
+      period.min = '1'; period.max = '5000'; period.step = '1'; period.required = true; period.value = line.period;
+      period.setAttribute('aria-label', `第 ${i + 1} 条均线周期`);
+      const color = document.createElement('input'); color.type = 'color'; color.id = `ma-color-${i}`;
+      color.value = line.color; color.setAttribute('aria-label', `第 ${i + 1} 条均线颜色`);
+      row.append(enabled, period, color); grid.append(row);
+    });
+    $('indicator-params').append(mode, grid);
+  }
   function fields(config) {
     $('indicator-type').value = config.type;
     $('indicator-color').value = config.color ?? INDICATORS[config.type].color;
     $('indicator-params').replaceChildren();
-    for (const [key, fallback] of Object.entries(INDICATORS[config.type].defaults)) {
+    $('indicator-color').parentElement.hidden = config.type === 'MAGROUP';
+    if (config.type === 'MAGROUP') maFields(config);
+    else for (const [key, fallback] of Object.entries(INDICATORS[config.type].defaults)) {
       const label = document.createElement('label'); label.textContent = parameterLabels[key];
       const input = document.createElement('input'); input.id = `indicator-${key}`; input.type = 'number';
       input.required = true; input.min = key === 'deviation' ? '0.1' : '1'; input.max = key === 'deviation' ? '10' : '5000';
@@ -53,7 +76,13 @@ export function mountControls(form, route, preferences, changed) {
     $('indicator-list').replaceChildren();
     for (const [index, config] of preferences.indicators.entries()) {
       const row = document.createElement('div'); row.className = 'indicator-row';
-      const swatch = document.createElement('span'); swatch.className = 'indicator-swatch'; swatch.style.background = config.color;
+      const swatch = document.createElement('span');
+      if (config.type === 'MAGROUP') {
+        swatch.className = 'indicator-swatches';
+        for (const line of config.lines.filter(l => l.enabled)) {
+          const dot = document.createElement('span'); dot.className = 'indicator-swatch'; dot.style.background = line.color; swatch.append(dot);
+        }
+      } else { swatch.className = 'indicator-swatch'; swatch.style.background = config.color; }
       const name = document.createElement('strong'); name.textContent = `${INDICATORS[config.type].pane === 'main' ? '主图' : '附图'} · ${indicatorTitle(config)}`;
       const edit = document.createElement('button'); edit.type = 'button'; edit.textContent = '编辑';
       edit.setAttribute('aria-label', `编辑 ${indicatorTitle(config)}`);
@@ -75,7 +104,11 @@ export function mountControls(form, route, preferences, changed) {
     event.preventDefault();
     try {
       const input = { type: $('indicator-type').value, color: $('indicator-color').value };
-      for (const key of Object.keys(INDICATORS[input.type].defaults)) input[key] = Number($(`indicator-${key}`).value);
+      if (input.type === 'MAGROUP') {
+        delete input.color; input.mode = $('indicator-mode').value;
+        input.lines = Array.from({ length: MA_LINE_COUNT }, (_, i) => ({ enabled: $(`ma-enabled-${i}`).checked,
+          period: Number($(`ma-period-${i}`).value), color: $(`ma-color-${i}`).value }));
+      } else for (const key of Object.keys(INDICATORS[input.type].defaults)) input[key] = Number($(`indicator-${key}`).value);
       const config = validateIndicator(input);
       if (editing === null) {
         if (preferences.indicators.length >= 10) throw new Error('最多添加 10 个指标，请先移除不需要的指标。');
@@ -88,5 +121,5 @@ export function mountControls(form, route, preferences, changed) {
   $('strategy-periods').onclick = () => { preferences.intervals = chooseIntervals(configured.length ? configured : [1]); periods(); save(); };
   $('open-settings').onclick = () => { $('display-settings').open = !$('display-settings').open; };
   $('display-settings').ontoggle = () => $('open-settings').setAttribute('aria-expanded', String($('display-settings').open));
-  periods(); fields(validateIndicator({ type: 'SMA' })); list();
+  periods(); fields(validateIndicator({ type: 'MAGROUP' })); list();
 }
