@@ -61,6 +61,7 @@ export function mountControls(form, route, preferences, changed) {
     $('indicator-color').value = config.color ?? INDICATORS[config.type].color;
     $('indicator-params').replaceChildren();
     $('indicator-color').parentElement.hidden = config.type === 'MAGROUP';
+    $('indicator-params').classList.toggle('ma-params', config.type === 'MAGROUP');
     if (config.type === 'MAGROUP') maFields(config);
     else for (const [key, fallback] of Object.entries(INDICATORS[config.type].defaults)) {
       const label = document.createElement('label'); label.textContent = parameterLabels[key];
