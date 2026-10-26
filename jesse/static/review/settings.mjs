@@ -80,7 +80,7 @@ export function validateIndicator(input) {
 }
 
 export function restorePreferences(serialized) {
-  const defaults = () => ({ version: 1, intervals: null, showPanes: true, indicators: [validateIndicator({ type: 'MAGROUP' })] });
+  const defaults = () => ({ version: 1, intervals: null, showPanes: true, showValues: false, indicators: [validateIndicator({ type: 'MAGROUP' })] });
   try {
     const value = JSON.parse(serialized);
     if (value?.version !== 1) return defaults();
@@ -92,6 +92,8 @@ export function restorePreferences(serialized) {
     const indicators = Array.isArray(value.indicators) && value.indicators.length <= 10
       ? value.indicators.map(validateIndicator) : defaults().indicators;
     // Sub-charts are shown unless the user switched them off.
-    return { version: 1, intervals, showPanes: value.showPanes !== false, indicators };
+    return { version: 1, intervals, showPanes: value.showPanes !== false,
+      // Indicator values above the charts are hidden unless the user switched them on.
+      showValues: value.showValues === true, indicators };
   } catch { return defaults(); }
 }
