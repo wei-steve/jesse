@@ -72,3 +72,9 @@ docker cp jesse/static/review jesse:/jesse-docker/jesse/static/
 当前适配此仓库已打包的 Lightweight Charts v4 组件 `../_nuxt/eDEyLi0S.js`（`t` 为 createChart）。该组件不访问 CDN。升级 Jesse 后 dashboard 重新打包可能改变 chunk 名称或导出接口，届时需要更新 `app.mjs` 第一行的导入并重新验证。
 
 回滚时移除 `review` 目录即可，原 dashboard、后端及数据库未修改。
+
+## 入场 / 离场条件
+
+- 选中交易后，交易信息区下方显示“入场 / 离场条件”，“收起/展开”按钮的状态随显示设置保存（`showConditions`，旧数据缺省展开）。
+- 数据来自策略写入的 `chart_data.strategy_charts.extra_charts.trade_info`（格式见项目仓库 `tasks/T-13-trade-info-contract.md`）。按“入场点时间 = 交易 `opened_at` 所在 UTC 分钟、离场点时间 = `closed_at` 所在 UTC 分钟”匹配；没写的字段不显示。解析与文字在 `tradeinfo.mjs`（纯函数，`tests/review-tradeinfo.test.mjs`）。
+- 有入场记录时，顶部“入场前最近记录的周期”显示如“15m 判断 · 3m 入场 · SMA20”，入场周期那张图高亮；没有 `trade_info`（V1、旧回测）时保持 MA5 context 的原逻辑，条件区显示“此回测没有记录入场/离场条件”。

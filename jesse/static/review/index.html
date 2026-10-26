@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>多周期复盘 · Jesse</title>
   <link rel="icon" href="/favicon.ico">
-  <link rel="stylesheet" href="./review.css?v=20261026b">
+  <link rel="stylesheet" href="./review.css?v=20261026c">
 </head>
 <body>
   <header>
@@ -65,6 +65,10 @@
         <section class="selection" aria-label="当前交易">
           <div id="trade-info"></div><strong id="context"></strong>
           <p id="order-info"></p>
+          <section id="conditions" class="conditions" aria-label="入场与离场条件" hidden>
+            <div class="conditions-head"><h3>入场 / 离场条件</h3><button id="conditions-toggle" type="button" aria-controls="conditions-body" aria-expanded="true">收起</button></div>
+            <div id="conditions-body" class="conditions-body"></div>
+          </section>
         </section>
         <div class="notice">所选周期与附图时间联动 · 时间统一为 UTC · 蓝色竖线定位事件所在 K 线。图上包含事件后的历史走势；判断信号请看“入场时已收盘”数值。高周期由保存的 1m 数据合成。</div>
         <div id="charts" class="chart-grid"></div>
@@ -75,7 +79,7 @@
   <script type="module">
     // REVIEW_VERSION: change it (and every "?v=" in the .mjs imports and the stylesheet link) whenever
     // any file in this folder changes. tests/review-version.test.mjs checks that they all match.
-    const REVIEW_VERSION = '20261026b';
+    const REVIEW_VERSION = '20261026c';
     import(`./app.mjs?v=${REVIEW_VERSION}`).catch(error => {
       const status = document.getElementById('status');
       status.hidden = false; status.classList.add('error'); status.textContent = `复盘页脚本加载失败：${error.message}`;
