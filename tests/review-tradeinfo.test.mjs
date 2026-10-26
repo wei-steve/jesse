@@ -44,7 +44,7 @@ test('summary and entry lines use plain Chinese with 2 decimals; missing values 
   assert.equal(rows['趋势强度'], '效率比 0.62');      // ADX and stack not recorded
   assert.equal(rows['1h 过滤'], '偏空');
   assert.equal(rows['紧急止损价'], '80,000.00');
-  assert.match(rows['挂单创建'], / UTC$/);
+  assert.equal(rows['挂单创建'], '11-14 22:12:00 UTC'); // T0 - 180 + 60 s, same as the order created_at
   assert.deepEqual(entryLines({ entry_atr: 5 }), [{ label: 'ATR', text: '5.00' }]);
   assert.equal(entrySummary({ entry_exec_tf: 60 }), '1h 入场');
 });

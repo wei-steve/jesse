@@ -85,7 +85,8 @@ export function entryLines(entry) {
   if (finite(entry.entry_filter_1h)) {
     add('1h 过滤', entry.entry_filter_1h > 0 ? '偏多' : entry.entry_filter_1h < 0 ? '偏空' : '中性');
   }
-  if (finite(entry.entry_order_created)) add('挂单创建', utc(entry.entry_order_created));
+  // The recorded value is the 1m candle open time; Jesse's order created_at is the candle close (+60 s).
+  if (finite(entry.entry_order_created)) add('挂单创建', utc(entry.entry_order_created + 60));
   if (finite(entry.entry_stop)) add('紧急止损价', fixed(entry.entry_stop));
   return rows;
 }
