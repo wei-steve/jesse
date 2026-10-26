@@ -8,3 +8,4 @@ main[hidden]{display:none}
 @media(min-width:951px) and (max-height:900px){.pane-host{height:72px}}
 /* MA group: wrapping title tags, colour swatches, 12-row editor. */
 .chart-head h3{flex-wrap:wrap}.chart-head h3 span.ma-tag{display:inline-flex;align-items:center;flex-wrap:wrap}.ma-dot{display:inline-block;width:8px;height:8px;border-radius:2px;margin:0 2px 0 1px}.legend-item{white-space:nowrap}.ma-rows{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;width:100%}.ma-row{border:1px solid #dce3ee;border-radius:7px;padding:4px 7px}.ma-row input[type=number]{width:70px}.indicator-swatches{display:inline-flex;gap:2px;flex-wrap:wrap;max-width:90px}
+.indicator-form label[hidden]{display:none}.indicator-params.ma-params{flex-basis:100%;order:1;flex-direction:column;align-items:flex-start}
