@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>多周期复盘 · Jesse</title>
+  <link rel="icon" href="/favicon.ico">
+  <link rel="stylesheet" href="./review.css">
+</head>
+<body>
+  <header>
+    <div><span class="brand">J</span><div><h1>多周期复盘</h1><p id="session-title">正在读取 Jesse 回测…</p></div></div>
+    <a id="dashboard" href="/">返回 Jesse 回测 ↗</a>
+  </header>
+  <div id="status" role="status">正在加载…</div>
+  <div id="workspace" hidden>
+    <section class="toolbar" aria-label="查看设置">
+      <label>交易路由 <select id="route" aria-label="交易路由"></select></label>
+      <label>共同时间窗口 <select id="span" aria-label="共同时间窗口"><option value="21600">6 小时</option><option value="43200" selected>12 小时</option><option value="86400">24 小时</option></select></label>
+      <button id="previous">← 上一笔</button><button id="next">下一笔 →</button>
+      <button id="entry">定位入场</button><button id="exit">定位离场</button>
+      <label class="toggle"><input id="all-markers" type="checkbox">显示全部成交</label>
+    </section>
+    <main>
+      <aside>
+        <div class="aside-head"><h2>交易记录 <span id="trade-count"></span></h2>
+          <select id="sort" aria-label="交易排序"><option value="recent">时间顺序</option><option value="worst">亏损优先</option><option value="best">盈利优先</option></select>
+        </div>
+        <div id="trades" aria-label="交易列表"></div>
+      </aside>
+      <section class="review">
+        <section class="selection" aria-label="当前交易">
+          <div id="trade-info"></div><strong id="context"></strong>
+          <p id="order-info"></p>
+        </section>
+        <div class="notice">四图时间联动 · 时间统一为 UTC · 蓝色竖线定位事件所在 K 线。图上包含事件后的历史走势；判断信号请看每张图的“当时已收盘”数值。高周期由保存的 1m 数据合成。</div>
+        <div id="charts" class="chart-grid"></div>
+        <p class="footnote">SMA5 使用各周期收盘价。缺失分钟或不完整的高周期 K 线不绘制；开头不足 5 根时不计算 SMA。图表上下文在 1m 收盘后记录，不等同于原始挂单产生时的完整信号。成交时间按 Jesse 回测记录，无法还原分钟内的先后顺序。</p>
+      </section>
+    </main>
+  </div>
+  <script type="module" src="./app.mjs"></script>
+</body>
+</html>
