@@ -28,8 +28,8 @@ export function configuredIntervals(form, route) {
 }
 
 export function chooseIntervals(configured) {
-  const sorted = [...new Set(configured)].sort((a, b) => b - a);
-  return sorted;
+  // Smallest timeframe first.
+  return [...new Set(configured)].sort((a, b) => a - b);
 }
 
 export function validateIndicator(input) {
@@ -56,7 +56,7 @@ export function restorePreferences(serialized) {
     if (value?.version !== 1) return defaults();
     const intervals = Array.isArray(value.intervals) && value.intervals.length > 0
       && value.intervals.every(n => TIMEFRAMES.includes(n))
-      ? [...new Set(value.intervals)].sort((a, b) => b - a) : null;
+      ? [...new Set(value.intervals)].sort((a, b) => a - b) : null;
     // Bound saved configurations to keep accidental huge storage values from
     // creating hundreds of expensive charts. The UI uses the same limit.
     const indicators = Array.isArray(value.indicators) && value.indicators.length <= 10

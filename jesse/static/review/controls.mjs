@@ -25,7 +25,7 @@ export function mountControls(form, route, preferences, changed) {
       input.onchange = () => {
         const next = input.checked ? [...preferences.intervals, interval] : preferences.intervals.filter(n => n !== interval);
         if (!next.length) { input.checked = true; message('请至少保留 1 个显示周期。'); return; }
-        preferences.intervals = next.sort((a, b) => b - a); save();
+        preferences.intervals = next.sort((a, b) => a - b); save();
       };
       label.append(input, document.createTextNode(timeframeLabel(interval)));
       if (configured.includes(interval)) {
