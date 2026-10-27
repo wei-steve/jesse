@@ -80,16 +80,17 @@ test('status line lists every timeframe and gives the advice', () => {
   const list = rideSeries({ ride: { '1h': line([[0, 20]]), '15m': line([[0, 5], [500, 0]]), '5m': line([[0, 10]]), '3m': line([[0, -5]]) } });
   let s = signalStatus(list, 100);
   assert.equal(s.text, '1h ↑MA20 · 15m ↑MA5 · 5m ↑MA10 · 3m ↓MA5');
-  assert.equal(s.advice, '不宜做空，不宜做多');
+  assert.equal(s.advice, '1h、15m、5m 向上 → 不宜做空；3m 向下 → 不宜做多');
   s = signalStatus(list, 600);
   assert.equal(s.text, '1h ↑MA20 · 15m — · 5m ↑MA10 · 3m ↓MA5');
+  assert.equal(s.advice, '1h、5m 向上 → 不宜做空；3m 向下 → 不宜做多');
   s = signalStatus(rideSeries({ ride: { '1h': line([[0, 20]]), '5m': line([[0, 0]]) } }), 10);
   assert.equal(s.text, '1h ↑MA20 · 5m —');
-  assert.equal(s.advice, '不宜做空');
+  assert.equal(s.advice, '1h 向上 → 不宜做空');
   s = signalStatus(rideSeries({ ride: { '1h': line([[100, 20]]) } }), 10);
   assert.equal(s.text, '1h —');
   assert.equal(s.advice, '');
-  assert.equal(signalStatus(rideSeries({ ride: { '3m': line([[0, -5]]) } }), 0).advice, '不宜做多');
+  assert.equal(signalStatus(rideSeries({ ride: { '3m': line([[0, -5]]) } }), 0).advice, '3m 向下 → 不宜做多');
 });
 
 test('valueAt is a step lookup', () => {
@@ -130,22 +131,36 @@ test('annotations: one marker per interval, the ridden SMA changes with the peri
     [0, 'MA10↑', 'belowBar', 'arrowUp', '#16a082'],
     [2400, 'MA5↓', 'aboveBar', 'arrowDown', '#dd6070'],
   ]);
-  // up: bars 0..4 (start 240 -> bar 0; ends at 1740 -> bar closed by 1800 is #5, so last = 4), then a gap at bar 5
-  assert.deepEqual(lines.up.map(p => p.time), [0, 300, 600, 900, 1200, 1500]);
-  assert.equal(lines.up[0].value, 10000);       // MA10 before the change
-  assert.equal(lines.up[2].value, 10000 + 2);   // bar 2 closes at 900, value of 1140 not yet known
-  assert.equal(lines.up[3].value, 20000 + 3);   // bar 3 closes at 1200 (known at 1140) -> MA20
-  assert.ok(!('value' in lines.up.at(-1)));
-  assert.deepEqual(lines.down.map(p => p.time), [2400, 2700, 3000]);
-  assert.equal(lines.down[0].value, 5000 + 8);
-  assert.ok(!('value' in lines.down.at(-1)));
+  // up: bars 0..4 (start 240 -> bar 0; ends at 1740 -> bar closed by 1800 is #5, so last = 4); no padding points
+  assert.equal(lines.up.length, 1);
+  assert.deepEqual(lines.up[0].map(p => p.time), [0, 300, 600, 900, 1200]);
+  assert.equal(lines.up[0][0].value, 10000);       // MA10 before the change
+  assert.equal(lines.up[0][2].value, 10000 + 2);   // bar 2 closes at 900, value of 1140 not yet known
+  assert.equal(lines.up[0][3].value, 20000 + 3);   // bar 3 closes at 1200 (known at 1140) -> MA20
+  assert.equal(lines.down.length, 1);
+  assert.deepEqual(lines.down[0].map(p => p.time), [2400, 2700]);
+  assert.equal(lines.down[0][0].value, 5000 + 8);
+});
+
+test('every interval is its own line (the chart joins consecutive points of one series)', () => {
+  const c = bars(5, 30);
+  // two up intervals separated by a gap of several bars, then a down one
+  const rides = mergeRides(series('5m', [[240, 10], [1440, 0], [3240, 10], [4440, 0], [5640, -5], [6840, 0]]), 9000);
+  const { lines } = rideAnnotations(c, rides, () => new Map(c.map(b => [b.time, b.close])));
+  assert.equal(lines.up.length, 2);
+  assert.ok(lines.up[0].at(-1).time < lines.up[1][0].time);
+  assert.equal(lines.down.length, 1);
+  for (const data of [...lines.up, ...lines.down]) assert.ok(data.every(p => Number.isFinite(p.value)));
 });
 
 test('annotations skip bars without an SMA value (warm-up) instead of drawing zeros', () => {
   const c = bars(5, 6);
   const rides = mergeRides(series('5m', [[240, 10]]), 3000);
-  const { lines } = rideAnnotations(c, rides, () => new Map([[c[2].time, 7]]));
-  assert.deepEqual(lines.up.filter(p => 'value' in p), [{ time: c[2].time, value: 7 }]);
+  const { lines, markers } = rideAnnotations(c, rides, () => new Map([[c[2].time, 7]]));
+  assert.equal(markers.length, 1);
+  assert.deepEqual(lines.up, []);               // a single drawable bar draws nothing
+  const two = rideAnnotations(c, rides, () => new Map([[c[2].time, 7], [c[3].time, 8]]));
+  assert.deepEqual(two.lines.up, [[{ time: c[2].time, value: 7 }, { time: c[3].time, value: 8 }]]);
 });
 
 test('real data (BTC 2026-10-13..): 4 timeframes, alternating-free intervals, sensible bars', () => {

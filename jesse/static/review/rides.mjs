@@ -108,16 +108,18 @@ export function neighbour(rides, current, step) {
   return rides.findLast(r => r.start < current.start) ?? null;
 }
 
-// Status of every timeframe at time t (1m open seconds): "1h ↑MA20 · 15m — · ...", plus advice.
+// Status of every timeframe at time t (1m open seconds): "1h ↑MA20 · 15m — · ...", plus advice that names
+// the timeframes behind it: "1h、5m 向上 → 不宜做空；3m 向下 → 不宜做多" (list order = series order).
 export function signalStatus(seriesList, t) {
-  let up = false, down = false;
+  const upTfs = [], downTfs = [];
   const parts = seriesList.map(series => {
     const value = valueAt(series.points, t);
-    if (value > 0) up = true; else if (value < 0) down = true;
+    if (value > 0) upTfs.push(series.title); else if (value < 0) downTfs.push(series.title);
     return `${series.title} ${value ? `${arrow(value)}MA${Math.abs(value)}` : '—'}`;
   });
-  const advice = [up && '不宜做空', down && '不宜做多'].filter(Boolean).join('，');
-  return { text: parts.join(' · '), advice, up, down };
+  const advice = [upTfs.length && `${upTfs.join('、')} 向上 → 不宜做空`, downTfs.length && `${downTfs.join('、')} 向下 → 不宜做多`]
+    .filter(Boolean).join('；');
+  return { text: parts.join(' · '), advice, up: upTfs.length > 0, down: downTfs.length > 0 };
 }
 
 // Candle index (in a time-sorted candle array of `minutes`-minute bars) of the last bar closed at or before
@@ -145,9 +147,12 @@ export function rideSpan(candles, ride) {
 
 // Chart annotations of the rides of ONE timeframe (`rides` must all be of that timeframe) on its candles.
 //  markers: one per interval, at its first bar ("MA10↑" green below, "MA10↓" red above).
-//  lines:   { up: [...], down: [...] } line-series data. Inside an interval each bar carries the SMA of the
-//           period in force when that bar closed (it changes with the periods); outside, a whitespace point
-//           ({time} only) breaks the line. `smaFor(period)` returns Map(time -> value) for that period.
+//  lines:   { up: [[...], ...], down: [[...], ...] } one line-series data array PER INTERVAL. The charting
+//           library connects consecutive points of a series (a whitespace point does not break the line), so
+//           intervals must be separate series to stay apart. Each bar carries the SMA of the period in force
+//           when that bar closed (it changes with the periods); bars without an SMA value (warm-up) are left
+//           out; an interval with fewer than two drawable bars has no line. `smaFor(period)` returns
+//           Map(time -> value) for that period.
 export function rideAnnotations(candles, rides, smaFor) {
   const markers = [], lines = { up: [], down: [] };
   for (const ride of rides) {
@@ -156,22 +161,15 @@ export function rideAnnotations(candles, rides, smaFor) {
     const up = ride.dir > 0;
     markers.push({ time: candles[span.first].time, position: up ? 'belowBar' : 'aboveBar',
       color: up ? '#16a082' : '#dd6070', shape: up ? 'arrowUp' : 'arrowDown', text: `MA${ride.periods[0]}${arrow(ride.dir)}` });
-    const target = up ? lines.up : lines.down;
+    const data = [];
     let seg = 0;
     for (let i = span.first; i <= span.last; i++) {
       const known = candles[i].time + ride.minutes * 60 - 60;
       while (seg + 1 < ride.segments.length && ride.segments[seg + 1].time <= known) seg++;
       const value = smaFor(ride.segments[seg].period).get(candles[i].time);
-      target.push(Number.isFinite(value) ? { time: candles[i].time, value } : { time: candles[i].time });
+      if (Number.isFinite(value)) data.push({ time: candles[i].time, value });
     }
-    // A whitespace point on the bar after the interval ends the line, so intervals never join up.
-    if (span.last + 1 < candles.length) target.push({ time: candles[span.last + 1].time });
-  }
-  // Real values win over the whitespace points, then the series must be strictly time-ordered.
-  for (const key of ['up', 'down']) {
-    const byTime = new Map();
-    for (const p of lines[key]) if (!byTime.has(p.time) || 'value' in p) byTime.set(p.time, p);
-    lines[key] = [...byTime.values()].sort((a, b) => a.time - b.time);
+    if (data.length >= 2) (up ? lines.up : lines.down).push(data);
   }
   return { markers: markers.sort((a, b) => a.time - b.time), lines };
 }

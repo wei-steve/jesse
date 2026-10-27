@@ -47,7 +47,7 @@ Jesse 的静态服务没有 `Cache-Control`，浏览器会按启发式缓存 `.m
 **以后改了 `jesse/static/review/` 里任何文件（`.mjs`、`.css`、`index.html`），提交前必须换版本号：**
 
 1. 选一个新版本号，建议日期加字母，如 `20261027b`（当天再改就 `b`）。
-2. 把 `index.html` 里的 `REVIEW_VERSION`、`review.css?v=` 和所有 `.mjs` 文件里 `?v=` 后面的旧版本号全部替换成新的（可用 `grep -rn "?v=" jesse/static/review/` 找，或全局替换旧版本号字符串）。
+2. 把 `index.html` 和 `finder.html` 里的 `REVIEW_VERSION`、`review.css?v=` 和所有 `.mjs` 文件里 `?v=` 后面的旧版本号全部替换成新的（可用 `grep -rn "?v=" jesse/static/review/` 找，或全局替换旧版本号字符串）。
 3. 新增模块时，import 也要写成带同一个 `?v=` 的形式。
 4. 运行 `node --test tests/review-*.test.mjs`。`tests/review-version.test.mjs` 会检查 `index.html` 和所有 import 的版本号一致，漏改会报错（它不能检查你“有没有换新版本号”，所以第 1 步要自己记得）。
 5. 用户普通刷新（Cmd+R）即可拿到新版本。
@@ -91,6 +91,47 @@ docker cp jesse/static/review jesse:/jesse-docker/jesse/static/
 
 **显示**
 - 左侧列表替代交易列表：周期、↑绿/↓红、均线、开始时间（UTC）、持续根数；可按周期勾选过滤（默认全选），按开始时间排序，工具栏“上一个/下一个”按过滤后的列表翻（当前项被过滤掉时取时间上最近的）。点击区间，各周期图一起定位到区间开始，区间所在周期的图高亮。
-- 每张周期图只画本周期的区间：区间第一根 K 线上一个标记（`MA10↑` 绿箭头在下，`MA10↓` 红箭头在上）；区间内把所骑的均线（该周期 K 线上的 SMA N，N 随区间里的值变化）画成粗线，区间外断开。落点：值在 time+60 已知，对应收盘时间 ≤ time+60 的最后一根该周期 K 线；已结束的区间画到“收盘时间 ≤ 结束点 time+60 的那根”之前。均线预热不足的 K 线不画。
-- 顶部状态条：当前时刻各周期状态，如 `1h ↑MA20 · 15m — · 5m ↑MA10 · 3m ↑MA5`，任一周期 ↑ 写“不宜做空”，任一周期 ↓ 写“不宜做多”，都有就都写。选中区间时是区间开始时刻；鼠标在图上移动时是所指 K 线收盘时已知的状态，移开后回到选中区间。
+- 每张周期图只画本周期的区间：区间第一根 K 线上一个标记（`MA10↑` 绿箭头在下，`MA10↓` 红箭头在上）；区间内把所骑的均线（该周期 K 线上的 SMA N，N 随区间里的值变化）画成粗线。每个区间是单独的一条线（图表库会把同一条线上相邻的点连起来，空白点也不能断开，所以区间之间不能共用一条线），区间之间一定断开。落点：值在 time+60 已知，对应收盘时间 ≤ time+60 的最后一根该周期 K 线；已结束的区间画到“收盘时间 ≤ 结束点 time+60 的那根”之前。均线预热不足的 K 线不画。
+- 顶部状态条：当前时刻各周期状态，如 `1h ↑MA20 · 15m — · 5m ↑MA10 · 3m ↑MA5`，第二行写出各自是哪个周期，如 `1h、5m 向上 → 不宜做空；3m 向下 → 不宜做多`（只有一个方向就只写一段，都没有就不写）。选中区间时是区间开始时刻；鼠标在图上移动时是所指 K 线收盘时已知的状态，移开后回到选中区间。
 - 信号模式下隐藏“定位入场/离场”“显示全部成交”和交易排序；列表使用 `content-visibility:auto`，几百上千个区间也不卡。
+
+## 因子查找器
+
+入口 `/review/finder.html`（复盘页顶部“因子查找器”，查找器顶部“← 返回复盘页”）。不依赖回测：直接从数据库读 1m K 线、合成各周期、运行项目里的因子文件、画图，所以能看到今天到最新一分钟的行情，也不创建任何回测。流程：改 `factors/<name>.py` → 页面点“查找”（每次都重新加载文件，不用重启服务）。框架里没有任何具体规则，只有下面的约定。
+
+**因子文件**（项目目录，即 `jesse run` 的 cwd，下的 `factors/<name>.py`，`<name>` 只能是 `^[A-Za-z0-9_]+$`，不能以下划线开头）：
+
+```python
+TITLE = '...'            # 页面下拉框显示
+VERSION = 'v1'           # 页面显示，用于对照
+DESCRIPTION = '...'      # 可选，页面上的一段说明
+TIMEFRAMES = ['1h', '15m', '5m', '3m']   # 默认勾选的周期
+PARAMS = [{'name': 'window', 'label': '最近几根', 'default': 8, 'min': 3, 'max': 50, 'step': 1}]
+WARMUP_BARS = 45         # 每个周期在显示范围之前需要的历史根数
+def compute(candles_by_tf: dict, params: dict) -> dict:
+    # candles_by_tf[tf]: Jesse 格式 ndarray (timestamp ms, open, close, high, low, volume)，已收盘的完整 K 线，含 warmup
+    # 返回 {tf: {'value': 每根一个数, 'touches': 每根一个数(可选), 'label': 可选}}，长度与该周期 K 线相同
+    # value: +N = 沿 SMA N 向上，-N = 沿 SMA N 向下，0 = 无。第 i 根只能用第 0..i 根（不看未来）
+```
+
+- 加载：服务端把 cwd 放进 `sys.path`，每次请求前清掉 `sys.modules` 里的 `factors` 包再 `import_module('factors.<name>')`（因子文件和它 import 的辅助模块都是新的）。名字不合法或文件不存在返回 400；不执行请求里的任何代码。注意 `.pyc` 按修改时间（秒）判断，同一秒内改了文件且长度不变时可能读到旧缓存，正常手工修改不会遇到。
+- `params` 只接受 PARAMS 里声明过的名字（别的名字 400）；缺的用 default；数字超出 min/max 时截断；default 是整数的参数取整；不是数字 400。
+- `compute` 抛异常、返回格式或长度不对：400，`error` 里带异常的最后一行（页面状态区原样显示）。
+- 页面把 `value` 变化转成与信号模式同样的阶梯序列：第 i 根的值在该根收盘时已知（落在该根最后一根 1m 的时间点）。所以区间合并、落点、状态条、上一个/下一个与信号模式完全相同（`rides.mjs`；转换在 `finder-data.mjs` 的 `rideExtra`）。
+
+**接口**（都是 POST，需要登录 token；实现在 `jesse/controllers/factors_controller.py` 和 `jesse/services/factor_finder.py`）
+
+- `POST /factors/list` → `[{name, title, version, description, timeframes, params}]`；`factors/` 不存在时返回 `[]`；某个文件导入失败时该项带 `error`，不影响其他因子。
+- `POST /factors/run` `{factor, exchange, symbol, start, finish?, timeframes, params}`
+  - `start`/`finish`：UTC，ISO 字符串（没写时区按 UTC）或毫秒数；取整到分钟；包含开盘时间在 [start, finish] 内的 1m K 线。`finish` 省略 = 数据库里该品种最新一根 1m。范围上限 45 天（超过 400）；`finish` 不晚于 `start` 也是 400；范围内没有 K 线 404。
+  - 不用 `get_candles_from_db`（它把起止取整到整天，会丢掉今天），用 `_get_candles_from_db` 按精确时间读 1m，自己合成 3m/5m/15m/1h…（支持到 1D；周和月没有干净的对齐方式，不提供）。**只保留完整的 K 线**：桶里缺任何一根 1m、或还没走完（最后一根未收盘的高周期 K 线）都不要，与复盘页口径一致。
+  - 每个周期往前多取 `WARMUP_BARS` 根给 `compute`，返回前去掉；开盘时间早于 `start` 的 K 线算 warmup。
+  - 返回 `{factor, title, version, exchange, symbol, params（实际使用的）, start, finish, last_candle_time, timeframes: {tf: {candles: [{time,open,high,low,close,volume}], value: [...], touches: [...], label?}}}`，时间全是 UTC 秒；`candles`、`value`、`touches` 一一对应；`last_candle_time` 是读到的最后一根 1m 的开盘时间。
+
+**页面**
+- 顶部表单：交易所（默认 Binance Perpetual Futures）、品种（默认 BTC-USDT）、范围（最近 1/3/7/14/30/45 天到最新，默认 7 天；或自定义 UTC 起止，结束留空 = 最新）、因子下拉框（TITLE + VERSION）、PARAMS 输入框（超出范围自动截回）、周期勾选（默认因子的 TIMEFRAMES）。表单内容保存在浏览器（`jesse.finder.form.v1`），下次打开恢复，打开页面和点“查找”都会重新读取最新数据。
+- “更新到最新”：调 `POST /candles/import`（start_date = 昨天 UTC），每 2 秒轮询 `/candles/import-status`，完成后自动再查找；失败时显示错误。顶部写“数据到 xx:xx UTC”，数据落后超过 10 分钟时提示。
+- 结果：左侧区间列表（周期、↑/↓、均线、开始时间、根数；按周期过滤，上一个/下一个），点击后各周期图一起定位；图默认只画 K 线和所骑的均线（粗线，区间之间断开，起点标记 `MA10↑`）。勾选“叠加复盘页的显示设置”后把复盘页保存的主图指标（MA 均线组、SMA、EMA、布林带）叠上来。
+- 状态条与“最新”视图：查找完成后默认定位到最后一根，状态条写此刻各周期状态和各周期的建议（`1h ↑MA20 · 15m — · …` / `1h、5m 向上 → 不宜做空；3m 向下 → 不宜做多`，都没有就写“各周期都没有沿均线走”）；“跳到最新”随时回到这里；点区间或鼠标移到图上时状态条跟着变。
+- 区间从所选范围的起点开始算（范围之前已经开始的区间被截断）；画均线用范围内的 K 线计算，均线周期大于范围内已有 K 线根数时起点附近画不出线。
+- 测试：`tests/test_factor_finder.py`（后端，用示例因子和造的 K 线）、`tests/review-finder-data.test.mjs`（表单、请求、阶梯序列转换）。

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>因子查找器 · Jesse</title>
+  <link rel="icon" href="/favicon.ico">
+  <link rel="stylesheet" href="./review.css?v=20261027b">
+</head>
+<body class="signal-mode finder">
+  <header>
+    <div><span class="brand">J</span><div><h1>因子查找器</h1><p id="data-note">正在读取因子…</p></div></div>
+    <a id="back" href="./index.html">← 返回复盘页</a>
+  </header>
+  <form id="finder-form" class="finder-form" aria-label="查找条件" autocomplete="off">
+    <div class="finder-row">
+      <label>交易所 <input id="f-exchange" aria-label="交易所" size="24"></label>
+      <label>品种 <input id="f-symbol" aria-label="品种" size="10"></label>
+      <label>范围 <select id="f-range" aria-label="范围">
+        <option value="1">最近 1 天</option><option value="3">最近 3 天</option><option value="7">最近 7 天</option>
+        <option value="14">最近 14 天</option><option value="30">最近 30 天</option><option value="45">最近 45 天</option>
+        <option value="custom">自定义（UTC）</option></select></label>
+      <span id="f-custom" class="finder-custom" hidden>
+        <label>开始 <input id="f-start" type="datetime-local" aria-label="开始时间（UTC）"></label>
+        <label>结束 <input id="f-finish" type="datetime-local" aria-label="结束时间（UTC），留空为最新"></label>
+      </span>
+      <label>因子 <select id="f-factor" aria-label="因子"></select></label>
+    </div>
+    <p id="f-description" class="finder-description"></p>
+    <div class="finder-row">
+      <span id="f-params" class="finder-params"></span>
+    </div>
+    <div class="finder-row">
+      <span class="finder-label">周期</span><span id="f-timeframes" class="timeframe-list"></span>
+    </div>
+    <div class="finder-row">
+      <button id="f-run" type="submit">查找</button>
+      <button id="f-import" type="button">更新到最新</button>
+      <button id="f-latest" type="button" disabled>跳到最新</button>
+      <label>窗口 <select id="f-window" aria-label="共同时间窗口"></select></label>
+      <button id="previous" type="button" disabled>← 上一个</button><button id="next" type="button" disabled>下一个 →</button>
+      <label><input id="f-overlay" type="checkbox">叠加复盘页的显示设置（MA 均线组等）</label>
+    </div>
+  </form>
+  <div id="status" role="status">正在加载…</div>
+  <main id="results" hidden>
+    <aside>
+      <div class="aside-head"><h2><strong id="aside-title">信号区间</strong> <span id="trade-count"></span></h2>
+        <div id="ride-filter" class="ride-filter" aria-label="按周期过滤"></div>
+      </div>
+      <div id="trades" aria-label="区间列表"></div>
+    </aside>
+    <section class="review">
+      <section class="selection" aria-label="当前状态">
+        <div id="signal-bar" class="signal-bar" role="status"><strong id="signal-text"></strong><span id="signal-advice"></span></div>
+        <div id="trade-info"></div>
+      </section>
+      <div class="notice">时间统一为 UTC。数据直接来自数据库的 1m K 线（可含今天），只用已收盘的完整 K 线；最后一根未收盘的高周期 K 线不显示。区间从所选范围的起点开始算，范围之前已经开始的区间会被截断。默认只画 K 线和所骑的均线；均线周期大于范围内已有 K 线根数时，起点附近画不出线。</div>
+      <div id="charts" class="chart-grid hide-values"></div>
+    </section>
+  </main>
+  <script type="module">
+    // REVIEW_VERSION: change it (and every "?v=" in the .mjs imports and the stylesheet link) whenever
+    // any file in this folder changes. tests/review-version.test.mjs checks that they all match.
+    const REVIEW_VERSION = '20261027b';
+    import(`./finder.mjs?v=${REVIEW_VERSION}`).catch(error => {
+      const status = document.getElementById('status');
+      status.hidden = false; status.classList.add('error'); status.textContent = `查找器脚本加载失败：${error.message}`;
+    });
+  </script>
+</body>
+</html>

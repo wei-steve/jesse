@@ -30,3 +30,12 @@ test('every relative import in every module carries the same version as index.ht
   }
   assert.ok(checked >= 7);
 });
+
+test('finder.html loads finder.mjs and the stylesheet with the same REVIEW_VERSION', () => {
+  const version = /const REVIEW_VERSION = '([^']+)'/.exec(read('index.html'))[1];
+  const html = read('finder.html');
+  assert.equal(/const REVIEW_VERSION = '([^']+)'/.exec(html)?.[1], version);
+  assert.ok(html.includes('import(`./finder.mjs?v=${REVIEW_VERSION}`)'));
+  assert.ok(html.includes(`href="./review.css?v=${version}"`));
+  assert.ok(!/src="\.\/finder\.mjs/.test(html));
+});
