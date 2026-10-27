@@ -23,3 +23,9 @@ main[hidden]{display:none}
 .aside-head #aside-title{font-size:14px}
 .ride{content-visibility:auto;contain-intrinsic-size:auto 52px}.ride strong{font-weight:600}.ride .up{color:#008268}.ride .down{color:#c73f58}.ride small{white-space:nowrap}.rides-empty{padding:10px;color:#6c7b91;font-size:12px}
 .signal-bar{flex-basis:100%;display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;font-size:15px}.signal-bar[hidden]{display:none}.signal-bar #signal-text{font-variant-numeric:tabular-nums}.signal-bar #signal-advice{color:#c73f58;font-weight:600}
+
+/* Factor finder page (finder.html). */
+.finder-form{background:#fff;border-bottom:1px solid #e0e6ef;padding:10px 20px;display:flex;flex-direction:column;gap:8px}.finder-row{display:flex;flex-wrap:wrap;align-items:center;gap:9px 14px}.finder-row label,.finder-custom,.finder-params,.finder-params label{display:flex;align-items:center;gap:6px}.finder-params{flex-wrap:wrap;gap:8px 16px}.finder-form input:not([type=checkbox]){border:1px solid #dce3ee;border-radius:7px;padding:6px 8px;font:inherit}.finder-params input{width:78px}.finder-label{color:#6c7b91}.finder-description{font-size:12px}.finder-description:empty{display:none}.finder-custom[hidden]{display:none}#f-run{background:#315cd0;border-color:#315cd0;color:#fff}#f-run:hover{background:#2a4fb8}#f-run:disabled{opacity:.5}
+.finder #results[hidden]{display:none}.finder .selection{flex-direction:column;align-items:flex-start}.finder #trade-info{font-size:13px;font-weight:400;color:#4d5f7a}
+.signal-bar #signal-advice{flex-basis:100%}
+.header-links{display:flex;gap:18px;align-items:center}

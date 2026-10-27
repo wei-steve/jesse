@@ -1,13 +1,13 @@
 // Reuse the dependency already shipped with this Jesse dashboard. No CDN or
 // third-party requests are needed; the adapter is isolated for future rebuilds.
 import { t as createChart } from '../_nuxt/eDEyLi0S.js';
-import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261027a';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261027a';
-import { calculateIndicator } from './indicators.mjs?v=20261027a';
-import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261027a';
-import { mountControls } from './controls.mjs?v=20261027a';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations } from './rides.mjs?v=20261027a';
-import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261027a';
+import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261027b';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261027b';
+import { calculateIndicator } from './indicators.mjs?v=20261027b';
+import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261027b';
+import { mountControls } from './controls.mjs?v=20261027b';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations } from './rides.mjs?v=20261027b';
+import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261027b';
 
 const $ = id => document.getElementById(id);
 const money = value => Number.isFinite(value) ? value.toFixed(2) : '—';
@@ -132,7 +132,7 @@ function addPane(panel, result) {
   return pane;
 }
 
-// Signal mode: the ridden SMA as a thick line (green up / red down, broken outside intervals) and a marker
+// Signal mode: the ridden SMA as a thick line (green up / red down, one series per interval so they never join) and a marker
 // at the first bar of every interval of THIS timeframe. Markers are merged with trade markers in updateMarkers.
 function addRides(panel, chart, series, candles, interval) {
   const cache = new Map();
@@ -143,11 +143,14 @@ function addRides(panel, chart, series, candles, interval) {
   const mine = rides.filter(r => r.minutes === interval);
   const { markers, lines } = rideAnnotations(candles, mine, smaFor);
   panel.rideMarkers = markers;
+  // One series per interval: consecutive points of a series are always joined, so this is what keeps
+  // the thick lines of different intervals apart.
   for (const [key, color] of [['up', UP], ['down', DOWN]]) {
-    if (!lines[key].length) continue;
-    const line = chart.addLineSeries({ color, lineWidth: 4, lastValueVisible: false, priceLineVisible: false,
-      crosshairMarkerVisible: false });
-    line.setData(lines[key]);
+    for (const data of lines[key]) {
+      const line = chart.addLineSeries({ color, lineWidth: 4, lastValueVisible: false, priceLineVisible: false,
+        crosshairMarkerVisible: false });
+      line.setData(data);
+    }
   }
 }
 
