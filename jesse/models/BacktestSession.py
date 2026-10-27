@@ -361,12 +361,23 @@ def update_backtest_session_results(
     BacktestSession.update(**d).where(session_liveness.fenced(BacktestSession, BacktestSession.id == id)).execute()
 
 
+# Columns the session list never reads. A finished backtest's chart_data / equity_curve / trades can
+# be several MB per row, and a page of rows made the list take tens of seconds. The list only needs
+# metrics (net profit), state, title and the lease columns that _reconcile_backtest_session_status
+# reads, none of which are in this set; detail reads (get_backtest_session_by_id) still load all.
+_LIST_EXCLUDED_COLUMNS = ('chart_data', 'equity_curve', 'trades')
+
+
+def _list_columns() -> list:
+    return [f for f in BacktestSession._meta.sorted_fields if f.name not in _LIST_EXCLUDED_COLUMNS]
+
+
 def get_backtest_sessions(limit: int = 50, offset: int = 0, title_search: str = None, status_filter: str = None, date_filter: str = None) -> list:
     """
     Returns a list of BacktestSession objects sorted by most recently updated.
     Excludes draft sessions by default.
     """
-    query = BacktestSession.select().where(BacktestSession.status != 'draft').order_by(BacktestSession.updated_at.desc())
+    query = BacktestSession.select(*_list_columns()).where(BacktestSession.status != 'draft').order_by(BacktestSession.updated_at.desc())
     
     # Apply title filter (case-insensitive)
     if title_search:
