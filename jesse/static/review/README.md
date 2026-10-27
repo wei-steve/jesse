@@ -46,7 +46,7 @@ Jesse 的静态服务没有 `Cache-Control`，浏览器会按启发式缓存 `.m
 
 **以后改了 `jesse/static/review/` 里任何文件（`.mjs`、`.css`、`index.html`），提交前必须换版本号：**
 
-1. 选一个新版本号，建议日期加字母，如 `20261027a`（当天再改就 `b`）。
+1. 选一个新版本号，建议日期加字母，如 `20261027b`（当天再改就 `b`）。
 2. 把 `index.html` 里的 `REVIEW_VERSION`、`review.css?v=` 和所有 `.mjs` 文件里 `?v=` 后面的旧版本号全部替换成新的（可用 `grep -rn "?v=" jesse/static/review/` 找，或全局替换旧版本号字符串）。
 3. 新增模块时，import 也要写成带同一个 `?v=` 的形式。
 4. 运行 `node --test tests/review-*.test.mjs`。`tests/review-version.test.mjs` 会检查 `index.html` 和所有 import 的版本号一致，漏改会报错（它不能检查你“有没有换新版本号”，所以第 1 步要自己记得）。
@@ -78,3 +78,19 @@ docker cp jesse/static/review jesse:/jesse-docker/jesse/static/
 - 选中交易后，交易信息区下方显示“入场 / 离场条件”，“收起/展开”按钮的状态随显示设置保存（`showConditions`，旧数据缺省展开）。
 - 数据来自策略写入的 `chart_data.strategy_charts.extra_charts.trade_info`（格式见项目仓库 `tasks/T-13-trade-info-contract.md`）。图表点的 time 是 1m K 线开盘时间，交易 `opened_at` / `closed_at` 是收盘时间，所以按“点 time = opened_at/1000 − 60（离场用 closed_at）”整数秒精确匹配，找不到再试同一 UTC 分钟；没写的字段不显示。解析与文字在 `tradeinfo.mjs`（纯函数，`tests/review-tradeinfo.test.mjs`）。
 - 有入场记录时，顶部“入场前最近记录的周期”显示如“15m 判断 · 3m 入场 · SMA20”，入场周期那张图高亮；没有 `trade_info`（V1、旧回测）时保持 MA5 context 的原逻辑，条件区显示“此回测没有记录入场/离场条件”。
+
+## 信号模式
+
+回测的 `chart_data.strategy_charts.extra_charts` 里有 `ride` 时自动进入信号模式（用于“不交易、只写信号”的辅助回测，0 笔交易也能打开）。没有 `ride` 的普通回测完全不变。页面只认下面的通用格式，不含任何具体规则（逻辑在 `rides.mjs`，纯函数，`tests/review-rides.test.mjs`，夹具 `tests/fixtures/review-ride-extra-charts.json` 是真实信号回测的前 3 天）。
+
+**数据格式**
+- `ride`：每个周期一个 series，title 为 `1h`/`15m`/`5m`/`3m` 等（按 title 解析分钟数，支持 m/h/d/w，不写死周期）。`data` 是 `{time, value}` 阶梯序列：只在值变化时写点，值保持到下一个点，最后一个点保持到回测结束。`time` 是 1m K 线开盘时间（秒），该值在 time+60 收盘时已知。`value` = +N 沿 SMA N 上涨，−N 沿 SMA N 下跌，0 无。
+- `ride_touches`：同样的 title 和时间点，值为回踩次数，只用于显示（取区间内最大值）。
+
+**区间合并规则**（每个周期独立）：连续同方向的非 0 值合成一个区间；区间中途换均线周期不拆开，按顺序记下用过的周期（如 `MA10→MA20`）；区间 = [开始 time, 下一个值为 0 或反向的点的 time)，反向时同一个点既结束旧区间又开始新区间；到回测结束仍未变化的区间结束于最后一根 1m K 线收盘（列表标“到回测结束”）。持续根数 = 区间秒数 ÷ 周期秒数，四舍五入，至少 1。
+
+**显示**
+- 左侧列表替代交易列表：周期、↑绿/↓红、均线、开始时间（UTC）、持续根数；可按周期勾选过滤（默认全选），按开始时间排序，工具栏“上一个/下一个”按过滤后的列表翻（当前项被过滤掉时取时间上最近的）。点击区间，各周期图一起定位到区间开始，区间所在周期的图高亮。
+- 每张周期图只画本周期的区间：区间第一根 K 线上一个标记（`MA10↑` 绿箭头在下，`MA10↓` 红箭头在上）；区间内把所骑的均线（该周期 K 线上的 SMA N，N 随区间里的值变化）画成粗线，区间外断开。落点：值在 time+60 已知，对应收盘时间 ≤ time+60 的最后一根该周期 K 线；已结束的区间画到“收盘时间 ≤ 结束点 time+60 的那根”之前。均线预热不足的 K 线不画。
+- 顶部状态条：当前时刻各周期状态，如 `1h ↑MA20 · 15m — · 5m ↑MA10 · 3m ↑MA5`，任一周期 ↑ 写“不宜做空”，任一周期 ↓ 写“不宜做多”，都有就都写。选中区间时是区间开始时刻；鼠标在图上移动时是所指 K 线收盘时已知的状态，移开后回到选中区间。
+- 信号模式下隐藏“定位入场/离场”“显示全部成交”和交易排序；列表使用 `content-visibility:auto`，几百上千个区间也不卡。
