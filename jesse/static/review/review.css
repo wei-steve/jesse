@@ -16,3 +16,10 @@ main[hidden]{display:none}
 
 /* Entry / exit conditions of the selected trade. */
 .conditions{flex-basis:100%;border-top:1px solid #edf0f5;padding-top:8px}.conditions[hidden],.conditions-body[hidden]{display:none}.conditions-head{display:flex;align-items:center;gap:10px}.conditions-head h3{font-size:13px;margin:0}.conditions-head button{padding:2px 8px;font-size:11px}.conditions-body{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 24px;margin-top:6px;font-size:12px}.conditions-body>p{grid-column:1/-1}.condition-block h4{font-size:12px;margin:0 0 4px;color:#315cd0}.condition-block dl{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin:0}.condition-block dt{color:#6c7b91}.condition-block dd{margin:0;font-variant-numeric:tabular-nums}@media(max-width:700px){.conditions-body{grid-template-columns:1fr}}
+
+/* Signal mode (backtest with extra_charts.ride): ride list in place of the trade list, status bar on top. */
+.trade-only[hidden]{display:none}.signal-mode .trade-only{display:none}
+.aside-head .ride-filter{display:flex;flex-wrap:wrap;gap:4px 10px;width:100%;color:#203047}.ride-filter[hidden]{display:none}.ride-filter label{display:flex;gap:4px;align-items:center;cursor:pointer}
+.aside-head #aside-title{font-size:14px}
+.ride{content-visibility:auto;contain-intrinsic-size:auto 52px}.ride strong{font-weight:600}.ride .up{color:#008268}.ride .down{color:#c73f58}.ride small{white-space:nowrap}.rides-empty{padding:10px;color:#6c7b91;font-size:12px}
+.signal-bar{flex-basis:100%;display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;font-size:15px}.signal-bar[hidden]{display:none}.signal-bar #signal-text{font-variant-numeric:tabular-nums}.signal-bar #signal-advice{color:#c73f58;font-weight:600}

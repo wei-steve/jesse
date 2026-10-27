@@ -1,12 +1,13 @@
 // Reuse the dependency already shipped with this Jesse dashboard. No CDN or
 // third-party requests are needed; the adapter is isolated for future rebuilds.
 import { t as createChart } from '../_nuxt/eDEyLi0S.js';
-import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261026h';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261026h';
-import { calculateIndicator } from './indicators.mjs?v=20261026h';
-import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261026h';
-import { mountControls } from './controls.mjs?v=20261026h';
-import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261026h';
+import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261027a';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261027a';
+import { calculateIndicator } from './indicators.mjs?v=20261027a';
+import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261027a';
+import { mountControls } from './controls.mjs?v=20261027a';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations } from './rides.mjs?v=20261027a';
+import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261027a';
 
 const $ = id => document.getElementById(id);
 const money = value => Number.isFinite(value) ? value.toFixed(2) : '—';
@@ -19,8 +20,11 @@ let sessionId = null;
 // time axes line up vertically inside a card.
 const SCALE_WIDTH = 72;
 const UP = '#16a082', DOWN = '#dd6070';
+let rideData = [];
 let session, chartData, route, trades = [], orderedTrades = [], selected, panels = [], views = [], anchor, syncing = false;
 let tradeIndex = null;
+// Signal mode: the backtest has extra_charts.ride (see rides.mjs). Rides replace the trade list.
+let signalMode = false, rides = [], rideLines = [], selectedRide = null, shownTfs = new Set(), statusTime;
 let entryTime, contextPoints = [], token, loadVersion = 0, rangeLink, preferences, wantedRange;
 
 try { preferences = restorePreferences(localStorage.getItem(STORAGE_KEY)); }
@@ -128,6 +132,25 @@ function addPane(panel, result) {
   return pane;
 }
 
+// Signal mode: the ridden SMA as a thick line (green up / red down, broken outside intervals) and a marker
+// at the first bar of every interval of THIS timeframe. Markers are merged with trade markers in updateMarkers.
+function addRides(panel, chart, series, candles, interval) {
+  const cache = new Map();
+  const smaFor = period => {
+    if (!cache.has(period)) cache.set(period, new Map(sma(candles, period, interval).filter(p => Number.isFinite(p.value)).map(p => [p.time, p.value])));
+    return cache.get(period);
+  };
+  const mine = rides.filter(r => r.minutes === interval);
+  const { markers, lines } = rideAnnotations(candles, mine, smaFor);
+  panel.rideMarkers = markers;
+  for (const [key, color] of [['up', UP], ['down', DOWN]]) {
+    if (!lines[key].length) continue;
+    const line = chart.addLineSeries({ color, lineWidth: 4, lastValueVisible: false, priceLineVisible: false,
+      crosshairMarkerVisible: false });
+    line.setData(lines[key]);
+  }
+}
+
 function makePanel(interval, source) {
   const { candles, omittedBuckets } = aggregateCandles(source, interval);
   const label = timeframeLabel(interval);
@@ -166,6 +189,7 @@ function makePanel(interval, source) {
       panel.views.push(pane.view);
     }
   }
+  if (signalMode) addRides(panel, chart, series, candles, interval);
   const tags = card.querySelector('h3');
   // One tag per indicator; a MA group lists each line's period next to its colour swatch.
   for (const overlay of panel.overlays) {
@@ -193,8 +217,8 @@ function valuesText(item, time) {
 // closed when the selected trade was entered (what the strategy could see).
 function renderLegend(panel, time, hovered) {
   if (panel.empty) return;
-  const prefix = time === null || time === undefined ? '入场时无已收盘 K 线'
-    : hovered ? `${stamp(time)} UTC` : '入场时已收盘';
+  const prefix = time === null || time === undefined ? (signalMode ? '触发时无已收盘 K 线' : '入场时无已收盘 K 线')
+    : hovered ? `${stamp(time)} UTC` : (signalMode ? '触发时已收盘' : '入场时已收盘');
   const legend = panel.card.querySelector('.legend');
   legend.replaceChildren();
   if (panel.overlays.length && time !== null && time !== undefined) {
@@ -216,10 +240,22 @@ function renderLegend(panel, time, hovered) {
   }
 }
 
+// Top bar of signal mode: every timeframe's state at 1m time t, plus the advice.
+function paintSignalBar(t) {
+  $('signal-bar').hidden = !signalMode;
+  if (!signalMode) return;
+  if (t === undefined) { $('signal-text').textContent = ''; $('signal-advice').textContent = ''; return; }
+  const state = signalStatus(rideData, t);
+  $('signal-text').textContent = `${stamp(t)} UTC　${state.text}`;
+  $('signal-advice').textContent = state.advice;
+}
+
 function syncCrosshair(source, time) {
   if (syncing) return;
   syncing = true;
   try {
+    // A hovered bar is judged as of its close (what was known when it finished), like the markers.
+    if (signalMode) paintSignalBar(time === null ? statusTime : time + source.panel.interval * 60 - 60);
     for (const view of views) {
       if (view === source) continue;
       const step = view.panel.interval * 60;
@@ -295,7 +331,8 @@ function updateMarkers() {
   for (const panel of panels) {
     if (panel.empty) continue;
     const shown = $('all-markers').checked ? trades : selected ? [selected] : [];
-    panel.series.setMarkers(executionMarkers(shown, panel.candles, panel.interval));
+    const markers = [...executionMarkers(shown, panel.candles, panel.interval), ...(panel.rideMarkers ?? [])];
+    panel.series.setMarkers(markers.sort((a, b) => a.time - b.time));
     if (panel.line) panel.series.removePriceLine(panel.line);
     panel.line = selected ? panel.series.createPriceLine({ price: selected.entry_price,
       color: '#315cd080', lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: '入场均价' }) : null;
@@ -370,6 +407,65 @@ function selectTrade(trade, focus = true) {
   if (focus) focusAt(entryTime);
 }
 
+// ---- Signal mode: ride list ------------------------------------------------
+const shownRides = () => filterRides(rides, shownTfs);
+const rideButtons = new Map();
+
+function paintRides() {
+  const list = shownRides();
+  rideButtons.clear();
+  const box = $('trades'); box.replaceChildren();
+  if (!list.length) {
+    const none = document.createElement('p'); none.className = 'rides-empty';
+    none.textContent = rides.length ? '没有勾选的周期' : '此回测没有出现信号区间'; box.append(none);
+  }
+  const fragment = document.createDocumentFragment();
+  for (const ride of list) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'trade ride';
+    button.setAttribute('aria-pressed', String(ride === selectedRide));
+    const head = document.createElement('strong');
+    const side = document.createElement('span'); side.className = ride.dir > 0 ? 'up' : 'down'; side.textContent = arrow(ride.dir);
+    head.append(document.createTextNode(`${ride.tf} `), side, document.createTextNode(` ${maText(ride.periods)}`));
+    const details = document.createElement('small');
+    details.textContent = `${stamp(ride.start).slice(0, 11)} UTC · ${ride.bars} 根${ride.ended ? '' : '（到回测结束）'}`;
+    button.append(head, details);
+    button.onclick = () => selectRide(ride);
+    rideButtons.set(ride, button); fragment.append(button);
+  }
+  box.append(fragment);
+  $('trade-count').textContent = `${list.length}/${rides.length} 个`;
+  updateRideNav();
+}
+
+function updateRideNav() {
+  const list = shownRides();
+  $('previous').disabled = !neighbour(list, selectedRide, -1);
+  $('next').disabled = !neighbour(list, selectedRide, 1);
+}
+
+function selectRide(ride, focus = true) {
+  const previous = selectedRide;
+  selectedRide = ride; statusTime = ride.start;
+  if (previous && rideButtons.has(previous)) rideButtons.get(previous).setAttribute('aria-pressed', 'false');
+  rideButtons.get(ride)?.setAttribute('aria-pressed', 'true');
+  rideButtons.get(ride)?.scrollIntoView?.({ block: 'nearest' });
+  $('trade-info').textContent = `${ride.tf} ${arrow(ride.dir)} ${maText(ride.periods)} · ${stamp(ride.start)} UTC 起 · 持续 ${ride.bars} 根${ride.ended ? '' : '（到回测结束）'} · 最多回踩 ${ride.maxTouches} 次`;
+  $('context').textContent = ''; $('order-info').textContent = '';
+  for (const panel of panels) {
+    panel.card.classList.toggle('chosen', panel.interval === ride.minutes);
+    if (panel.empty) continue;
+    // The value is known when the 1m candle closes, at start + 60.
+    const closed = lastClosedCandle(panel.candles, panel.interval, ride.start + 60);
+    panel.asOf = closed?.time ?? null;
+    panel.card.querySelector('.closed-summary').textContent = closed
+      ? `触发时最后已收盘：${stamp(closed.time)} UTC · 收盘 ${money(closed.close)}` : '触发时没有已保存的完整收盘 K 线';
+    renderLegend(panel, panel.asOf, false);
+  }
+  paintSignalBar(statusTime); updateRideNav(); updateMarkers();
+  if (focus) focusAt(ride.start);
+}
+
 function buildPanels() {
   for (const view of views) { view.observer.disconnect(); view.chart.remove(); }
   panels = []; views = []; $('charts').replaceChildren();
@@ -384,9 +480,38 @@ function rebuild() {
   if (!chartData) return;
   const range = wantedRange;
   try { buildPanels(); } catch (error) { status(error.message, true); return; }
-  if (selected) selectTrade(selected, false); else updateMarkers();
+  if (signalMode && selectedRide) selectRide(selectedRide, false);
+  else if (selected) selectTrade(selected, false); else updateMarkers();
   if (range) showRange(range); else if (anchor !== undefined) focusAt(anchor);
   for (const view of views) drawAnchor(view);
+}
+
+// Enters or leaves signal mode for the loaded route (there is a `ride` series or not). Without one the page
+// is exactly the trade review page.
+function setSignalMode(data) {
+  const extra = data?.strategy_charts?.extra_charts;
+  rideData = rideSeries(extra);
+  signalMode = rideData.length > 0;
+  const end = data?.candles?.length ? data.candles.reduce((m, c) => Math.max(m, c.time), 0) + 60 : undefined;
+  rides = signalMode ? buildRides(extra, end) : [];
+  selectedRide = null; statusTime = undefined; shownTfs = new Set(rideData.map(s => s.title));
+  document.body.classList.toggle('signal-mode', signalMode);
+  $('aside-title').textContent = signalMode ? '信号区间' : '交易记录';
+  $('previous').textContent = signalMode ? '← 上一个' : '← 上一笔';
+  $('next').textContent = signalMode ? '下一个 →' : '下一笔 →';
+  $('signal-bar').hidden = true;
+  const filter = $('ride-filter');
+  filter.replaceChildren(); filter.hidden = !signalMode;
+  for (const series of rideData) {
+    const label = document.createElement('label');
+    const box = document.createElement('input'); box.type = 'checkbox'; box.checked = true;
+    box.setAttribute('aria-label', `列表显示 ${series.title} 区间`);
+    box.onchange = () => {
+      if (box.checked) shownTfs.add(series.title); else shownTfs.delete(series.title);
+      paintRides();
+    };
+    label.append(box, document.createTextNode(series.title)); filter.append(label);
+  }
 }
 
 async function loadRoute() {
@@ -408,12 +533,23 @@ async function loadRoute() {
   trades = (session.trades ?? []).filter(t => t.exchange === route.exchange && t.symbol === route.symbol && Number.isFinite(t.opened_at));
   contextPoints = contextPointsFor(chartData.strategy_charts);
   tradeIndex = tradeInfoIndex(chartData.strategy_charts);
+  setSignalMode(chartData);
   mountControls(session.state.form, route, preferences, rebuild);
   buildPanels();
   for (const control of document.querySelectorAll('.toolbar button, .toolbar input, #span')) control.disabled = false;
-  selected = null; paintTrades(); $('trade-count').textContent = `${trades.length} 笔`;
+  selected = null;
+  if (signalMode) paintRides(); else { paintTrades(); $('trade-count').textContent = `${trades.length} 笔`; }
   $('status').hidden = true; document.querySelector('main').hidden = false;
-  if (orderedTrades.length) selectTrade(orderedTrades[0]);
+  if (signalMode) {
+    const first = shownRides()[0];
+    if (first) selectRide(first);
+    else {
+      $('trade-info').textContent = '此回测没有出现信号区间';
+      const last = panels.find(p => !p.empty)?.candles.at(-1);
+      statusTime = last ? last.time + 60 : undefined; paintSignalBar(statusTime);
+      if (last) focusAt(last.time);
+    }
+  } else if (orderedTrades.length) selectTrade(orderedTrades[0]);
   else {
     $('trade-info').textContent = '此路由没有成交记录';
     const last = panels.find(p => !p.empty)?.candles.at(-1);
@@ -497,6 +633,8 @@ function clearSession() {
   for (const view of views) { view.observer.disconnect(); view.chart.remove(); }
   panels = []; views = []; session = chartData = route = selected = anchor = wantedRange = entryTime = undefined;
   trades = []; orderedTrades = []; contextPoints = []; tradeIndex = null;
+  signalMode = false; rides = []; rideData = []; selectedRide = null; statusTime = undefined; rideButtons.clear();
+  document.body.classList.remove('signal-mode'); $('signal-bar').hidden = true; $('ride-filter').replaceChildren();
   for (const id of ['charts', 'trades', 'route']) $(id).replaceChildren();
   for (const id of ['trade-info', 'context', 'order-info', 'trade-count']) $(id).textContent = '';
   $('conditions-body').replaceChildren(); $('conditions').hidden = true;
@@ -557,6 +695,7 @@ async function start() {
   $('route').onchange = () => { loadRoute().catch(error => status(error.message, true)); };
   $('sort').onchange = () => { paintTrades(); if (orderedTrades.length) selectTrade(orderedTrades[0]); };
   for (const [id, step] of [['previous', -1], ['next', 1]]) $(id).onclick = () => {
+    if (signalMode) { const ride = neighbour(shownRides(), selectedRide, step); if (ride) selectRide(ride); return; }
     const index = orderedTrades.findIndex(t => t.id === selected?.id);
     if (orderedTrades[index + step]) selectTrade(orderedTrades[index + step]);
   };
