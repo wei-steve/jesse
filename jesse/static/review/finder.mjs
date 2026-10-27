@@ -2,11 +2,11 @@
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
 import { t as createChart } from '../_nuxt/eDEyLi0S.js';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261027b';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261027b';
-import { calculateIndicator } from './indicators.mjs?v=20261027b';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations } from './rides.mjs?v=20261027b';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261027b';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261027c';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261027c';
+import { calculateIndicator } from './indicators.mjs?v=20261027c';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations } from './rides.mjs?v=20261027c';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261027c';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -237,7 +237,18 @@ function paintSignalBar(t, hovered = false) {
   const state = signalStatus(rideData, t);
   const kind = hovered ? '所指 K 线收盘时' : selectedRide ? '区间开始时' : '最新';
   $('signal-text').textContent = `${kind} · ${stampFull(t + 60)} UTC　${state.text}`;
-  $('signal-advice').textContent = state.advice || (hovered || selectedRide ? '' : '各周期都没有沿均线走');
+  // Always fill the advice line (grey when there is nothing to warn about) so the bar keeps the same height
+  // while the mouse moves; a changing height shifted every chart below it and made the page shake.
+  $('signal-advice').textContent = state.advice || '无提示：各周期都没有沿均线走';
+  $('signal-advice').classList.toggle('calm', !state.advice);
+}
+
+// The condition the shown result was computed with: factor title/version plus every parameter value sent.
+function paintCondition(factor, params) {
+  if (!factor) { $('condition').textContent = ''; return; }
+  const values = factor.params.map(spec => `${spec.label} ${params[spec.name]}`).join(' · ');
+  $('condition-params').textContent = `当前触发条件（${factor.title} ${factor.version}）：${values || '无参数'}`;
+  $('condition-text').textContent = factor.description ?? '';
 }
 
 function paintDataNote() {
@@ -347,12 +358,14 @@ async function run() {
   try {
     const timeframes = form.timeframes[factor.name] ?? factor.timeframes;
     if (!timeframes.length) throw new Error('请至少勾选 1 个周期。');
-    const body = runBody(form, factor.name, selectedParams(factor), timeframes, Date.now());
+    const params = selectedParams(factor);
+    const body = runBody(form, factor.name, params, timeframes, Date.now());
     status('正在查找…');
     const data = await post('/factors/run', body);
     if (version !== runVersion) return;
     status('');
     render(data);
+    paintCondition(factor, params);
   } catch (error) {
     if (version === runVersion) status(error.message, true);
   } finally { if (version === runVersion) $('f-run').disabled = false; }

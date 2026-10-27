@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>多周期复盘 · Jesse</title>
   <link rel="icon" href="/favicon.ico">
-  <link rel="stylesheet" href="./review.css?v=20261027b">
+  <link rel="stylesheet" href="./review.css?v=20261027c">
 </head>
 <body>
   <header>
@@ -81,7 +81,7 @@
   <script type="module">
     // REVIEW_VERSION: change it (and every "?v=" in the .mjs imports and the stylesheet link) whenever
     // any file in this folder changes. tests/review-version.test.mjs checks that they all match.
-    const REVIEW_VERSION = '20261027b';
+    const REVIEW_VERSION = '20261027c';
     import(`./app.mjs?v=${REVIEW_VERSION}`).catch(error => {
       const status = document.getElementById('status');
       status.hidden = false; status.classList.add('error'); status.textContent = `复盘页脚本加载失败：${error.message}`;

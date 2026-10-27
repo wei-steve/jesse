@@ -1,13 +1,13 @@
 // Reuse the dependency already shipped with this Jesse dashboard. No CDN or
 // third-party requests are needed; the adapter is isolated for future rebuilds.
 import { t as createChart } from '../_nuxt/eDEyLi0S.js';
-import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261027b';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261027b';
-import { calculateIndicator } from './indicators.mjs?v=20261027b';
-import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261027b';
-import { mountControls } from './controls.mjs?v=20261027b';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations } from './rides.mjs?v=20261027b';
-import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261027b';
+import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261027c';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261027c';
+import { calculateIndicator } from './indicators.mjs?v=20261027c';
+import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261027c';
+import { mountControls } from './controls.mjs?v=20261027c';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations } from './rides.mjs?v=20261027c';
+import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261027c';
 
 const $ = id => document.getElementById(id);
 const money = value => Number.isFinite(value) ? value.toFixed(2) : '—';
