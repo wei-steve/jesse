@@ -1,7 +1,7 @@
 // Pure helpers of the factor finder page (finder.mjs): request building, saved form, and turning the
 // `/factors/run` answer into the same step series the signal mode of the review page uses (rides.mjs).
 // Nothing here knows what a factor does; the page only draws the numbers the factor file returns.
-import { timeframeMinutes } from './settings.mjs?v=20261028c';
+import { timeframeMinutes } from './settings.mjs?v=20261028d';
 
 export const FORM_KEY = 'jesse.finder.form.v1';
 export const RECENT_DAYS = [1, 3, 7, 14, 30, 90, 180, 365];

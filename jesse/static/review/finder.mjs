@@ -2,11 +2,12 @@
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
 import { t as createChart } from '../_nuxt/eDEyLi0S.js';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261028c';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261028c';
-import { calculateIndicator } from './indicators.mjs?v=20261028c';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261028c';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261028c';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261028d';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261028d';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261028d';
+import { calculateIndicator } from './indicators.mjs?v=20261028d';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261028d';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261028d';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -188,6 +189,7 @@ function makePanel(tf, item, preferences) {
   panel.series = panel.chart.addCandlestickSeries({ upColor: UP, downColor: DOWN, wickUpColor: UP, wickDownColor: DOWN,
     borderVisible: false, lastValueVisible: false, priceLineVisible: false });
   panel.series.setData(item.candles);
+  enablePriceZoom(panel.chart, panel.series, host);
   if (form.overlay) addOverlay(panel, preferences);
   addRides(panel);
   const count = rides.filter(r => r.minutes === interval).length;
