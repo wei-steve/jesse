@@ -29,13 +29,16 @@ from jesse.constants import TIMEFRAME_TO_ONE_MINUTES
 
 NAME_PATTERN = re.compile(r'^[A-Za-z0-9_]+$')
 FACTORS_PACKAGE = 'factors'
-# A longer range makes every request load and aggregate too much 1m data for an interactive page.
-MAX_RANGE_DAYS = 45
+# The limit is on how many bars one request returns (summed over the chosen timeframes), not on days: one
+# year of 1h+15m is light while one year of 3m is not. 600k bars is about 45 MB of JSON and still draws
+# smoothly; e.g. 1h/15m/5m/3m together allow about 1.8 years, 1h/15m alone the whole history.
+MAX_TOTAL_BARS = 600_000
 # Weeks and months have no clean epoch-aligned bucket, so they are not offered.
 MAX_TIMEFRAME_MINUTES = 1440
 MAX_TIMEFRAMES = 8
 DEFAULT_WARMUP_BARS = 50
 MINUTE_MS = 60_000
+_FIELD_NAMES = {'start': '开始时间', 'finish': '结束时间'}
 
 # Importing purges and re-imports the `factors` package; two requests must not interleave doing that.
 _import_lock = threading.Lock()
@@ -69,9 +72,9 @@ def load_factor(name: str):
     edits to the factor file or to a helper module it imports take effect on the next call without restarting.
     """
     if not isinstance(name, str) or not NAME_PATTERN.fullmatch(name) or name.startswith('_'):
-        raise FactorError('Invalid factor name: only letters, digits and underscore are allowed.')
+        raise FactorError('因子名不合法：只能用字母、数字和下划线。')
     if not os.path.isfile(os.path.join(factors_dir(), f'{name}.py')):
-        raise FactorError(f'Factor "{name}" not found in the factors/ folder.')
+        raise FactorError(f'在项目的 factors/ 目录里找不到因子“{name}”。')
     cwd = os.getcwd()
     with _import_lock:
         if cwd not in sys.path:
@@ -83,9 +86,9 @@ def load_factor(name: str):
         try:
             module = importlib.import_module(f'{FACTORS_PACKAGE}.{name}')
         except Exception as exc:
-            raise FactorError(f'Factor "{name}" failed to load: {_last_line(exc)}') from exc
+            raise FactorError(f'因子“{name}”加载失败：{_last_line(exc)}') from exc
     if not callable(getattr(module, 'compute', None)):
-        raise FactorError(f'Factor "{name}" has no compute(candles_by_tf, params) function.')
+        raise FactorError(f'因子“{name}”里没有 compute(candles_by_tf, params) 函数。')
     return module
 
 
@@ -135,17 +138,17 @@ def resolve_params(module, given) -> dict:
     if given is None:
         given = {}
     if not isinstance(given, dict):
-        raise FactorError('params must be an object.')
+        raise FactorError('参数格式不对（params 必须是对象）。')
     spec = {item['name']: item for item in _params_spec(module)}
     unknown = sorted(set(given) - set(spec))
     if unknown:
-        raise FactorError(f'Unknown parameter(s): {", ".join(map(str, unknown))}.')
+        raise FactorError(f'不认识的参数：{"、".join(map(str, unknown))}。')
     resolved = {}
     for pname, item in spec.items():
         default = item.get('default')
         value = given.get(pname, default)
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not np.isfinite(value):
-            raise FactorError(f'Parameter "{pname}" must be a finite number.')
+            raise FactorError(f'参数“{pname}”必须是数字。')
         low, high = item.get('min'), item.get('max')
         if isinstance(low, (int, float)) and value < low:
             value = low
@@ -164,13 +167,13 @@ def resolve_params(module, given) -> dict:
 def parse_time_ms(value, field: str) -> int:
     """UTC time as epoch milliseconds (int/float, or digits) or an ISO string; a string without zone is UTC."""
     if isinstance(value, bool) or value is None:
-        raise FactorError(f'{field} is required.')
+        raise FactorError(f'缺少{_FIELD_NAMES.get(field, field)}。')
     if isinstance(value, (int, float)) or (isinstance(value, str) and re.fullmatch(r'\d{10,}', value.strip())):
         return int(float(value))
     try:
         parsed = datetime.fromisoformat(str(value).strip().replace('Z', '+00:00'))
     except ValueError:
-        raise FactorError(f'{field} must be an ISO time (UTC) or epoch milliseconds.')
+        raise FactorError(f'{_FIELD_NAMES.get(field, field)}格式不对：要 UTC 时间（如 2026-10-01T00:00）或毫秒数。')
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return int(parsed.timestamp() * 1000)
@@ -235,9 +238,9 @@ def _numbers(raw, length: int, tf: str, key: str) -> list:
     try:
         arr = np.asarray(raw, dtype=float)
     except (TypeError, ValueError):
-        raise FactorError(f'compute() returned a non-numeric "{key}" for {tf}.')
+        raise FactorError(f'因子 compute() 给 {tf} 返回的 {key} 不是数字。')
     if arr.shape != (length,):
-        raise FactorError(f'compute() returned {key} of length {arr.size} for {tf}; expected {length}.')
+        raise FactorError(f'因子 compute() 给 {tf} 返回的 {key} 有 {arr.size} 个，应该是 {length} 个（每根 K 线一个）。')
     arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
     return [int(x) if x == int(x) else float(x) for x in arr]
 
@@ -249,40 +252,43 @@ def run_factor(request: dict) -> dict:
 
     exchange, symbol = request.get('exchange'), request.get('symbol')
     if not exchange or not symbol or not isinstance(exchange, str) or not isinstance(symbol, str):
-        raise FactorError('exchange and symbol are required.')
+        raise FactorError('请填写交易所和品种。')
 
     timeframes = request.get('timeframes') or getattr(module, 'TIMEFRAMES', None) or []
     if not isinstance(timeframes, list) or not timeframes:
-        raise FactorError('timeframes must be a non-empty list.')
+        raise FactorError('请至少勾选 1 个周期。')
     timeframes = list(dict.fromkeys(timeframes))
     if len(timeframes) > MAX_TIMEFRAMES:
-        raise FactorError(f'At most {MAX_TIMEFRAMES} timeframes per request.')
+        raise FactorError(f'一次最多勾选 {MAX_TIMEFRAMES} 个周期。')
     for tf in timeframes:
         if tf not in TIMEFRAME_TO_ONE_MINUTES or TIMEFRAME_TO_ONE_MINUTES[tf] > MAX_TIMEFRAME_MINUTES:
-            raise FactorError(f'Unsupported timeframe "{tf}".')
+            raise FactorError(f'不支持的周期“{tf}”。')
 
     start_ms = parse_time_ms(request.get('start'), 'start') // MINUTE_MS * MINUTE_MS
     if request.get('finish') in (None, ''):
         finish_ms = _latest_one_minute_ms(exchange, symbol)
         if finish_ms is None:
-            raise FactorError(f'No candles for {symbol} on {exchange}.', 404)
+            raise FactorError(f'数据库里没有 {exchange} {symbol} 的 K 线，请先导入。', 404)
         finish_ms = int(finish_ms)
     else:
         finish_ms = parse_time_ms(request.get('finish'), 'finish') // MINUTE_MS * MINUTE_MS
     if finish_ms <= start_ms:
-        raise FactorError('finish must be after start.')
-    if finish_ms - start_ms > MAX_RANGE_DAYS * 86_400_000:
-        raise FactorError(f'The range is limited to {MAX_RANGE_DAYS} days.')
+        raise FactorError('结束时间要晚于开始时间。')
+    minutes = (finish_ms - start_ms) // MINUTE_MS + 1
+    total_bars = sum(minutes // TIMEFRAME_TO_ONE_MINUTES[tf] for tf in timeframes)
+    if total_bars > MAX_TOTAL_BARS:
+        raise FactorError(f'这次要取的 K 线太多：约 {total_bars / 10_000:.0f} 万根，上限 {MAX_TOTAL_BARS // 10_000} 万根'
+                          f'（各周期合计）。可以缩短范围，或去掉 1m、3m、5m 这类小周期。')
 
     warmup = getattr(module, 'WARMUP_BARS', DEFAULT_WARMUP_BARS)
     if isinstance(warmup, bool) or not isinstance(warmup, int) or warmup < 0:
-        raise FactorError('WARMUP_BARS of the factor must be a non-negative integer.')
+        raise FactorError('因子的 WARMUP_BARS 必须是不小于 0 的整数。')
     longest = max(TIMEFRAME_TO_ONE_MINUTES[tf] for tf in timeframes)
     fetch_from = start_ms - warmup * longest * MINUTE_MS
     one_minute = _fetch_one_minute(exchange, symbol, fetch_from, finish_ms)
     in_range = one_minute[one_minute[:, 0] >= start_ms] if len(one_minute) else one_minute
     if not len(in_range):
-        raise FactorError(f'No candles for {symbol} on {exchange} in this range.', 404)
+        raise FactorError(f'这个时间范围里没有 {exchange} {symbol} 的 K 线。', 404)
 
     by_tf, shown_from = {}, {}
     for tf in timeframes:
@@ -296,15 +302,15 @@ def run_factor(request: dict) -> dict:
     try:
         result = module.compute({tf: by_tf[tf].copy() for tf in timeframes}, dict(params))
     except Exception as exc:
-        raise FactorError(f'compute() failed: {_last_line(exc)}') from exc
+        raise FactorError(f'因子计算出错：{_last_line(exc)}') from exc
     if not isinstance(result, dict):
-        raise FactorError('compute() must return a dict {timeframe: {"value": [...]}}.')
+        raise FactorError('因子 compute() 的返回格式不对：应为 {周期: {"value": [...]}}。')
 
     output = {}
     for tf in timeframes:
         entry = result.get(tf)
         if not isinstance(entry, dict) or 'value' not in entry:
-            raise FactorError(f'compute() returned no "value" for {tf}.')
+            raise FactorError(f'因子 compute() 没有返回 {tf} 的 value。')
         length = len(by_tf[tf])
         values = _numbers(entry['value'], length, tf, 'value')
         touches = _numbers(entry['touches'], length, tf, 'touches') if entry.get('touches') is not None else [0] * length

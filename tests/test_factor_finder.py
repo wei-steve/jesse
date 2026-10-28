@@ -151,8 +151,11 @@ def test_explicit_finish_iso_and_range_limit(client, project):
     ok = run(client, start='2024-01-01T01:40:00Z', finish='2024-01-01T08:00:00')
     assert ok.status_code == 200
     assert ok.json()['finish'] == T0 // 1000 + 8 * 3600
-    too_long = run(client, start='2024-01-01T00:00:00Z', finish='2024-02-20T00:00:00Z')
-    assert too_long.status_code == 400 and '45' in too_long.json()['error']
+    # the limit is on bars returned, not days: a long range is fine on a big timeframe, too many bars is not
+    long_1h = run(client, start='2023-01-01T00:00:00Z', finish='2024-01-01T08:00:00Z', timeframes=['1h'])
+    assert long_1h.status_code != 400 or '太多' not in long_1h.json().get('error', '')
+    too_many = run(client, start='2022-01-01T00:00:00Z', finish='2024-01-01T08:00:00Z', timeframes=['1m'])
+    assert too_many.status_code == 400 and '太多' in too_many.json()['error']
     assert run(client, start=T0 + 200 * MINUTE, finish=T0 + 100 * MINUTE).status_code == 400
 
 

@@ -2,11 +2,11 @@
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
 import { t as createChart } from '../_nuxt/eDEyLi0S.js';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261027c';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261027c';
-import { calculateIndicator } from './indicators.mjs?v=20261027c';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations } from './rides.mjs?v=20261027c';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261027c';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261028a';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261028a';
+import { calculateIndicator } from './indicators.mjs?v=20261028a';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations } from './rides.mjs?v=20261028a';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261028a';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);

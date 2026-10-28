@@ -46,7 +46,7 @@ Jesse 的静态服务没有 `Cache-Control`，浏览器会按启发式缓存 `.m
 
 **以后改了 `jesse/static/review/` 里任何文件（`.mjs`、`.css`、`index.html`），提交前必须换版本号：**
 
-1. 选一个新版本号，建议日期加字母，如 `20261027c`（当天再改就 `b`）。
+1. 选一个新版本号，建议日期加字母，如 `20261028a`（当天再改就 `b`）。
 2. 把 `index.html` 和 `finder.html` 里的 `REVIEW_VERSION`、`review.css?v=` 和所有 `.mjs` 文件里 `?v=` 后面的旧版本号全部替换成新的（可用 `grep -rn "?v=" jesse/static/review/` 找，或全局替换旧版本号字符串）。
 3. 新增模块时，import 也要写成带同一个 `?v=` 的形式。
 4. 运行 `node --test tests/review-*.test.mjs`。`tests/review-version.test.mjs` 会检查 `index.html` 和所有 import 的版本号一致，漏改会报错（它不能检查你“有没有换新版本号”，所以第 1 步要自己记得）。
@@ -123,13 +123,13 @@ def compute(candles_by_tf: dict, params: dict) -> dict:
 
 - `POST /factors/list` → `[{name, title, version, description, timeframes, params}]`；`factors/` 不存在时返回 `[]`；某个文件导入失败时该项带 `error`，不影响其他因子。
 - `POST /factors/run` `{factor, exchange, symbol, start, finish?, timeframes, params}`
-  - `start`/`finish`：UTC，ISO 字符串（没写时区按 UTC）或毫秒数；取整到分钟；包含开盘时间在 [start, finish] 内的 1m K 线。`finish` 省略 = 数据库里该品种最新一根 1m。范围上限 45 天（超过 400）；`finish` 不晚于 `start` 也是 400；范围内没有 K 线 404。
+  - `start`/`finish`：UTC，ISO 字符串（没写时区按 UTC）或毫秒数；取整到分钟；包含开盘时间在 [start, finish] 内的 1m K 线。`finish` 省略 = 数据库里该品种最新一根 1m。范围不按天数限制，按一次返回的 K 线总根数限制：各所选周期合计不超过 60 万根（约 45 MB；例如 1h/15m/5m/3m 一起约 1.8 年，只选 1h/15m 可以查全部历史），超过返回 400 并提示缩短范围或去掉小周期；`finish` 不晚于 `start` 也是 400；范围内没有 K 线 404。
   - 不用 `get_candles_from_db`（它把起止取整到整天，会丢掉今天），用 `_get_candles_from_db` 按精确时间读 1m，自己合成 3m/5m/15m/1h…（支持到 1D；周和月没有干净的对齐方式，不提供）。**只保留完整的 K 线**：桶里缺任何一根 1m、或还没走完（最后一根未收盘的高周期 K 线）都不要，与复盘页口径一致。
   - 每个周期往前多取 `WARMUP_BARS` 根给 `compute`，返回前去掉；开盘时间早于 `start` 的 K 线算 warmup。
   - 返回 `{factor, title, version, exchange, symbol, params（实际使用的）, start, finish, last_candle_time, timeframes: {tf: {candles: [{time,open,high,low,close,volume}], value: [...], touches: [...], label?}}}`，时间全是 UTC 秒；`candles`、`value`、`touches` 一一对应；`last_candle_time` 是读到的最后一根 1m 的开盘时间。
 
 **页面**
-- 顶部表单：交易所（默认 Binance Perpetual Futures）、品种（默认 BTC-USDT）、范围（最近 1/3/7/14/30/45 天到最新，默认 7 天；或自定义 UTC 起止，结束留空 = 最新）、因子下拉框（TITLE + VERSION）、PARAMS 输入框（超出范围自动截回）、周期勾选（默认因子的 TIMEFRAMES）。表单内容保存在浏览器（`jesse.finder.form.v1`），下次打开恢复，打开页面和点“查找”都会重新读取最新数据。
+- 顶部表单：交易所（默认 Binance Perpetual Futures）、品种（默认 BTC-USDT）、范围（最近 1/3/7/14/30/90/180/365 天到最新，默认 7 天；或自定义 UTC 起止，结束留空 = 最新）、因子下拉框（TITLE + VERSION）、PARAMS 输入框（超出范围自动截回）、周期勾选（默认因子的 TIMEFRAMES）。表单内容保存在浏览器（`jesse.finder.form.v1`），下次打开恢复，打开页面和点“查找”都会重新读取最新数据。
 - “更新到最新”：调 `POST /candles/import`（start_date = 昨天 UTC），每 2 秒轮询 `/candles/import-status`，完成后自动再查找；失败时显示错误。顶部写“数据到 xx:xx UTC”，数据落后超过 10 分钟时提示。
 - 结果：左侧区间列表（周期、↑/↓、均线、开始时间、根数；按周期过滤，上一个/下一个），点击后各周期图一起定位；图默认只画 K 线和所骑的均线（粗线，区间之间断开，起点标记 `MA10↑`）。勾选“叠加复盘页的显示设置”后把复盘页保存的主图指标（MA 均线组、SMA、EMA、布林带）叠上来。
 - 状态条与“最新”视图：查找完成后默认定位到最后一根，状态条写此刻各周期状态和各周期的建议（`1h ↑MA20 · 15m — · …` / `1h、5m 向上 → 不宜做空；3m 向下 → 不宜做多`，都没有就写“各周期都没有沿均线走”）；“跳到最新”随时回到这里；点区间或鼠标移到图上时状态条跟着变。
