@@ -7,7 +7,7 @@
 
 // Wheel delta -> zoom factor. exp() makes one notch in and one notch out cancel exactly; the bounds keep the
 // candles from collapsing to a line or exploding off-screen.
-export const MIN_FACTOR = 0.05, MAX_FACTOR = 20, WHEEL_SPEED = 0.002;
+export const MIN_FACTOR = 0.01, MAX_FACTOR = 20, WHEEL_SPEED = 0.002;
 export function nextFactor(factor, deltaY) {
   return Math.min(MAX_FACTOR, Math.max(MIN_FACTOR, factor * Math.exp(deltaY * WHEEL_SPEED)));
 }
@@ -21,6 +21,17 @@ export function scaledRange(range, factor) {
 
 export function enablePriceZoom(chart, series, host) {
   let factor = 1;
+  // The price scale fits the union of every series' automatic range, so MA overlays and the thick ride line
+  // stopped the stretch early ("放大到一定程度就不能再放大"). Lines added to this chart from now on drop out of
+  // the automatic range while a stretch is active, so only the candles decide it; at factor 1 nothing changes.
+  for (const method of ['addLineSeries', 'addHistogramSeries', 'addAreaSeries', 'addBaselineSeries']) {
+    const add = chart[method]?.bind(chart);
+    if (!add) continue;
+    chart[method] = (options = {}) => add({
+      ...options,
+      autoscaleInfoProvider: original => (factor === 1 ? (options.autoscaleInfoProvider ?? (o => o()))(original) : null),
+    });
+  }
   const apply = () => {
     series.applyOptions({
       autoscaleInfoProvider: original => {

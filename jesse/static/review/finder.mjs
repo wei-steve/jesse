@@ -2,12 +2,12 @@
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
 import { t as createChart } from '../_nuxt/eDEyLi0S.js';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261028d';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261028d';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261028d';
-import { calculateIndicator } from './indicators.mjs?v=20261028d';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261028d';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261028d';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261028e';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261028e';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261028e';
+import { calculateIndicator } from './indicators.mjs?v=20261028e';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261028e';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261028e';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
