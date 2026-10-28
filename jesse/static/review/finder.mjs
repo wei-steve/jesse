@@ -2,12 +2,12 @@
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
 import { t as createChart } from '../_nuxt/eDEyLi0S.js';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261028g';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261028g';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261028g';
-import { calculateIndicator } from './indicators.mjs?v=20261028g';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261028g';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261028g';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261028h';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261028h';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261028h';
+import { calculateIndicator } from './indicators.mjs?v=20261028h';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261028h';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261028h';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -332,7 +332,7 @@ function selectRide(ride, focus = true) {
   ensureRendered(ride);
   rideButtons.get(ride)?.setAttribute('aria-pressed', 'true');
   rideButtons.get(ride)?.scrollIntoView?.({ block: 'nearest' });
-  $('trade-info').textContent = `${ride.tf} ${arrow(ride.dir)} ${maText(ride.periods)} · ${stampFull(ride.start + 60)} UTC 起 · 持续 ${ride.bars} 根${ride.ended ? '' : '（进行中）'} · 最多回踩 ${ride.maxTouches} 次`;
+  $('trade-info').textContent = `${ride.tf} ${arrow(ride.dir)} ${maText(ride.periods)} · ${stampFull(ride.start + 60)} UTC 起 · 持续 ${ride.bars} 根${ride.ended ? '' : '（进行中）'}${ride.maxTouches ? ` · 最多回踩 ${ride.maxTouches} 次` : ''}`;
   for (const panel of panels) panel.card.classList.toggle('chosen', panel.interval === ride.minutes);
   paintSignalBar(statusTime); updateNav();
   if (focus) showRange(centeredRange(ride.start, Number($('f-window').value)));
