@@ -33,3 +33,5 @@ main[hidden]{display:none}
 .signal-bar #signal-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}.signal-bar #signal-advice{min-height:1.4em}.signal-bar #signal-advice.calm{color:#6c7b91;font-weight:400}
 .finder #trade-info{min-height:1.4em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .finder-condition{display:flex;flex-direction:column;gap:2px;font-size:12px;color:#4d5f7a;border-top:1px dashed #e0e6ef;padding-top:6px;width:100%}.finder-condition strong{font-weight:600;color:#2b3a52}
+/* "A" auto-fit button in the bottom-right corner of a candle chart (where the price and time scales meet). */
+.price-fit{position:absolute;right:4px;bottom:4px;z-index:4;width:22px;height:20px;padding:0;font-size:11px;font-weight:600;line-height:18px;color:#5e6f88;background:#fff;border:1px solid #dce3ee;border-radius:4px}.price-fit[aria-pressed=true]{color:#fff;background:#315cd0;border-color:#315cd0}
