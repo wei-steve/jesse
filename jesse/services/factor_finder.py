@@ -133,7 +133,9 @@ def list_factors() -> list:
 def resolve_params(module, given) -> dict:
     """
     Only names declared in PARAMS are accepted (anything else is a 400). A missing one takes its default and a
-    number outside [min, max] is clamped. A param whose default is an int stays an int.
+    number outside [min, max] is clamped. A param stays an int only when its default, min, max and step are all
+    ints: a factor file may write `'default': 3` for a value that takes 2.5 (step 0.1), and rounding that to 2
+    would silently ignore what the user typed.
     """
     if given is None:
         given = {}
@@ -154,7 +156,8 @@ def resolve_params(module, given) -> dict:
             value = low
         if isinstance(high, (int, float)) and value > high:
             value = high
-        if isinstance(default, int) and not isinstance(default, bool):
+        declared = [item.get(key) for key in ('default', 'min', 'max', 'step') if item.get(key) is not None]
+        if all(isinstance(x, int) and not isinstance(x, bool) for x in declared):
             value = int(round(value))
         resolved[pname] = value
     return resolved

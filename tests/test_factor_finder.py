@@ -165,6 +165,12 @@ def test_params_are_clamped_defaulted_and_validated(client, project):
     assert data['timeframes']['5m']['label'].endswith(':50')
     assert run(client, params={'window': 1}).json()['params']['window'] == 3
     assert run(client, params={'window': 7.6}).json()['params']['window'] == 8  # int param stays int
+    # an int default with a fractional step is a float param: 2.5 must not become 2
+    path = project['dir'] / 'factors' / 'example.py'
+    path.write_text(EXAMPLE.replace("'default': 0.25", "'default': 1"))
+    stat = path.stat()
+    os.utime(path, (stat.st_atime, stat.st_mtime + 5))
+    assert run(client, params={'ratio': 1.55}).json()['params']['ratio'] == 1.55
     unknown = run(client, params={'evil': 1})
     assert unknown.status_code == 400 and 'evil' in unknown.json()['error']
     assert run(client, params={'window': 'x'}).status_code == 400
