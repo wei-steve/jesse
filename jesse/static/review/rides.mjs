@@ -173,3 +173,28 @@ export function rideAnnotations(candles, rides, smaFor) {
   }
   return { markers: markers.sort((a, b) => a.time - b.time), lines };
 }
+
+// All ride lines of one chart as ONE line series. A chart with one series per interval froze the page on long
+// ranges (tens of thousands of series), and this chart library joins every pair of consecutive points of a
+// series. So the intervals are concatenated and the joining segment is hidden: in the bundled Lightweight
+// Charts v4 the segment from a point to the next one is drawn with the STARTING point's `color` (checked by
+// sampling canvas pixels on 2026-10-28), so the last point of every interval is made transparent. Points with
+// a time not after the previous one are dropped (the library needs strictly increasing times).
+export const HIDDEN = 'rgba(0,0,0,0)';
+export function joinRideLines(lines, colors) {
+  const parts = [...lines.up.map(data => [data, colors.up]), ...lines.down.map(data => [data, colors.down])]
+    .sort((a, b) => a[0][0].time - b[0][0].time);
+  const out = [];
+  let last = -Infinity;
+  for (const [data, color] of parts) {
+    let kept = 0;
+    for (const p of data) {
+      if (p.time <= last) continue;
+      out.push({ time: p.time, value: p.value, color });
+      kept++; last = p.time;
+    }
+    // the segment leaving this interval's last point goes to the next interval: hide it
+    if (kept) out[out.length - 1].color = HIDDEN;
+  }
+  return out;
+}

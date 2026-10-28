@@ -1,5 +1,5 @@
-import { TIMEFRAMES, INDICATORS, MA_LINE_COUNT, STORAGE_KEY, timeframeLabel, configuredIntervals, chooseIntervals, validateIndicator } from './settings.mjs?v=20261028a';
-import { indicatorTitle } from './indicators.mjs?v=20261028a';
+import { TIMEFRAMES, INDICATORS, MA_LINE_COUNT, STORAGE_KEY, timeframeLabel, configuredIntervals, chooseIntervals, validateIndicator } from './settings.mjs?v=20261028c';
+import { indicatorTitle } from './indicators.mjs?v=20261028c';
 
 const $ = id => document.getElementById(id);
 const parameterLabels = { period: '周期', deviation: '标准差倍数', fast: '快线周期', slow: '慢线周期', signal: '信号周期' };

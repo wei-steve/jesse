@@ -1,13 +1,13 @@
 // Reuse the dependency already shipped with this Jesse dashboard. No CDN or
 // third-party requests are needed; the adapter is isolated for future rebuilds.
 import { t as createChart } from '../_nuxt/eDEyLi0S.js';
-import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261028a';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261028a';
-import { calculateIndicator } from './indicators.mjs?v=20261028a';
-import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261028a';
-import { mountControls } from './controls.mjs?v=20261028a';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations } from './rides.mjs?v=20261028a';
-import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261028a';
+import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261028c';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261028c';
+import { calculateIndicator } from './indicators.mjs?v=20261028c';
+import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261028c';
+import { mountControls } from './controls.mjs?v=20261028c';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261028c';
+import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261028c';
 
 const $ = id => document.getElementById(id);
 const money = value => Number.isFinite(value) ? value.toFixed(2) : '—';
@@ -143,14 +143,12 @@ function addRides(panel, chart, series, candles, interval) {
   const mine = rides.filter(r => r.minutes === interval);
   const { markers, lines } = rideAnnotations(candles, mine, smaFor);
   panel.rideMarkers = markers;
-  // One series per interval: consecutive points of a series are always joined, so this is what keeps
-  // the thick lines of different intervals apart.
-  for (const [key, color] of [['up', UP], ['down', DOWN]]) {
-    for (const data of lines[key]) {
-      const line = chart.addLineSeries({ color, lineWidth: 4, lastValueVisible: false, priceLineVisible: false,
-        crosshairMarkerVisible: false });
-      line.setData(data);
-    }
+  // One series for all intervals, with the joining segments hidden (see joinRideLines).
+  const data = joinRideLines(lines, { up: UP, down: DOWN });
+  if (data.length) {
+    const line = chart.addLineSeries({ color: UP, lineWidth: 4, lastValueVisible: false, priceLineVisible: false,
+      crosshairMarkerVisible: false });
+    line.setData(data);
   }
 }
 

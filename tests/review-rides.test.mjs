@@ -180,3 +180,13 @@ test('real data (BTC 2026-10-13..): 4 timeframes, alternating-free intervals, se
   assert.equal(first1h.bars, 2);
   assert.equal(first1h.maxTouches, 2);
 });
+
+test('joinRideLines puts every interval in one series and hides the joining segments', async () => {
+  const { joinRideLines, HIDDEN } = await import('../jesse/static/review/rides.mjs');
+  const lines = { up: [[{ time: 0, value: 1 }, { time: 60, value: 2 }], [{ time: 600, value: 5 }, { time: 660, value: 6 }]],
+    down: [[{ time: 300, value: 3 }, { time: 360, value: 4 }], [{ time: 660, value: 9 }, { time: 720, value: 8 }]] };
+  const got = joinRideLines(lines, { up: 'U', down: 'D' });
+  assert.deepEqual(got.map(p => p.time), [0, 60, 300, 360, 600, 660, 720]);   // strictly increasing, duplicate 660 dropped
+  assert.deepEqual(got.map(p => p.color), ['U', HIDDEN, 'D', HIDDEN, 'U', HIDDEN, HIDDEN]);   // a segment takes its starting point's colour
+  assert.deepEqual(joinRideLines({ up: [], down: [] }, { up: 'U', down: 'D' }), []);
+});

@@ -2,11 +2,11 @@
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
 import { t as createChart } from '../_nuxt/eDEyLi0S.js';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261028a';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261028a';
-import { calculateIndicator } from './indicators.mjs?v=20261028a';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations } from './rides.mjs?v=20261028a';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261028a';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261028c';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261028c';
+import { calculateIndicator } from './indicators.mjs?v=20261028c';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261028c';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261028c';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -137,8 +137,8 @@ function newChart(host) {
   });
 }
 
-// The ridden SMA of every interval is its own thick line series: consecutive points of one series are always
-// joined, so separate series are what keeps different intervals apart.
+// The ridden SMA of all intervals is one thick line series; the segments between intervals are transparent
+// (see joinRideLines). One series per interval froze the page on long ranges.
 function addRides(panel) {
   const cache = new Map();
   const smaFor = period => {
@@ -147,11 +147,10 @@ function addRides(panel) {
   };
   const { markers, lines } = rideAnnotations(panel.candles, rides.filter(r => r.minutes === panel.interval), smaFor);
   panel.series.setMarkers(markers);
-  for (const [key, color] of [['up', UP], ['down', DOWN]]) {
-    for (const data of lines[key]) {
-      const line = panel.chart.addLineSeries({ color, lineWidth: 4, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
-      line.setData(data);
-    }
+  const data = joinRideLines(lines, { up: UP, down: DOWN });
+  if (data.length) {
+    const line = panel.chart.addLineSeries({ color: UP, lineWidth: 4, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+    line.setData(data);
   }
 }
 
@@ -261,29 +260,47 @@ function paintDataNote() {
 // ---- Ride list -------------------------------------------------------------
 const shownRides = () => filterRides(rides, shownTfs);
 
+// A long range has tens of thousands of intervals; building every button at once stalls the page, so the
+// list is built in chunks: more are appended when the list is scrolled near its end, or when a ride further
+// down is selected (上一个/下一个, clicking a chart).
+const LIST_CHUNK = 300;
+let listShown = [], listRendered = 0;
+function rideButton(ride) {
+  const button = document.createElement('button');
+  button.type = 'button'; button.className = 'trade ride';
+  button.setAttribute('aria-pressed', String(ride === selectedRide));
+  const head = document.createElement('strong');
+  const side = document.createElement('span'); side.className = ride.dir > 0 ? 'up' : 'down'; side.textContent = arrow(ride.dir);
+  head.append(document.createTextNode(`${ride.tf} `), side, document.createTextNode(` ${maText(ride.periods)}`));
+  const details = document.createElement('small');
+  details.textContent = `${stamp(ride.start)} UTC · ${ride.bars} 根${ride.ended ? '' : '（进行中）'}`;
+  button.append(head, details);
+  button.onclick = () => selectRide(ride);
+  rideButtons.set(ride, button);
+  return button;
+}
+function renderMoreRides(count) {
+  const upto = Math.min(listShown.length, listRendered + count);
+  if (upto <= listRendered) return;
+  const fragment = document.createDocumentFragment();
+  for (let i = listRendered; i < upto; i++) fragment.append(rideButton(listShown[i]));
+  $('trades').append(fragment);
+  listRendered = upto;
+}
+function ensureRendered(ride) {
+  const i = listShown.indexOf(ride);
+  if (i >= listRendered) renderMoreRides(i - listRendered + LIST_CHUNK);
+}
+
 function paintRides() {
   const list = shownRides();
-  rideButtons.clear();
+  rideButtons.clear(); listShown = list; listRendered = 0;
   const box = $('trades'); box.replaceChildren();
   if (!list.length) {
     const none = document.createElement('p'); none.className = 'rides-empty';
     none.textContent = rides.length ? '没有勾选的周期' : '这个范围内没有找到区间'; box.append(none);
   }
-  const fragment = document.createDocumentFragment();
-  for (const ride of list) {
-    const button = document.createElement('button');
-    button.type = 'button'; button.className = 'trade ride';
-    button.setAttribute('aria-pressed', String(ride === selectedRide));
-    const head = document.createElement('strong');
-    const side = document.createElement('span'); side.className = ride.dir > 0 ? 'up' : 'down'; side.textContent = arrow(ride.dir);
-    head.append(document.createTextNode(`${ride.tf} `), side, document.createTextNode(` ${maText(ride.periods)}`));
-    const details = document.createElement('small');
-    details.textContent = `${stamp(ride.start)} UTC · ${ride.bars} 根${ride.ended ? '' : '（进行中）'}`;
-    button.append(head, details);
-    button.onclick = () => selectRide(ride);
-    rideButtons.set(ride, button); fragment.append(button);
-  }
-  box.append(fragment);
+  renderMoreRides(LIST_CHUNK);
   $('trade-count').textContent = `${list.length}/${rides.length} 个`;
   updateNav();
 }
@@ -310,6 +327,7 @@ function selectRide(ride, focus = true) {
   const previous = selectedRide;
   selectedRide = ride; statusTime = ride.start;
   if (previous && rideButtons.has(previous)) rideButtons.get(previous).setAttribute('aria-pressed', 'false');
+  ensureRendered(ride);
   rideButtons.get(ride)?.setAttribute('aria-pressed', 'true');
   rideButtons.get(ride)?.scrollIntoView?.({ block: 'nearest' });
   $('trade-info').textContent = `${ride.tf} ${arrow(ride.dir)} ${maText(ride.periods)} · ${stampFull(ride.start + 60)} UTC 起 · 持续 ${ride.bars} 根${ride.ended ? '' : '（进行中）'} · 最多回踩 ${ride.maxTouches} 次`;
@@ -399,6 +417,12 @@ async function start() {
   $('finder-form').onsubmit = event => { event.preventDefault(); run(); };
   $('f-import').onclick = importLatest;
   $('f-latest').onclick = gotoLatest;
+  // #trades scrolls vertically (horizontally on narrow screens): load the next chunk near either end.
+  $('trades').addEventListener('scroll', event => {
+    const box = event.currentTarget;
+    const nearEnd = box.scrollTop + box.clientHeight > box.scrollHeight - 400 || box.scrollLeft + box.clientWidth > box.scrollWidth - 400;
+    if (nearEnd) renderMoreRides(LIST_CHUNK);
+  }, { passive: true });
   $('f-range').onchange = () => {
     // A first switch to "custom" starts from the last 7 days instead of an empty box.
     if ($('f-range').value === 'custom' && !$('f-start').value) $('f-start').value = isoToLocal(Date.now() - 7 * 86400000);
