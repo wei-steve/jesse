@@ -128,8 +128,8 @@ test('annotations: one marker per interval, the ridden SMA changes with the peri
   const smaFor = period => new Map(c.map(bar => [bar.time, period * 1000 + bar.time / 300]));
   const { markers, lines } = rideAnnotations(c, rides, smaFor);
   assert.deepEqual(markers.map(m => [m.time, m.text, m.position, m.shape, m.color]), [
-    [0, 'MA10↑', 'belowBar', 'arrowUp', '#16a082'],
-    [2400, 'MA5↓', 'aboveBar', 'arrowDown', '#dd6070'],
+    [300, 'MA10↑', 'belowBar', 'arrowUp', '#16a082'],     // first bar 0, arrow on the next bar (entry)
+    [2700, 'MA5↓', 'aboveBar', 'arrowDown', '#dd6070'],
   ]);
   // up: bars 0..4 (start 240 -> bar 0; ends at 1740 -> bar closed by 1800 is #5, so last = 4); no padding points
   assert.equal(lines.up.length, 1);
@@ -189,4 +189,11 @@ test('joinRideLines puts every interval in one series and hides the joining segm
   assert.deepEqual(got.map(p => p.time), [0, 60, 300, 360, 600, 660, 720]);   // strictly increasing, duplicate 660 dropped
   assert.deepEqual(got.map(p => p.color), ['U', HIDDEN, 'D', HIDDEN, 'U', HIDDEN, HIDDEN]);   // a segment takes its starting point's colour
   assert.deepEqual(joinRideLines({ up: [], down: [] }, { up: 'U', down: 'D' }), []);
+});
+
+test('a signal on the last candle keeps its arrow there, marked as entering on the next bar', () => {
+  const c = bars(5, 4);   // bars 0..900, last closes at 1200
+  const rides = mergeRides(series('5m', [[1140, 10]]), 1200);
+  const { markers } = rideAnnotations(c, rides, () => new Map());
+  assert.deepEqual(markers.map(m => [m.time, m.text]), [[900, 'MA10↑（下根入场）']]);
 });

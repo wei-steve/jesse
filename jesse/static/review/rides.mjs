@@ -146,7 +146,10 @@ export function rideSpan(candles, ride) {
 }
 
 // Chart annotations of the rides of ONE timeframe (`rides` must all be of that timeframe) on its candles.
-//  markers: one per interval, at its first bar ("MA10↑" green below, "MA10↓" red above).
+//  markers: one per interval, on the bar AFTER its first bar ("MA10↑" green below, "MA10↓" red above): the
+//           signal is only known when the first bar closes, so the earliest entry is the next bar's open (the
+//           user asked for the arrow there, 2026-11-12). When the first bar is the last candle there is no next
+//           bar yet; the arrow stays on it with "（下根入场）" added.
 //  lines:   { up: [[...], ...], down: [[...], ...] } one line-series data array PER INTERVAL. The charting
 //           library connects consecutive points of a series (a whitespace point does not break the line), so
 //           intervals must be separate series to stay apart. Each bar carries the SMA of the period in force
@@ -159,8 +162,10 @@ export function rideAnnotations(candles, rides, smaFor) {
     const span = rideSpan(candles, ride);
     if (!span) continue;
     const up = ride.dir > 0;
-    markers.push({ time: candles[span.first].time, position: up ? 'belowBar' : 'aboveBar',
-      color: up ? '#16a082' : '#dd6070', shape: up ? 'arrowUp' : 'arrowDown', text: `MA${ride.periods[0]}${arrow(ride.dir)}` });
+    const entry = span.first + 1 < candles.length ? span.first + 1 : span.first;
+    markers.push({ time: candles[entry].time, position: up ? 'belowBar' : 'aboveBar',
+      color: up ? '#16a082' : '#dd6070', shape: up ? 'arrowUp' : 'arrowDown',
+      text: `MA${ride.periods[0]}${arrow(ride.dir)}${entry === span.first ? '（下根入场）' : ''}` });
     const data = [];
     let seg = 0;
     for (let i = span.first; i <= span.last; i++) {

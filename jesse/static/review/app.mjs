@@ -1,15 +1,15 @@
 // Reuse the dependency already shipped with this Jesse dashboard. No CDN or
 // third-party requests are needed; the adapter is isolated for future rebuilds.
-import { t as createChart } from './lightweight-charts.mjs?v=20261112h';
-import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261112h';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261112h';
-import { calculateIndicator } from './indicators.mjs?v=20261112h';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261112h';
-import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261112h';
-import { mountControls } from './controls.mjs?v=20261112h';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261112h';
-import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261112h';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112h';
+import { t as createChart } from './lightweight-charts.mjs?v=20261112i';
+import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261112i';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261112i';
+import { calculateIndicator } from './indicators.mjs?v=20261112i';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261112i';
+import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261112i';
+import { mountControls } from './controls.mjs?v=20261112i';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261112i';
+import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261112i';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112i';
 
 const $ = id => document.getElementById(id);
 const money = value => Number.isFinite(value) ? value.toFixed(2) : '—';
@@ -483,7 +483,7 @@ function selectRide(ride, focus = true) {
   if (previous && rideButtons.has(previous)) rideButtons.get(previous).setAttribute('aria-pressed', 'false');
   rideButtons.get(ride)?.setAttribute('aria-pressed', 'true');
   rideButtons.get(ride)?.scrollIntoView?.({ block: 'nearest' });
-  $('trade-info').textContent = `${ride.tf} ${arrow(ride.dir)} ${maText(ride.periods)} · ${stamp(ride.start)} UTC 起 · 持续 ${ride.bars} 根${ride.ended ? '' : '（到回测结束）'} · 最多回踩 ${ride.maxTouches} 次`;
+  $('trade-info').textContent = `${ride.tf} ${arrow(ride.dir)} ${maText(ride.periods)} · ${stamp(ride.start + 60)} UTC 起 · 持续 ${ride.bars} 根${ride.ended ? '' : '（到回测结束）'} · 最多回踩 ${ride.maxTouches} 次`;
   $('context').textContent = ''; $('order-info').textContent = '';
   for (const panel of panels) {
     panel.card.classList.toggle('chosen', panel.interval === ride.minutes);
