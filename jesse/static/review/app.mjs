@@ -1,14 +1,14 @@
 // Reuse the dependency already shipped with this Jesse dashboard. No CDN or
 // third-party requests are needed; the adapter is isolated for future rebuilds.
-import { t as createChart } from './lightweight-charts.mjs?v=20261111e';
-import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261111e';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261111e';
-import { calculateIndicator } from './indicators.mjs?v=20261111e';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261111e';
-import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261111e';
-import { mountControls } from './controls.mjs?v=20261111e';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261111e';
-import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261111e';
+import { t as createChart } from './lightweight-charts.mjs?v=20261111g';
+import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261111g';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261111g';
+import { calculateIndicator } from './indicators.mjs?v=20261111g';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261111g';
+import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261111g';
+import { mountControls } from './controls.mjs?v=20261111g';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261111g';
+import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261111g';
 
 const $ = id => document.getElementById(id);
 const money = value => Number.isFinite(value) ? value.toFixed(2) : '—';
@@ -298,14 +298,17 @@ function rangeChanged(view, userRange) {
   drawAnchor(view);
 }
 
-function showRange(range) {
+// keepSpan: move to the range but keep each chart's own zoom (trade/signal navigation); without it every
+// chart gets exactly `range` (a new window choice, a rebuild). `at` is where the moment of interest sits.
+function showRange(range, keepSpan = false, at = 0.5) {
   wantedRange = range;
-  rangeLink.set(range);
+  rangeLink.set(range, { keepSpan, at });
 }
 
-function focusAt(seconds) {
+// centeredRange puts the event three quarters of the way in.
+function focusAt(seconds, keepSpan = true) {
   anchor = seconds;
-  showRange(centeredRange(anchor, Number($('span').value)));
+  showRange(centeredRange(anchor, Number($('span').value)), keepSpan, 0.75);
 }
 
 function paintTrades() {
@@ -474,7 +477,7 @@ function buildPanels() {
   panels = []; views = []; $('charts').replaceChildren();
   panels = preferences.intervals.map(interval => makePanel(interval, chartData.candles));
   views = panels.flatMap(panel => panel.views);
-  rangeLink = linkTimeRanges(views, rangeChanged);
+  rangeLink = linkTimeRanges(views, rangeChanged, view => view.panel);
 }
 
 // Display settings changed: redraw from the already-loaded data and keep the
@@ -704,7 +707,7 @@ async function start() {
   };
   $('entry').onclick = () => { if (selected) focusAt(selected.opened_at / 1000); };
   $('exit').onclick = () => { if (selected?.closed_at) focusAt(selected.closed_at / 1000); };
-  $('span').onchange = () => focusAt(anchor);
+  $('span').onchange = () => focusAt(anchor, false);
   $('all-markers').onchange = updateMarkers;
   // Entry/exit conditions can be folded away; remembered with the display settings.
   $('conditions-toggle').onclick = () => {

@@ -100,13 +100,21 @@ export function contextPointsFor(charts) {
     .sort((a, b) => a.time - b.time);
 }
 
-export function linkTimeRanges(panels, onChange = () => {}) {
+// Links the time axes of several charts. Peers follow WHERE a chart looks (time position) but each chart keeps
+// its own zoom (how many seconds it shows), so zooming one timeframe does not resize the candles of the others.
+// Views in the same group (a main chart and its indicator panes, via groupOf) share the exact range so they stay
+// aligned. set(range) gives every chart exactly that range (a new window choice / a fresh build);
+// set(range, { keepSpan: true, at }) moves every chart so the moment at fraction `at` of `range` sits at the
+// same fraction of its own span (selecting a trade/signal keeps each chart's zoom).
+export function linkTimeRanges(panels, onChange = () => {}, groupOf = panel => panel) {
   let active = null;
-  function apply(range, source) {
-    if (!range || typeof range.from !== 'number' || typeof range.to !== 'number') return;
-    for (const panel of panels) {
-      if (panel !== source) panel.chart.timeScale().setVisibleRange(range);
-    }
+  const spans = new Map(); // group -> seconds that group shows (set by set() and by the user's own zoom)
+  const valid = range => range && typeof range.from === 'number' && typeof range.to === 'number' && range.to > range.from;
+  function place(panel, range, at) {
+    const width = range.to - range.from;
+    const span = spans.get(groupOf(panel)) ?? width;
+    const anchor = range.from + width * at;
+    panel.chart.timeScale().setVisibleRange({ from: anchor - span * at, to: anchor - span * at + span });
   }
   for (const panel of panels) panel.chart.timeScale().subscribeVisibleTimeRangeChange(range => {
     // The second argument is the range only when a user gesture on this panel caused it.
@@ -114,10 +122,23 @@ export function linkTimeRanges(panels, onChange = () => {}) {
     // The chart emits after drawing, outside the setVisibleRange call stack.
     // Only a panel activated by a real pointer/wheel gesture may drive peers;
     // their rounded, asynchronous programmatic updates never feed back.
-    if (panel === active) apply(range, panel);
+    if (panel !== active || !valid(range)) return;
+    const group = groupOf(panel);
+    spans.set(group, range.to - range.from);
+    for (const peer of panels) {
+      if (peer === panel) continue;
+      if (groupOf(peer) === group) peer.chart.timeScale().setVisibleRange(range);
+      else place(peer, range, 0.5);
+    }
   });
   return {
     activate(panel) { active = panel; },
-    set(range) { active = null; apply(range, null); },
+    set(range, { keepSpan = false, at = 0.5 } = {}) {
+      active = null;
+      if (!valid(range)) return;
+      // A chart the user has not zoomed yet takes this range's span (also on the first, keepSpan, placement).
+      for (const panel of panels) if (!keepSpan || !spans.has(groupOf(panel))) spans.set(groupOf(panel), range.to - range.from);
+      for (const panel of panels) place(panel, range, at);
+    },
   };
 }

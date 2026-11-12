@@ -1,13 +1,13 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261111e';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261111e';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261111e';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261111e';
-import { calculateIndicator } from './indicators.mjs?v=20261111e';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261111e';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261111e';
+import { t as createChart } from './lightweight-charts.mjs?v=20261111g';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261111g';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261111g';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261111g';
+import { calculateIndicator } from './indicators.mjs?v=20261111g';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261111g';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261111g';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -252,7 +252,9 @@ function syncCrosshair(source, time) {
   } finally { syncing = false; }
 }
 
-function showRange(range) { wantedRange = range; rangeLink?.set(range); }
+// keepSpan: move to the range but keep each chart's own zoom (signal navigation); without it every chart
+// gets exactly `range` (a new window choice). `at` is the fraction of the range that holds the moment of interest.
+function showRange(range, keepSpan = false, at = 0.5) { wantedRange = range; rangeLink?.set(range, { keepSpan, at }); }
 
 // ---- Status bar ------------------------------------------------------------
 // `t` is a 1m open time (seconds). Hovering shows the state when the pointed bar closed.
@@ -359,11 +361,11 @@ function selectRide(ride, focus = true) {
   $('trade-info').textContent = `${ride.tf} ${arrow(ride.dir)} ${maText(ride.periods)} · ${stampFull(ride.start + 60)} UTC 起 · 持续 ${ride.bars} 根${ride.ended ? '' : '（进行中）'}${ride.maxTouches ? ` · 最多回踩 ${ride.maxTouches} 次` : ''}`;
   for (const panel of panels) panel.card.classList.toggle('chosen', panel.interval === ride.minutes);
   paintSignalBar(statusTime); updateNav();
-  if (focus) showRange(centeredRange(ride.start, Number($('f-window').value)));
+  if (focus) showRange(centeredRange(ride.start, Number($('f-window').value)), true, 0.75);
 }
 
 // The newest state: the newest 1m candle is the "now" of the status bar and every chart shows its right edge.
-function gotoLatest() {
+function gotoLatest(keepSpan = true) {
   if (!result) return;
   if (selectedRide) rideButtons.get(selectedRide)?.setAttribute('aria-pressed', 'false');
   selectedRide = null; statusTime = result.last_candle_time;
@@ -371,7 +373,7 @@ function gotoLatest() {
   $('trade-info').textContent = '最新：各周期在最后一根已收盘 K 线时的状态';
   paintSignalBar(statusTime); updateNav();
   const span = Number($('f-window').value);
-  showRange({ from: result.last_candle_time + 60 - span * 0.95, to: result.last_candle_time + 60 + span * 0.05 });
+  showRange({ from: result.last_candle_time + 60 - span * 0.95, to: result.last_candle_time + 60 + span * 0.05 }, keepSpan, 0.95);
 }
 
 // ---- Running ---------------------------------------------------------------
@@ -442,7 +444,7 @@ async function start() {
   paintForm(); paintHeight();
   $('finder-form').onsubmit = event => { event.preventDefault(); run(); };
   $('f-import').onclick = importLatest;
-  $('f-latest').onclick = gotoLatest;
+  $('f-latest').onclick = () => gotoLatest();
   // The list is start-ordered, so its last ride is the newest; selectRide renders the chunks up to it and scrolls there.
   $('ride-latest').onclick = () => { const list = shownRides(); if (list.length) selectRide(list[list.length - 1]); };
   // #trades scrolls vertically (horizontally on narrow screens): load the next chunk near either end.
@@ -460,7 +462,7 @@ async function start() {
   $('f-overlay').onchange = () => { readForm(); if (result) render(result); };
   $('f-window').onchange = () => {
     readForm();
-    if (selectedRide) showRange(centeredRange(selectedRide.start, form.window)); else gotoLatest();
+    if (selectedRide) showRange(centeredRange(selectedRide.start, form.window)); else gotoLatest(false);
   };
   $('f-factor').onchange = () => { form.factor = $('f-factor').value; saveForm(); paintParams(); paintTimeframes(); $('f-run').disabled = !!currentFactor()?.error; };
   for (const [id, step] of [['previous', -1], ['next', 1]]) $(id).onclick = () => {

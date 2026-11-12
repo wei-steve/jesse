@@ -120,3 +120,41 @@ test('range synchronization ignores asynchronous programmatic feedback', async (
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(writes, 7);
 });
+
+test('linked charts follow position but keep their own zoom', () => {
+  const panels = ['a', 'b', 'c'].map(name => {
+    let listener; const writes = [];
+    const scale = { subscribeVisibleTimeRangeChange: f => { listener = f; }, setVisibleRange: r => writes.push(r) };
+    return { name, writes, chart: { timeScale: () => scale }, emit: r => listener(r) };
+  });
+  // a and b are one group (a main chart and its indicator pane); c is another timeframe.
+  const linked = linkTimeRanges(panels, () => {}, p => (p.name === 'c' ? 'c' : 'ab'));
+  linked.set({ from: 0, to: 1000 });
+  assert.deepEqual(panels[2].writes.at(-1), { from: 0, to: 1000 });
+  // Zoom c in to 200 seconds around 500: a/b keep 1000 seconds, centred on the same moment.
+  linked.activate(panels[2]); panels[2].emit({ from: 400, to: 600 });
+  assert.deepEqual(panels[0].writes.at(-1), { from: 0, to: 1000 });
+  // Zoom a: its pane b gets the exact range, c keeps its 200 seconds.
+  linked.activate(panels[0]); panels[0].emit({ from: 1000, to: 1400 });
+  assert.deepEqual(panels[1].writes.at(-1), { from: 1000, to: 1400 });
+  assert.deepEqual(panels[2].writes.at(-1), { from: 1100, to: 1300 });
+  // Navigating with keepSpan keeps each zoom, the moment at 3/4 of each chart.
+  linked.set({ from: 2000, to: 3000 }, { keepSpan: true, at: 0.75 });
+  assert.deepEqual(panels[0].writes.at(-1), { from: 2450, to: 2850 });
+  assert.deepEqual(panels[2].writes.at(-1), { from: 2600, to: 2800 });
+  // A plain set (new window choice) resets every zoom.
+  linked.set({ from: 0, to: 1000 });
+  assert.deepEqual(panels[2].writes.at(-1), { from: 0, to: 1000 });
+});
+
+test('the first placement records each chart span even with keepSpan', () => {
+  const panels = ['a', 'b'].map(name => {
+    let listener; const writes = [];
+    const scale = { subscribeVisibleTimeRangeChange: f => { listener = f; }, setVisibleRange: r => writes.push(r) };
+    return { name, writes, chart: { timeScale: () => scale }, emit: r => listener(r) };
+  });
+  const linked = linkTimeRanges(panels);
+  linked.set({ from: 0, to: 1000 }, { keepSpan: true, at: 0.95 });
+  linked.activate(panels[1]); panels[1].emit({ from: 0, to: 5000 });
+  assert.deepEqual(panels[0].writes.at(-1), { from: 2000, to: 3000 });
+});
