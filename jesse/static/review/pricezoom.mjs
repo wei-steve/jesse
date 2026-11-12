@@ -5,6 +5,10 @@
 // so the stretch is done through the series' autoscaleInfoProvider: the automatic price range is widened or
 // narrowed around its middle by a factor, and autoScale stays on so the chart keeps following scrolling.
 // (Pressing and dragging the price scale up/down is the library's own built-in stretch and keeps working.)
+// Because autoScale stays on, the library ignores an up/down drag on the chart after a wheel stretch (it only
+// pans the price axis when autoScale is off), so stretched candles could not be moved up or down. While a
+// stretch is active, an up/down drag in the plot shifts the range itself (`offset`, in visible heights); the
+// time pan of the same drag still works, and "A" / double-clicking the price scale clears it.
 
 // Wheel delta -> zoom factor. exp() makes one notch in and one notch out cancel exactly; the bounds keep the
 // candles from collapsing to a line or exploding off-screen.
@@ -17,17 +21,20 @@ export function nextFactor(factor, deltaY) {
 }
 
 // The automatic range scaled around its middle (factor > 1 shows more price = shorter candles).
-export function scaledRange(range, factor) {
-  if (!range || factor === 1) return range;
-  const mid = (range.minValue + range.maxValue) / 2, half = (range.maxValue - range.minValue) / 2 * factor;
+// offset moves the result by that many of its own heights (positive = higher prices, i.e. candles move down).
+export function scaledRange(range, factor, offset = 0) {
+  if (!range || (factor === 1 && !offset)) return range;
+  const half = (range.maxValue - range.minValue) / 2 * factor;
+  const mid = (range.minValue + range.maxValue) / 2 + offset * 2 * half;
   return { minValue: mid - half, maxValue: mid + half };
 }
 
 export function enablePriceZoom(chart, series, host) {
   // factor: wheel stretch (1 = none). fit: the "A" button (TradingView's auto-fit) — the price scale follows
   // only the visible candles, so they fill the chart height; MA overlays and the ride line no longer widen it.
-  let factor = 1, fit = false;
+  let factor = 1, fit = false, offset = 0;
   const candlesOnly = () => fit || factor !== 1;
+  const stretched = () => factor !== 1 || offset !== 0;
   // The price scale fits the union of every series' automatic range, so MA overlays and the thick ride line
   // stopped the stretch early ("放大到一定程度就不能再放大"). Lines added to this chart from now on drop out of
   // the automatic range while a stretch or auto-fit is active, so only the candles decide it.
@@ -55,13 +62,16 @@ export function enablePriceZoom(chart, series, host) {
         const margins = fit && info.margins
           ? { above: Math.min(info.margins.above, FIT_MARKER_PX), below: Math.min(info.margins.below, FIT_MARKER_PX) }
           : info.margins;
-        return { ...info, priceRange: scaledRange(info.priceRange, factor), margins };
+        return { ...info, priceRange: scaledRange(info.priceRange, factor, offset), margins };
       },
     });
     chart.priceScale('right').applyOptions({ autoScale: true, scaleMargins: fit ? FIT_MARGINS : normalMargins });
+    // On touch screens the page normally scrolls on an up/down swipe; while stretched the swipe moves the
+    // candles instead (the library sets touch-action: none when vertTouchDrag is on).
+    chart.applyOptions({ handleScroll: { vertTouchDrag: stretched() } });
     button.setAttribute('aria-pressed', String(fit));
   };
-  const setFit = on => { fit = on; factor = 1; apply(); };
+  const setFit = on => { fit = on; factor = 1; offset = 0; apply(); };
   // stop the chart from also seeing the click (it would start a pan / move the crosshair)
   for (const type of ['pointerdown', 'mousedown', 'dblclick']) button.addEventListener(type, event => event.stopPropagation());
   button.addEventListener('click', event => { event.stopPropagation(); setFit(!fit); });
@@ -77,6 +87,22 @@ export function enablePriceZoom(chart, series, host) {
     factor = nextFactor(factor, event.deltaY);
     apply();
   }, { capture: true, passive: false });
+  // up/down drag in the plot while stretched; not stopped, so the chart still pans time with the same drag
+  let drag = null, frame = 0;
+  host.addEventListener('pointerdown', event => {
+    if (!stretched() || event.button !== 0 || event.target === button || overScale(event)) return;
+    drag = { id: event.pointerId, y: event.clientY, offset };
+  }, { capture: true });
+  window.addEventListener('pointermove', event => {
+    if (!drag || event.pointerId !== drag.id) return;
+    const plot = host.clientHeight - chart.timeScale().height();
+    if (plot <= 0) return;
+    offset = drag.offset + (event.clientY - drag.y) / plot;
+    if (!frame) frame = requestAnimationFrame(() => { frame = 0; apply(); });
+  });
+  for (const type of ['pointerup', 'pointercancel']) {
+    window.addEventListener(type, event => { if (drag && event.pointerId === drag.id) drag = null; });
+  }
   // double-clicking the price scale = back to auto height (same as the A button)
   host.addEventListener('dblclick', event => {
     if (event.target === button || !overScale(event)) return;

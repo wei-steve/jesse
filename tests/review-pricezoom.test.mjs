@@ -17,3 +17,8 @@ test('the automatic range is scaled around its middle', () => {
   assert.equal(scaledRange(same, 1), same);
   assert.equal(scaledRange(null, 2), null);
 });
+
+test('scaledRange offset moves the range by its own height', () => {
+  assert.deepEqual(scaledRange({ minValue: 90, maxValue: 110 }, 1, 0.5), { minValue: 100, maxValue: 120 });
+  assert.deepEqual(scaledRange({ minValue: 90, maxValue: 110 }, 0.5, -1), { minValue: 85, maxValue: 95 });
+});
