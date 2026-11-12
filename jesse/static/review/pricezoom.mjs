@@ -9,12 +9,14 @@
 // (Pressing and dragging the price scale up/down is the library's own built-in stretch and keeps working.)
 // Because autoScale stays on, the library ignores an up/down drag on the chart after a wheel stretch (it only
 // pans the price axis when autoScale is off), so stretched candles could not be moved up or down. While a
-// stretch is active, an up/down drag in the plot shifts the range itself (`offset`, in spans); the
+// stretch is active, an up/down drag in the plot shifts the range itself (`offset`, in price); the
 // time pan of the same drag still works, and "A" / double-clicking the price scale clears it.
 // The library's own price-scale drag keeps a separate range of its own (autoScale off), so switching from that
-// drag to the wheel used to jump ("两种方式切换时变化很大"). Every wheel notch therefore starts from what is on
-// screen right now — the price at the top and bottom of the plot — and a stretch uses no padding, so its span is
-// exactly the visible range and both ways continue from each other.
+// drag to the wheel used to jump ("两种方式切换时变化很大"). A wheel notch that starts a stretch (none yet, or after
+// a library drag) therefore starts from what is on screen — the price at the top and bottom of the plot — and a
+// stretch uses no padding, so its span is exactly the visible range and both ways continue from each other.
+// Later notches continue from this module's own span: a mouse wheel sends many small events per frame, and
+// re-reading the screen before the last one was drawn dropped most of them (scrolling felt stuck/uneven).
 
 // Wheel delta -> zoom factor applied to the span. exp() makes one notch in and one notch out cancel exactly; the bounds keep the
 // candles from collapsing to a line or exploding off-screen.
@@ -28,10 +30,11 @@ export function nextFactor(factor, deltaY) {
 }
 
 // `span` of price centred on the middle of the automatic range (null = no stretch, the range as is). offset
-// moves it by that many spans (positive = higher prices, i.e. candles move down).
+// moves it by that much price (positive = higher prices, i.e. candles move down); in price, not in spans, so
+// zooming keeps the middle where it is.
 export function spanRange(range, span, offset = 0) {
   if (!range || span == null) return range;
-  const mid = (range.minValue + range.maxValue) / 2 + offset * span;
+  const mid = (range.minValue + range.maxValue) / 2 + offset;
   return { minValue: mid - span / 2, maxValue: mid + span / 2 };
 }
 
@@ -74,7 +77,7 @@ export function enablePriceZoom(chart, series, host) {
         if (!info?.priceRange) return info;
         autoSpan = info.priceRange.maxValue - info.priceRange.minValue;
         if (pinMid !== null && span !== null) {
-          offset = (pinMid - (info.priceRange.maxValue + info.priceRange.minValue) / 2) / span;
+          offset = pinMid - (info.priceRange.maxValue + info.priceRange.minValue) / 2;
           pinMid = null;
         }
         const margins = stretched() ? { above: 0, below: 0 } : fit && info.margins
@@ -111,12 +114,17 @@ export function enablePriceZoom(chart, series, host) {
     if (!overScale(event)) return;
     event.preventDefault(); event.stopPropagation();
     fit = false;
-    const seen = visibleRange();
-    const base = seen ? seen.top - seen.bottom : span ?? autoSpan;
-    if (!(base > 0)) return;
-    span = nextSpan(base, event.deltaY, autoSpan > 0 ? autoSpan : base);
-    pinMid = seen ? (seen.top + seen.bottom) / 2 : null;
-    if (pinMid === null) offset = 0;
+    if (stretched() && autoScaleOn()) {
+      // this module owns the range: continue from its own span, the middle stays (offset is in price)
+      span = nextSpan(span, event.deltaY, autoSpan > 0 ? autoSpan : span);
+    } else {
+      const seen = visibleRange();
+      const base = seen ? seen.top - seen.bottom : autoSpan;
+      if (!(base > 0)) return;
+      span = nextSpan(base, event.deltaY, autoSpan > 0 ? autoSpan : base);
+      pinMid = seen ? (seen.top + seen.bottom) / 2 : null;
+      if (pinMid === null) offset = 0;
+    }
     apply();
   }, { capture: true, passive: false });
   // up/down drag in the plot while stretched; not stopped, so the chart still pans time with the same drag
@@ -130,7 +138,7 @@ export function enablePriceZoom(chart, series, host) {
     if (!drag || event.pointerId !== drag.id) return;
     const plot = plotHeight();
     if (plot <= 0) return;
-    offset = drag.offset + (event.clientY - drag.y) / plot;
+    offset = drag.offset + (event.clientY - drag.y) / plot * span;
     if (!frame) frame = requestAnimationFrame(() => { frame = 0; apply(); });
   });
   for (const type of ['pointerup', 'pointercancel']) {

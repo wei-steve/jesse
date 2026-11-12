@@ -25,7 +25,9 @@ test('a stretch keeps the same span wherever the chart is scrolled', () => {
   assert.equal(spanRange(null, 10), null);
 });
 
-test('offset moves the range by whole spans', () => {
-  assert.deepEqual(spanRange({ minValue: 90, maxValue: 110 }, 20, 0.5), { minValue: 100, maxValue: 120 });
-  assert.deepEqual(spanRange({ minValue: 90, maxValue: 110 }, 10, -1), { minValue: 85, maxValue: 95 });
+test('offset moves the range by that much price, whatever the span', () => {
+  assert.deepEqual(spanRange({ minValue: 90, maxValue: 110 }, 20, 10), { minValue: 100, maxValue: 120 });
+  assert.deepEqual(spanRange({ minValue: 90, maxValue: 110 }, 10, -10), { minValue: 85, maxValue: 95 });
+  // zooming with the same offset keeps the middle at 110
+  assert.deepEqual(spanRange({ minValue: 90, maxValue: 110 }, 40, 10), { minValue: 90, maxValue: 130 });
 });
