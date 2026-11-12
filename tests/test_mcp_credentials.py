@@ -23,7 +23,7 @@ from jesse.mcp.tools.credentials import register_credentials_tools
 from jesse.models.DataProviderCredentials import DataProviderCredentials
 from jesse.models.ExchangeApiKeys import ExchangeApiKeys
 from jesse.services import auth
-from jesse.services.historical_data import massive_stocks
+from jesse.services.historical_data import fmp, massive_stocks
 from jesse.services.historical_data.errors import (
     ProviderAuthenticationError,
     ProviderEntitlementError,
@@ -47,7 +47,8 @@ PASSPHRASE = 'QZXCpassphrase-sentinel-VWKC'
 WALLET = 'QZXDwallet-sentinel-VWKD'
 STARK_KEY = 'QZXEstark-private-sentinel-VWKE'
 MASSIVE_KEY = 'QZXFmassive-key-sentinel-VWKF'
-SECRETS = (API_KEY, API_SECRET, PASSPHRASE, WALLET, STARK_KEY, MASSIVE_KEY)
+FMP_KEY = 'QZXFfmp-key-sentinel-VWKF'
+SECRETS = (API_KEY, API_SECRET, PASSPHRASE, WALLET, STARK_KEY, MASSIVE_KEY, FMP_KEY)
 SECRET_FIELD_NAMES = {'api_key', 'api_secret', 'api_passphrase', 'wallet_address', 'stark_private_key',
                       'credentials', 'passphrase'}
 
@@ -131,11 +132,16 @@ def test_no_tool_can_export_or_reveal_credentials():
         name for name in tools
         if any(word in name for word in ('api_key', 'credential', 'secret', 'passphrase', 'export'))
     }
-    # export_candles writes stored market data into the project; it never reaches a credential route.
-    assert credential_like == CREDENTIAL_TOOLS | {'export_candles'}
+    # export_candles and export_backtest_report write stored market data and backtest results into
+    # the project; they never reach a credential route.
+    assert credential_like == CREDENTIAL_TOOLS | {'export_candles', 'export_backtest_report'}
+    import jesse.mcp.tools.services.backtest as backtest_service
     import jesse.mcp.tools.services.candles as candles_service
     candle_source = open(candles_service.__file__, encoding='utf-8').read()
     assert '/api-keys' not in candle_source and 'credentials' not in candle_source.split('def export_candles_service')[1]
+    backtest_source = open(backtest_service.__file__, encoding='utf-8').read()
+    report_source = backtest_source.split('def export_backtest_report_service')[1].split('\ndef ')[0]
+    assert '/api-keys' not in report_source and 'credentials' not in report_source
     source = open(credentials_service.__file__, encoding='utf-8').read()
     # The Dashboard's password-confirmed CSV export and import routes stay Dashboard-only.
     assert 'download-api-keys' not in source and 'import-api-keys' not in source
@@ -225,6 +231,7 @@ def backend(tmp_path, monkeypatch):
 
     state = SimpleNamespace(validation_failure=None)
     monkeypatch.setattr(data_provider_credentials_controller, 'validate_massive_api_key', fake_validate)
+    monkeypatch.setattr(data_provider_credentials_controller, 'validate_fmp_api_key', fake_validate)
 
     app = FastAPI()
 
@@ -387,10 +394,16 @@ def test_data_provider_store_list_validate_delete(backend):
 
     initial = tools['get_data_provider_credentials']()
     assert initial['configured_providers'] == []
-    assert initial['data_providers'] == [{
-        'provider_id': 'Massive', 'name': 'Massive', 'configured': False, 'created_at': None, 'updated_at': None,
-        'credential_fields': [{'key': 'api_key', 'label': 'API Key', 'secret': True}],
-    }]
+    assert initial['data_providers'] == [
+        {
+            'provider_id': 'Massive', 'name': 'Massive', 'configured': False, 'created_at': None, 'updated_at': None,
+            'credential_fields': [{'key': 'api_key', 'label': 'API Key', 'secret': True}],
+        },
+        {
+            'provider_id': 'FMP', 'name': 'Financial Modeling Prep', 'configured': False, 'created_at': None,
+            'updated_at': None, 'credential_fields': [{'key': 'api_key', 'label': 'API Key', 'secret': True}],
+        },
+    ]
 
     stored = tools['store_data_provider_credentials'](f' {MASSIVE_KEY} ')
     assert stored['status'] == 'success'
@@ -422,6 +435,31 @@ def test_data_provider_store_list_validate_delete(backend):
 
     assert tools['delete_data_provider_credentials']()['error_type'] == 'not_found'
     assert tools['validate_data_provider_credentials']()['error_type'] == 'not_configured'
+
+
+def test_fmp_key_is_stored_and_validated_separately_from_massive(backend):
+    tools = _registered_tools()
+
+    tools['store_data_provider_credentials'](MASSIVE_KEY)
+    stored = tools['store_data_provider_credentials'](f' {FMP_KEY} ', provider_id='FMP')
+    assert stored['status'] == 'success'
+    assert stored['data_provider']['provider_id'] == 'FMP'
+    _assert_discloses_nothing(stored)
+
+    # FMP imports read their own key; the Massive key is untouched.
+    assert fmp._load_fmp_api_key() == FMP_KEY
+    assert massive_stocks._load_massive_api_key() == MASSIVE_KEY
+    assert tools['get_data_provider_credentials']()['configured_providers'] == ['Massive', 'FMP']
+
+    validated = tools['validate_data_provider_credentials'](provider_id='FMP')
+    assert validated['status'] == 'success'
+    assert backend.validated_keys == [FMP_KEY]
+    _assert_discloses_nothing(validated)
+
+    deleted = tools['delete_data_provider_credentials'](provider_id='FMP')
+    assert deleted['data_provider']['configured'] is False
+    assert DataProviderCredentials.get_or_none(DataProviderCredentials.provider_id == 'FMP') is None
+    assert massive_stocks._load_massive_api_key() == MASSIVE_KEY
 
 
 @pytest.mark.parametrize(('failure', 'error_type'), [

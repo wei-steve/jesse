@@ -6,7 +6,7 @@ import json
 from jesse.services.db import database
 import jesse.helpers as jh
 
-_BACKTEST_CHART_NAMES = ['equity_curve', 'cumulative_returns', 'drawdown', 'underwater', 'monthly_heatmap', 'monthly_distribution', 'trade_pnl']
+_BACKTEST_CHART_NAMES = ['equity_curve', 'cumulative_returns', 'drawdown', 'underwater', 'monthly_heatmap', 'monthly_distribution', 'trade_pnl', 'entry_timing']
 
 
 def _delete_chart_images(session_id: str) -> None:
@@ -173,7 +173,7 @@ class BacktestSession(peewee.Model):
             return {}
         s = json.loads(self.state)
         if isinstance(s, dict) and 'form' in s and isinstance(s['form'], dict):
-            for key in ['debug_mode', 'export_chart', 'export_csv', 'export_json', 'fast_mode', 'benchmark']:
+            for key in ['debug_mode', 'export_chart', 'export_csv', 'export_json', 'export_pdf', 'fast_mode', 'benchmark']:
                 if key in s['form']:
                     s['form'][key] = jh.normalize_bool(s['form'].get(key))
         return s
@@ -462,7 +462,7 @@ def update_backtest_session_state(id: str, state: dict) -> None:
     Update or create (upsert) backtest session state. If session doesn't exist, creates as draft.
     """
     if isinstance(state, dict) and 'form' in state and isinstance(state['form'], dict):
-        for key in ['debug_mode', 'export_chart', 'export_csv', 'export_json', 'fast_mode', 'benchmark']:
+        for key in ['debug_mode', 'export_chart', 'export_csv', 'export_json', 'export_pdf', 'fast_mode', 'benchmark']:
             if key in state['form']:
                 state['form'][key] = jh.normalize_bool(state['form'].get(key))
     existing = BacktestSession.select().where(BacktestSession.id == id).first()

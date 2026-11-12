@@ -13,6 +13,7 @@ from jesse.models import Order, Position
 from jesse.modes.utils import save_daily_portfolio_balance
 from jesse.candle_pipelines import BaseCandlesPipeline
 from jesse.routes import router
+from jesse.services import benchmark as benchmark_service
 from jesse.services import charts
 from jesse.services import report
 from jesse.services import candle_service
@@ -50,7 +51,8 @@ def run(
         json: bool = False,
         fast_mode: bool = False,
         benchmark: bool = False,
-        theme: str = 'light'
+        theme: str = 'light',
+        pdf: bool = False,
 ) -> None:
     from jesse.config import config
     config['app']['trading_mode'] = 'backtest'
@@ -63,7 +65,7 @@ def run(
 
     _execute_backtest(
         client_id, debug_mode, user_config, exchange, routes, data_routes, start_date, finish_date, candles, chart,
-        csv, json, fast_mode, benchmark, theme
+        csv, json, fast_mode, benchmark, theme, pdf
     )
 
 
@@ -82,7 +84,8 @@ def _execute_backtest(
         json: bool = False,
         fast_mode: bool = False,
         benchmark: bool = False,
-        theme: str = 'light'
+        theme: str = 'light',
+        pdf: bool = False,
 ):
     """
     Executes the backtest that has been initiated from within the dashboard. The purpose of extracting these
@@ -163,6 +166,8 @@ def _execute_backtest(
             run_silently=jh.should_execute_silently(),
             generate_csv=csv,
             generate_json=json,
+            # The benchmark's metrics come from these curves too, but only the report keeps them.
+            generate_equity_curve=pdf or benchmark,
             benchmark=benchmark,
             generate_hyperparameters=True,
             fast_mode=fast_mode,
@@ -189,7 +194,7 @@ def _execute_backtest(
             # retry the backtest simulation
             _execute_backtest(
                 client_id, debug_mode, user_config, exchange, routes, data_routes, start_date, finish_date, candles,
-                chart, csv, json, fast_mode, benchmark, theme
+                chart, csv, json, fast_mode, benchmark, theme, pdf
             )
             return
         else:
@@ -215,22 +220,32 @@ def _execute_backtest(
             'message': f"Successfully executed backtest simulation in: {result['execution_duration']} seconds",
             'type': 'success'
         })
+        benchmark_metrics = benchmark_service.calculate_metrics(result.get('equity_curve'))
+        if result['metrics'] and benchmark_metrics:
+            result['metrics']['benchmark'] = benchmark_metrics
         sync_publish('hyperparameters', result['hyperparameters'])
         sync_publish('metrics', result['metrics'])
         sync_publish('trades', result['trades'], compression=True)
 
-        # Generate six analytical chart images (equity_curve, drawdown, underwater,
-        # monthly_heatmap, monthly_distribution, trade_pnl).
+        # Generate analytical chart images (equity_curve, drawdown, underwater,
+        # monthly_heatmap, monthly_distribution, trade_pnl, entry_timing).
         # Must be called BEFORE store.reset() since it reads from the live store.
         publish_status('Generating performance charts…', current=100)
         _charts_folder = os.path.abspath('storage/backtest-charts')
-        charts._plot_backtest_charts(
-            session_id=client_id,
-            charts_folder=_charts_folder,
-            theme=theme,
-            benchmark=benchmark,
-        )
-        
+        # The images are optional extras: a chart failure must not discard a finished simulation.
+        try:
+            charts._plot_backtest_charts(
+                session_id=client_id,
+                charts_folder=_charts_folder,
+                theme=theme,
+                benchmark=benchmark,
+            )
+        except Exception as e:
+            sync_publish('notification', {
+                'message': f'Could not generate the performance charts ({type(e).__name__}: {e}). The backtest results are saved.',
+                'type': 'error'
+            })
+
         # Prepare chart data if requested (call formatting functions once and cache)
         chart_data = None
         if chart:
@@ -266,6 +281,7 @@ def _execute_backtest(
         update_backtest_session_results(
             id=client_id,
             metrics=result.get('metrics'),
+            equity_curve=result.get('equity_curve') if pdf else None,
             trades=result.get('trades'),
             hyperparameters=result.get('hyperparameters'),
             chart_data=chart_data,
@@ -298,11 +314,7 @@ def _handle_sync_no_candles(e, start_date, exchange, client_id=None, finish_date
         # Compute the earliest date the run actually needs (warm-up candles included)
         # so the error tells the agent/user exactly what to import to fix it.
         warmup_num = jh.get_config('env.data.warmup_candles_num', 210)
-        required_start = start_date
-        if warmup_num > 0:
-            required_start_ts = jh.date_to_timestamp(start_date) - (
-                warmup_num * jh.timeframe_to_one_minutes(jh.max_timeframe(config['app']['considering_timeframes'])) * 2 * 60_000)
-            required_start = jh.timestamp_to_date(required_start_ts)
+        required_start = suggested_warmup_import_start(start_date, exchange)
 
         message = (
             f"Missing candles for {symbol} on {exchange}. This run needs data from "
@@ -430,6 +442,36 @@ def _get_add_horizontal_line_to_extra_chart():
     return arr
 
 
+# The shortest common regular session (e.g. Saudi Tadawul, 10:00-15:00), and enough extra
+# calendar days to cover long market holidays such as Eid or the Lunar New Year.
+_SHORTEST_SESSION_MINUTES = 300
+_HOLIDAY_SLACK_DAYS = 14
+
+
+def suggested_warmup_import_start(start_date: str, exchange: str) -> str:
+    """
+    The date to import from so a backtest starting at `start_date` has its warm-up candles.
+
+    24/7 markets need the warm-up period itself (doubled for safety). Markets that close only
+    count the time they trade, so their warm-up spans nights, weekends and holidays.
+    """
+    from jesse.info import exchange_info
+
+    warmup_num = jh.get_config('env.data.warmup_candles_num', 210)
+    if warmup_num <= 0:
+        return start_date
+    timeframe_minutes = jh.timeframe_to_one_minutes(jh.max_timeframe(config['app']['considering_timeframes']))
+    asset_class = exchange_info.get(exchange, {}).get('asset_class')
+    if not asset_class or asset_class == 'crypto':
+        lookback_ms = warmup_num * timeframe_minutes * 2 * 60_000
+    else:
+        candles_per_trading_day = max(1, _SHORTEST_SESSION_MINUTES // timeframe_minutes)
+        trading_days = -(-warmup_num // candles_per_trading_day)
+        calendar_days = -(-trading_days * 7 // 5) + _HOLIDAY_SLACK_DAYS
+        lookback_ms = calendar_days * 86_400_000
+    return jh.timestamp_to_date(jh.date_to_timestamp(start_date) - lookback_ms)
+
+
 def _handle_missing_candles(exchange: str, symbol: str, start_date: int, message: str = None):
     """Helper function to handle missing candles scenarios"""
     formatted_date = jh.timestamp_to_date(start_date)
@@ -521,11 +563,7 @@ def _handle_warmup_candles(warmup_candles: dict, start_date: str) -> None:
             )
     except ValueError as e:
         # This date is an import suggestion; sparse warmup counts completed observed buckets.
-        warmup_num = jh.get_config('env.data.warmup_candles_num', 210)
-        max_timeframe = jh.max_timeframe(config['app']['considering_timeframes'])
-        warmup_minutes = TIMEFRAME_TO_ONE_MINUTES[max_timeframe] * warmup_num
-        warmup_start_timestamp = jh.date_to_timestamp(start_date) - (warmup_minutes * 60_000)
-        warmup_start_date = jh.timestamp_to_date(warmup_start_timestamp)
+        warmup_start_date = suggested_warmup_import_start(start_date, exchange)
         sync_publish(
             "missing_candles",
             {

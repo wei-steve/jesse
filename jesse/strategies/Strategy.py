@@ -105,6 +105,7 @@ class Strategy(ABC):
         self._is_updating_chart = False
         self._is_initiated = False
         self._is_handling_updated_order = False
+        self._position_qty_at_last_event = None
 
         # both are set in _init_objects() right after instantiation
         self.position: Position = None  # type: ignore
@@ -554,6 +555,15 @@ class Strategy(ABC):
         # the position. We need to know what its effect was:
         before_qty = self.position.previous_qty
         after_qty = self.position.qty
+
+        # In live trading, an exchange can report fills the position already reflects (several partial
+        # fills seen at once, or resent ones). previous_qty only moves when the qty does, so without
+        # this they would repeat the last position event.
+        if jh.is_livetrading():
+            if after_qty == self._position_qty_at_last_event:
+                self._is_handling_updated_order = False
+                return
+            self._position_qty_at_last_event = after_qty
 
         # if opening position
         if abs(before_qty) <= abs(self.position._min_qty) < abs(after_qty):
@@ -1352,6 +1362,7 @@ class Strategy(ABC):
             return
 
         self._is_executing = True
+        self._clear_cached_methods()
 
         # Cache the current price at the start of execution
         self._cached_price = self.close
@@ -1388,6 +1399,7 @@ class Strategy(ABC):
             return 0, self.close
 
         self._is_executing = True
+        self._clear_cached_methods()
         self._cached_price = self.close
         close_price = self.close
 
@@ -1729,8 +1741,16 @@ class Strategy(ABC):
 
         if self.position.pnl > 0:
             self.take_profit = self.position.qty, self.price
+            other_exits = [o for o in self.active_exit_orders if o.is_stop_loss]
         else:
             self.stop_loss = self.position.qty, self.price
+            other_exits = [o for o in self.active_exit_orders if o.is_take_profit]
+
+        # on spot, the exits this order doesn't replace hold the base asset it has to sell
+        if self.is_spot_trading:
+            for o in other_exits:
+                if o.is_active or o.is_queued:
+                    self.broker.cancel_order(o.id)
 
     @property
     def shared_vars(self) -> dict:

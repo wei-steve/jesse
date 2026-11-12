@@ -37,8 +37,10 @@ class BacktestRequestJson(BaseModel):
     export_chart: bool
     fast_mode: bool
     benchmark: bool
-    theme: str = 'light'
+    # Omitted by runs without a browser (MCP), which use the stored dashboard theme.
+    theme: Optional[str] = None
     state: dict
+    export_pdf: bool = False
 
     @model_validator(mode='after')
     def validate_date_range(self):
@@ -105,6 +107,8 @@ class LiveRequestJson(BaseModel):
     data_routes: List[Dict[str, str]]
     debug_mode: bool
     paper_mode: bool
+    # The session this one follows; its dashboard tab is handed over once that session has stopped.
+    replaces_session_id: Optional[str] = None
 
 
 class LiveCancelRequestJson(BaseModel):
@@ -378,6 +382,12 @@ class PurgeCandlesRequestJson(BaseModel):
     exchanges: List[str]
 
 
+class ExportBacktestReportRequestJson(BaseModel):
+    # Project-relative PDF path under research_scripts/; defaults to research_scripts/backtest_reports/<name>.pdf.
+    path: Optional[str] = None
+    overwrite: bool = False
+
+
 class ExportCandlesToProjectRequestJson(BaseModel):
     exchange: str
     symbol: str
@@ -560,7 +570,8 @@ class SignificanceTestRequestJson(BaseModel):
     finish_date: str
     n_simulations: int = 1000
     random_seed: Optional[int] = None
-    theme: str = 'light'
+    # Omitted by runs without a browser (MCP), which use the stored dashboard theme.
+    theme: Optional[str] = None
     state: dict
     # Where to run: "local" (default), "auto", "any" or a runner name (services/runner_queue.py).
     where: Optional[str] = None
