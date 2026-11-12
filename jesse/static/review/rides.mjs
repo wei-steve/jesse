@@ -145,6 +145,15 @@ export function rideSpan(candles, ride) {
   return { first, last: Math.max(first, last) };
 }
 
+// Where the earliest entry of an interval is: the open of the bar after its first bar (the signal is known when
+// the first bar closes). null when that bar does not exist yet. Returns { index, time, price }.
+export function rideEntry(candles, ride) {
+  const span = rideSpan(candles, ride);
+  if (!span || span.first + 1 >= candles.length) return null;
+  const bar = candles[span.first + 1];
+  return { index: span.first + 1, time: bar.time, price: bar.open };
+}
+
 // Chart annotations of the rides of ONE timeframe (`rides` must all be of that timeframe) on its candles.
 //  markers: one per interval, on the bar AFTER its first bar ("MA10↑" green below, "MA10↓" red above): the
 //           signal is only known when the first bar closes, so the earliest entry is the next bar's open (the
@@ -156,8 +165,11 @@ export function rideSpan(candles, ride) {
 //           when that bar closed (it changes with the periods); bars without an SMA value (warm-up) are left
 //           out; an interval with fewer than two drawable bars has no line. `smaFor(period)` returns
 //           Map(time -> value) for that period.
+//  entries: same shape as lines, one short level per interval at the entry price (the entry bar's open), from
+//           the signal bar through the bar after the entry bar. The arrow alone made a signal look like a
+//           perfect entry; the user wanted to see the price they would really get (2026-11-12).
 export function rideAnnotations(candles, rides, smaFor) {
-  const markers = [], lines = { up: [], down: [] };
+  const markers = [], lines = { up: [], down: [] }, entries = { up: [], down: [] };
   for (const ride of rides) {
     const span = rideSpan(candles, ride);
     if (!span) continue;
@@ -175,8 +187,13 @@ export function rideAnnotations(candles, rides, smaFor) {
       if (Number.isFinite(value)) data.push({ time: candles[i].time, value });
     }
     if (data.length >= 2) (up ? lines.up : lines.down).push(data);
+    if (entry !== span.first) {
+      const price = candles[entry].open;
+      const level = [span.first, entry, entry + 1].filter(i => i < candles.length).map(i => ({ time: candles[i].time, value: price }));
+      (up ? entries.up : entries.down).push(level);
+    }
   }
-  return { markers: markers.sort((a, b) => a.time - b.time), lines };
+  return { markers: markers.sort((a, b) => a.time - b.time), lines, entries };
 }
 
 // All ride lines of one chart as ONE line series. A chart with one series per interval froze the page on long

@@ -1,15 +1,15 @@
 // Reuse the dependency already shipped with this Jesse dashboard. No CDN or
 // third-party requests are needed; the adapter is isolated for future rebuilds.
-import { t as createChart } from './lightweight-charts.mjs?v=20261112i';
-import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261112i';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261112i';
-import { calculateIndicator } from './indicators.mjs?v=20261112i';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261112i';
-import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261112i';
-import { mountControls } from './controls.mjs?v=20261112i';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261112i';
-import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261112i';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112i';
+import { t as createChart } from './lightweight-charts.mjs?v=20261112j';
+import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261112j';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261112j';
+import { calculateIndicator } from './indicators.mjs?v=20261112j';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261112j';
+import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261112j';
+import { mountControls } from './controls.mjs?v=20261112j';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261112j';
+import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261112j';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112j';
 
 const $ = id => document.getElementById(id);
 const money = value => Number.isFinite(value) ? value.toFixed(2) : '—';
@@ -22,6 +22,8 @@ let sessionId = null;
 // time axes line up vertically inside a card.
 const SCALE_WIDTH = 72;
 const UP = '#16a082', DOWN = '#dd6070';
+// Entry-price levels of the MA signals: darker than the ridden-SMA line so the two do not blend.
+const UP_ENTRY = '#0b5e4c', DOWN_ENTRY = '#a3283a';
 let rideData = [];
 let session, chartData, route, trades = [], orderedTrades = [], selected, panels = [], views = [], anchor, syncing = false;
 let tradeIndex = null;
@@ -143,7 +145,7 @@ function addRides(panel, chart, series, candles, interval) {
     return cache.get(period);
   };
   const mine = rides.filter(r => r.minutes === interval);
-  const { markers, lines } = rideAnnotations(candles, mine, smaFor);
+  const { markers, lines, entries } = rideAnnotations(candles, mine, smaFor);
   panel.rideMarkers = markers;
   // One series for all intervals, with the joining segments hidden (see joinRideLines).
   const data = joinRideLines(lines, { up: UP, down: DOWN });
@@ -151,6 +153,12 @@ function addRides(panel, chart, series, candles, interval) {
     const line = chart.addLineSeries({ color: UP, lineWidth: 4, lastValueVisible: false, priceLineVisible: false,
       crosshairMarkerVisible: false });
     line.setData(data);
+  }
+  const levels = joinRideLines(entries, { up: UP_ENTRY, down: DOWN_ENTRY });
+  if (levels.length) {
+    const line = chart.addLineSeries({ color: UP_ENTRY, lineWidth: 3, lastValueVisible: false, priceLineVisible: false,
+      crosshairMarkerVisible: false });
+    line.setData(levels);
   }
 }
 

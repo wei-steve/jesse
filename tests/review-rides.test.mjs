@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { titleMinutes, rideSeries, mergeRides, buildRides, maText, filterRides, neighbour, signalStatus, valueAt, closedIndex, rideSpan, rideAnnotations } from '../jesse/static/review/rides.mjs';
+import { titleMinutes, rideSeries, mergeRides, buildRides, maText, filterRides, neighbour, signalStatus, valueAt, closedIndex, rideSpan, rideAnnotations, rideEntry } from '../jesse/static/review/rides.mjs';
 
 const real = JSON.parse(readFileSync(new URL('./fixtures/review-ride-extra-charts.json', import.meta.url), 'utf8'));
 const line = pairs => ({ data: pairs.map(([time, value]) => ({ time, value })) });
@@ -196,4 +196,17 @@ test('a signal on the last candle keeps its arrow there, marked as entering on t
   const rides = mergeRides(series('5m', [[1140, 10]]), 1200);
   const { markers } = rideAnnotations(c, rides, () => new Map());
   assert.deepEqual(markers.map(m => [m.time, m.text]), [[900, 'MA10↑（下根入场）']]);
+});
+
+test('entry level: the open of the bar after the signal bar, drawn from the signal bar to one bar past entry', () => {
+  const c = bars(5, 20).map((b, i) => ({ ...b, open: 1000 + i }));
+  const rides = mergeRides(series('5m', [[240, 10], [1140, 0]]), 6000);
+  const { entries } = rideAnnotations(c, rides, () => new Map());
+  assert.equal(entries.down.length, 0);
+  assert.deepEqual(entries.up, [[{ time: 0, value: 1001 }, { time: 300, value: 1001 }, { time: 600, value: 1001 }]]);
+  assert.deepEqual(rideEntry(c, rides[0]), { index: 1, time: 300, price: 1001 });
+  // signal on the last candle: no entry bar yet
+  const last = mergeRides(series('5m', [[5940, 10]]), 6000);
+  assert.equal(rideEntry(c, last[0]), null);
+  assert.deepEqual(rideAnnotations(c, last, () => new Map()).entries, { up: [], down: [] });
 });

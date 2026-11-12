@@ -1,19 +1,21 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261112i';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261112i';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261112i';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261112i';
-import { calculateIndicator } from './indicators.mjs?v=20261112i';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261112i';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261112i';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112i';
+import { t as createChart } from './lightweight-charts.mjs?v=20261112j';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261112j';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261112j';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261112j';
+import { calculateIndicator } from './indicators.mjs?v=20261112j';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideEntry } from './rides.mjs?v=20261112j';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261112j';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112j';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
 const stampFull = seconds => `${new Date(seconds * 1000).toISOString().replace('T', ' ').slice(0, 16)}`;
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
+// Entry-price levels: darker than the ridden-SMA line so the two do not blend.
+const UP_ENTRY = '#0b5e4c', DOWN_ENTRY = '#a3283a';
 const TIMEFRAME_CHOICES = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '1D'];
 
 let token, form, factors = [], result = null, rides = [], rideData = [], shownTfs = new Set();
@@ -170,12 +172,17 @@ function addRides(panel) {
     if (!cache.has(period)) cache.set(period, new Map(sma(panel.candles, period, panel.interval).filter(p => Number.isFinite(p.value)).map(p => [p.time, p.value])));
     return cache.get(period);
   };
-  const { markers, lines } = rideAnnotations(panel.candles, rides.filter(r => r.minutes === panel.interval), smaFor);
+  const { markers, lines, entries } = rideAnnotations(panel.candles, rides.filter(r => r.minutes === panel.interval), smaFor);
   panel.series.setMarkers(markers);
   const data = joinRideLines(lines, { up: UP, down: DOWN });
   if (data.length) {
     const line = panel.chart.addLineSeries({ color: UP, lineWidth: 4, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
     line.setData(data);
+  }
+  const levels = joinRideLines(entries, { up: UP_ENTRY, down: DOWN_ENTRY });
+  if (levels.length) {
+    const line = panel.chart.addLineSeries({ color: UP_ENTRY, lineWidth: 3, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+    line.setData(levels);
   }
 }
 
@@ -384,8 +391,18 @@ function selectRide(ride, focus = true) {
   ensureRendered(ride);
   rideButtons.get(ride)?.setAttribute('aria-pressed', 'true');
   rideButtons.get(ride)?.scrollIntoView?.({ block: 'nearest' });
-  $('trade-info').textContent = `${ride.tf} ${arrow(ride.dir)} ${maText(ride.periods)} · ${stampFull(ride.start + 60)} UTC 起 · 持续 ${ride.bars} 根${ride.ended ? '' : '（进行中）'}${ride.maxTouches ? ` · 最多回踩 ${ride.maxTouches} 次` : ''}`;
-  for (const panel of panels) panel.card.classList.toggle('chosen', panel.interval === ride.minutes);
+  // The selected signal's entry price as a dashed line with an axis label, on its own timeframe's chart.
+  let entry = null;
+  for (const panel of panels) {
+    panel.card.classList.toggle('chosen', panel.interval === ride.minutes);
+    if (panel.entryLine) { panel.series.removePriceLine(panel.entryLine); panel.entryLine = null; }
+    if (panel.interval !== ride.minutes || !panel.candles?.length) continue;
+    entry = rideEntry(panel.candles, ride);
+    if (entry) panel.entryLine = panel.series.createPriceLine({ price: entry.price, color: ride.dir > 0 ? UP_ENTRY : DOWN_ENTRY,
+      lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '入场' });
+  }
+  const entryText = entry ? ` · 入场价 ${entry.price.toFixed(2)}（${stampFull(entry.time)} 开盘）` : ' · 入场：下一根开盘（还没出来）';
+  $('trade-info').textContent = `${ride.tf} ${arrow(ride.dir)} ${maText(ride.periods)} · ${stampFull(ride.start + 60)} UTC 起${entryText} · 持续 ${ride.bars} 根${ride.ended ? '' : '（进行中）'}${ride.maxTouches ? ` · 最多回踩 ${ride.maxTouches} 次` : ''}`;
   paintSignalBar(statusTime); updateNav();
   if (focus) showRange(centeredRange(ride.start, Number($('f-window').value)), true, 0.75);
 }
