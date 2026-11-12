@@ -1,13 +1,13 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261111b';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261111b';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261111b';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261111b';
-import { calculateIndicator } from './indicators.mjs?v=20261111b';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261111b';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261111b';
+import { t as createChart } from './lightweight-charts.mjs?v=20261111c';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261111c';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261111c';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261111c';
+import { calculateIndicator } from './indicators.mjs?v=20261111c';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261111c';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261111c';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -21,6 +21,25 @@ const rideButtons = new Map();
 
 try { form = restoreForm(localStorage.getItem(FORM_KEY)); } catch { form = restoreForm(null); }
 const saveForm = () => { try { localStorage.setItem(FORM_KEY, JSON.stringify(form)); } catch { /* still works for this page */ } };
+// Chart height is a per-browser display choice, kept apart from the finder form. The stylesheet shrinks
+// .chart-host to 185px on short screens (laptops), which is too flat to read a chart; the chosen height
+// overrides that through --chart-h (see review.css :root[data-chart-h]).
+const HEIGHT_KEY = 'jesse.finder.chartHeight.v1';
+const HEIGHTS = [[240, '矮'], [360, '中'], [480, '高'], [640, '很高']];
+const DEFAULT_HEIGHT = 480;
+function applyChartHeight(px) {
+  document.documentElement.dataset.chartH = String(px);
+  document.documentElement.style.setProperty('--chart-h', `${px}px`);
+}
+function paintHeight() {
+  let px = DEFAULT_HEIGHT;
+  try { const saved = Number(localStorage.getItem(HEIGHT_KEY)); if (HEIGHTS.some(([h]) => h === saved)) px = saved; } catch { /* default */ }
+  const select = $('f-height');
+  select.replaceChildren(...HEIGHTS.map(([h, label]) => { const o = document.createElement('option'); o.value = String(h); o.textContent = label; return o; }));
+  select.value = String(px); applyChartHeight(px);
+  // autoSize charts follow their host's new height on their own.
+  select.onchange = () => { const h = Number(select.value); applyChartHeight(h); try { localStorage.setItem(HEIGHT_KEY, String(h)); } catch { /* this page only */ } };
+}
 
 async function post(path, body = {}) {
   const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: token },
@@ -416,7 +435,7 @@ async function importLatest() {
 async function start() {
   try { token = JSON.parse(localStorage.getItem('main') ?? '{}').authToken; } catch { token = null; }
   if (!token) throw new Error('请先在同一地址的 Jesse 页面登录，再刷新此页。localhost 与 127.0.0.1 的登录状态不同。');
-  paintForm();
+  paintForm(); paintHeight();
   $('finder-form').onsubmit = event => { event.preventDefault(); run(); };
   $('f-import').onclick = importLatest;
   $('f-latest').onclick = gotoLatest;
