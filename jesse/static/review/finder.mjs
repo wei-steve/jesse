@@ -1,14 +1,14 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261112j';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261112j';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261112j';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261112j';
-import { calculateIndicator } from './indicators.mjs?v=20261112j';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideEntry } from './rides.mjs?v=20261112j';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261112j';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112j';
+import { t as createChart } from './lightweight-charts.mjs?v=20261112k';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261112k';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261112k';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261112k';
+import { calculateIndicator } from './indicators.mjs?v=20261112k';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideEntry } from './rides.mjs?v=20261112k';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261112k';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112k';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -161,6 +161,9 @@ function newChart(host) {
     timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#edf0f5', minBarSpacing: 0.05 },
     localization: { locale: 'zh-CN', timeFormatter: t => `${stampFull(t)} UTC` },
     handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+    // Normal (0) not the default Magnet: the vertical line still snaps to bars, the horizontal one follows the
+    // mouse so any price level can be read off the scale.
+    crosshair: { mode: 0 },
   });
 }
 
