@@ -325,7 +325,8 @@ export function openAnnotator(canvas, { onSave, fileLabel = 'snapshot' } = {}) {
   function fit() {
     const stage = root.querySelector('.snapshot-stage');
     if (!stage.clientWidth || !stage.clientHeight) return;
-    const scale = Math.min(1, (stage.clientWidth - 24) / width, (stage.clientHeight - 24) / height);
+    // A single small chart is enlarged (up to 2x) so it is easy to draw on; large grids shrink to fit.
+    const scale = Math.min(2, (stage.clientWidth - 24) / width, (stage.clientHeight - 24) / height);
     frame.style.width = `${Math.max(80, Math.round(width * scale))}px`;
     frame.style.height = `${Math.max(60, Math.round(height * scale))}px`;
   }
@@ -349,8 +350,11 @@ export function openAnnotator(canvas, { onSave, fileLabel = 'snapshot' } = {}) {
     input.style.fontSize = `${Math.max(12, fontSize * (rect.width / width))}px`;
     frame.append(input);
     input.focus();
+    // remove() blurs the input, which calls finish again from onblur: the flag makes the second call a no-op.
+    let finished = false;
     const finish = commit => {
-      if (!input.isConnected) return;
+      if (finished) return;
+      finished = true;
       const text = input.value.trim();
       input.remove();
       if (!commit || !text) return;
