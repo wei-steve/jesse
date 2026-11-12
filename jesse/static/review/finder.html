@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>因子查找器 · Jesse</title>
   <link rel="icon" href="/favicon.ico">
-  <link rel="stylesheet" href="./review.css?v=20261111a">
+  <link rel="stylesheet" href="./review.css?v=20261111b">
 </head>
 <body class="signal-mode finder">
   <header>
@@ -46,6 +46,7 @@
   <main id="results" hidden>
     <aside>
       <div class="aside-head"><h2><strong id="aside-title">信号区间</strong> <span id="trade-count"></span></h2>
+        <button id="ride-latest" class="ride-latest" type="button" disabled title="选中列表里最新的一个区间">最新信号 ↓</button>
         <div id="ride-filter" class="ride-filter" aria-label="按周期过滤"></div>
       </div>
       <div id="trades" aria-label="区间列表"></div>
@@ -63,7 +64,7 @@
   <script type="module">
     // REVIEW_VERSION: change it (and every "?v=" in the .mjs imports and the stylesheet link) whenever
     // any file in this folder changes. tests/review-version.test.mjs checks that they all match.
-    const REVIEW_VERSION = '20261111a';
+    const REVIEW_VERSION = '20261111b';
     import(`./finder.mjs?v=${REVIEW_VERSION}`).catch(error => {
       const status = document.getElementById('status');
       status.hidden = false; status.classList.add('error'); status.textContent = `查找器脚本加载失败：${error.message}`;
