@@ -42,11 +42,11 @@
 Jesse 的静态服务没有 `Cache-Control`，浏览器会按启发式缓存 `.mjs` 和 CSS，旧脚本可能一直用到被强制刷新。解决办法是给所有文件加版本号查询参数，版本号一变，浏览器就把它当新地址：
 
 - `index.html` 里的内联加载器用 `const REVIEW_VERSION = '…'` 动态 `import(`./app.mjs?v=${REVIEW_VERSION}`)`，样式表是 `review.css?v=…`。`index.html` 本身是页面请求，普通刷新会重新校验。
-- 每个 `.mjs` 里的相对 import 都写成 `'./xxx.mjs?v=…'`（同一个版本号；`../_nuxt/…` 图表库文件名自带哈希，不需要）。
+- 每个 `.mjs` 里的相对 import 都写成 `'./xxx.mjs?v=…'`（同一个版本号，包括图表库 `./lightweight-charts.mjs?v=…`）。
 
 **以后改了 `jesse/static/review/` 里任何文件（`.mjs`、`.css`、`index.html`），提交前必须换版本号：**
 
-1. 选一个新版本号，建议日期加字母，如 `20261028h`（当天再改就 `b`）。
+1. 选一个新版本号，建议日期加字母，如 `20261111a`（当天再改就 `b`）。
 2. 把 `index.html` 和 `finder.html` 里的 `REVIEW_VERSION`、`review.css?v=` 和所有 `.mjs` 文件里 `?v=` 后面的旧版本号全部替换成新的（可用 `grep -rn "?v=" jesse/static/review/` 找，或全局替换旧版本号字符串）。
 3. 新增模块时，import 也要写成带同一个 `?v=` 的形式。
 4. 运行 `node --test tests/review-*.test.mjs`。`tests/review-version.test.mjs` 会检查 `index.html` 和所有 import 的版本号一致，漏改会报错（它不能检查你“有没有换新版本号”，所以第 1 步要自己记得）。
@@ -69,7 +69,7 @@ for f in jesse/static/review/*.mjs; do node --check "$f"; done
 docker cp jesse/static/review jesse:/jesse-docker/jesse/static/
 ```
 
-当前适配此仓库已打包的 Lightweight Charts v4 组件 `../_nuxt/eDEyLi0S.js`（`t` 为 createChart）。该组件不访问 CDN。升级 Jesse 后 dashboard 重新打包可能改变 chunk 名称或导出接口，届时需要更新 `app.mjs` 第一行的导入并重新验证。
+图表库 Lightweight Charts v4 已复制到本目录 `lightweight-charts.mjs`（`t` 为 createChart，不访问 CDN）。它原本是 dashboard 打包的 chunk `../_nuxt/eDEyLi0S.js`；Jesse 3.6.1 重新打包后该 chunk 消失，页面因此打不开，所以改为自带一份，升级 Jesse 不再影响复盘页和因子查找器。
 
 回滚时移除 `review` 目录即可，原 dashboard、后端及数据库未修改。
 
