@@ -1,14 +1,14 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261112d';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261112d';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261112d';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261112d';
-import { calculateIndicator } from './indicators.mjs?v=20261112d';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261112d';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261112d';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112d';
+import { t as createChart } from './lightweight-charts.mjs?v=20261112f';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261112f';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261112f';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261112f';
+import { calculateIndicator } from './indicators.mjs?v=20261112f';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261112f';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261112f';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112f';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);

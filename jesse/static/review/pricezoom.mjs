@@ -2,15 +2,17 @@
 // swipe stretches or squashes the candles vertically; the "A" button in the bottom-right corner (or double-clicking
 // the price scale) fits the visible candles to the chart height, like TradingView's A.
 // The bundled Lightweight Charts v4 only zooms the TIME axis on wheel and has no "set visible price range" call,
-// so the stretch is done through the series' autoscaleInfoProvider: the automatic price range is widened or
-// narrowed around its middle by a factor, and autoScale stays on so the chart keeps following scrolling.
+// so the stretch is done through the series' autoscaleInfoProvider, with autoScale left on so the chart keeps
+// following scrolling: a stretch fixes how much price the chart shows (`span`, in price units) and centres it on
+// the middle of the visible candles. (It used to be a multiple of the automatic range, so the candles grew or
+// shrank while dragging the chart sideways as that range changed — the user saw the candle length change.)
 // (Pressing and dragging the price scale up/down is the library's own built-in stretch and keeps working.)
 // Because autoScale stays on, the library ignores an up/down drag on the chart after a wheel stretch (it only
 // pans the price axis when autoScale is off), so stretched candles could not be moved up or down. While a
-// stretch is active, an up/down drag in the plot shifts the range itself (`offset`, in visible heights); the
+// stretch is active, an up/down drag in the plot shifts the range itself (`offset`, in spans); the
 // time pan of the same drag still works, and "A" / double-clicking the price scale clears it.
 
-// Wheel delta -> zoom factor. exp() makes one notch in and one notch out cancel exactly; the bounds keep the
+// Wheel delta -> zoom factor applied to the span. exp() makes one notch in and one notch out cancel exactly; the bounds keep the
 // candles from collapsing to a line or exploding off-screen.
 // Auto-fit ("A"): 4% padding top and bottom, and at most 12 px kept for markers (arrows stay visible, their
 // text may overlap the candles a little, like TradingView).
@@ -20,21 +22,25 @@ export function nextFactor(factor, deltaY) {
   return Math.min(MAX_FACTOR, Math.max(MIN_FACTOR, factor * Math.exp(deltaY * WHEEL_SPEED)));
 }
 
-// The automatic range scaled around its middle (factor > 1 shows more price = shorter candles).
-// offset moves the result by that many of its own heights (positive = higher prices, i.e. candles move down).
-export function scaledRange(range, factor, offset = 0) {
-  if (!range || (factor === 1 && !offset)) return range;
-  const half = (range.maxValue - range.minValue) / 2 * factor;
-  const mid = (range.minValue + range.maxValue) / 2 + offset * 2 * half;
-  return { minValue: mid - half, maxValue: mid + half };
+// `span` of price centred on the middle of the automatic range (null = no stretch, the range as is). offset
+// moves it by that many spans (positive = higher prices, i.e. candles move down).
+export function spanRange(range, span, offset = 0) {
+  if (!range || span == null) return range;
+  const mid = (range.minValue + range.maxValue) / 2 + offset * span;
+  return { minValue: mid - span / 2, maxValue: mid + span / 2 };
+}
+
+// The span after one wheel step; bounded against the visible candles' own range.
+export function nextSpan(span, deltaY, autoSpan) {
+  return autoSpan * nextFactor(span / autoSpan, deltaY);
 }
 
 export function enablePriceZoom(chart, series, host) {
-  // factor: wheel stretch (1 = none). fit: the "A" button (TradingView's auto-fit) — the price scale follows
+  // span: wheel stretch in price units (null = none). fit: the "A" button (TradingView's auto-fit) — the price scale follows
   // only the visible candles, so they fill the chart height; MA overlays and the ride line no longer widen it.
-  let factor = 1, fit = false, offset = 0;
-  const candlesOnly = () => fit || factor !== 1;
-  const stretched = () => factor !== 1 || offset !== 0;
+  let span = null, fit = false, offset = 0, autoSpan = 0;
+  const candlesOnly = () => fit || span !== null;
+  const stretched = () => span !== null;
   // The price scale fits the union of every series' automatic range, so MA overlays and the thick ride line
   // stopped the stretch early ("放大到一定程度就不能再放大"). Lines added to this chart from now on drop out of
   // the automatic range while a stretch or auto-fit is active, so only the candles decide it.
@@ -59,10 +65,11 @@ export function enablePriceZoom(chart, series, host) {
       autoscaleInfoProvider: original => {
         const info = original();
         if (!info?.priceRange) return info;
+        autoSpan = info.priceRange.maxValue - info.priceRange.minValue;
         const margins = fit && info.margins
           ? { above: Math.min(info.margins.above, FIT_MARKER_PX), below: Math.min(info.margins.below, FIT_MARKER_PX) }
           : info.margins;
-        return { ...info, priceRange: scaledRange(info.priceRange, factor, offset), margins };
+        return { ...info, priceRange: spanRange(info.priceRange, span, offset), margins };
       },
     });
     chart.priceScale('right').applyOptions({ autoScale: true, scaleMargins: fit ? FIT_MARGINS : normalMargins });
@@ -71,7 +78,9 @@ export function enablePriceZoom(chart, series, host) {
     chart.applyOptions({ handleScroll: { vertTouchDrag: stretched() } });
     button.setAttribute('aria-pressed', String(fit));
   };
-  const setFit = on => { fit = on; factor = 1; offset = 0; apply(); };
+  const setFit = on => { fit = on; span = null; offset = 0; apply(); };
+  // Install the provider now: the wheel needs autoSpan (the visible candles' range) from its first notch on.
+  apply();
   // stop the chart from also seeing the click (it would start a pan / move the crosshair)
   for (const type of ['pointerdown', 'mousedown', 'dblclick']) button.addEventListener(type, event => event.stopPropagation());
   button.addEventListener('click', event => { event.stopPropagation(); setFit(!fit); });
@@ -84,7 +93,8 @@ export function enablePriceZoom(chart, series, host) {
     if (!overScale(event)) return;
     event.preventDefault(); event.stopPropagation();
     fit = false;
-    factor = nextFactor(factor, event.deltaY);
+    if (!(autoSpan > 0)) return;
+    span = nextSpan(span ?? autoSpan, event.deltaY, autoSpan);
     apply();
   }, { capture: true, passive: false });
   // up/down drag in the plot while stretched; not stopped, so the chart still pans time with the same drag
