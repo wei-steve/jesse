@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>因子查找器 · Jesse</title>
   <link rel="icon" href="/favicon.ico">
-  <link rel="stylesheet" href="./review.css?v=20261111g">
+  <link rel="stylesheet" href="./review.css?v=20261112a">
 </head>
 <body class="signal-mode finder">
   <header>
@@ -37,6 +37,7 @@
       <button id="f-run" type="submit">查找</button>
       <button id="f-import" type="button">更新到最新</button>
       <button id="f-latest" type="button" disabled>跳到最新</button>
+      <button id="snapshot-all" type="button" title="截取所有周期图并拼接成一张，可标注后发给 Claude">截全部</button>
       <label>窗口 <select id="f-window" aria-label="共同时间窗口"></select></label>
       <label>图高 <select id="f-height" aria-label="K 线图高度"></select></label>
       <button id="previous" type="button" disabled>← 上一个</button><button id="next" type="button" disabled>下一个 →</button>
@@ -65,7 +66,7 @@
   <script type="module">
     // REVIEW_VERSION: change it (and every "?v=" in the .mjs imports and the stylesheet link) whenever
     // any file in this folder changes. tests/review-version.test.mjs checks that they all match.
-    const REVIEW_VERSION = '20261111g';
+    const REVIEW_VERSION = '20261112a';
     import(`./finder.mjs?v=${REVIEW_VERSION}`).catch(error => {
       const status = document.getElementById('status');
       status.hidden = false; status.classList.add('error'); status.textContent = `查找器脚本加载失败：${error.message}`;

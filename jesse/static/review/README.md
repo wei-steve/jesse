@@ -46,7 +46,7 @@ Jesse 的静态服务没有 `Cache-Control`，浏览器会按启发式缓存 `.m
 
 **以后改了 `jesse/static/review/` 里任何文件（`.mjs`、`.css`、`index.html`），提交前必须换版本号：**
 
-1. 选一个新版本号，建议日期加字母，如 `20261111g`（当天再改就 `b`）。
+1. 选一个新版本号，建议日期加字母，如 `20261112a`（当天再改就 `b`）。
 2. 把 `index.html` 和 `finder.html` 里的 `REVIEW_VERSION`、`review.css?v=` 和所有 `.mjs` 文件里 `?v=` 后面的旧版本号全部替换成新的（可用 `grep -rn "?v=" jesse/static/review/` 找，或全局替换旧版本号字符串）。
 3. 新增模块时，import 也要写成带同一个 `?v=` 的形式。
 4. 运行 `node --test tests/review-*.test.mjs`。`tests/review-version.test.mjs` 会检查 `index.html` 和所有 import 的版本号一致，漏改会报错（它不能检查你“有没有换新版本号”，所以第 1 步要自己记得）。
@@ -135,3 +135,35 @@ def compute(candles_by_tf: dict, params: dict) -> dict:
 - 状态条与“最新”视图：查找完成后默认定位到最后一根，状态条写此刻各周期状态和各周期的建议（`1h ↑MA20 · 15m — · …` / `1h、5m 向上 → 不宜做空；3m 向下 → 不宜做多`，都没有就写“各周期都没有沿均线走”）；“跳到最新”随时回到这里；点区间或鼠标移到图上时状态条跟着变。
 - 区间从所选范围的起点开始算（范围之前已经开始的区间被截断）；画均线用范围内的 K 线计算，均线周期大于范围内已有 K 线根数时起点附近画不出线。
 - 测试：`tests/test_factor_finder.py`（后端，用示例因子和造的 K 线）、`tests/review-finder-data.test.mjs`（表单、请求、阶梯序列转换）。
+
+## 截图与标注
+
+给两个页面（`index.html` 复盘页、`finder.html` 因子查找器）用，方便把图发给 Claude 讨论：截图 → 简单画几笔 → 一键存到 Mac 上的固定文件夹。手机上（iPad、iPhone 经 Tailscale 打开）也能用。
+
+**按钮在哪**
+
+- 每张图卡片标题行的右边有「截图」：只截这一张。复盘页截「主图 + 当前显示的副图」，因子查找器截这一张周期图。标题栏左边是周期（如 `3m`），右边是品种/回测标题加当前选中交易（或区间）的那行文字。
+- 工具栏的「截全部」：把所有有图的卡片按 2 列拼成一张，最上面一条总标题栏写页面名、品种、时间（UTC）和当前选中项。
+
+**标注工具**
+
+- 上方工具条：画笔、箭头、直线、方框、文字（选中的高亮）；颜色红、绿、蓝、黄、黑（默认红）；撤销、清空；右边是复制、下载、保存给 Claude、分享（浏览器支持分享文件时才出现）、关闭。
+- 画布按比例缩放到适合屏幕；鼠标、手指、Apple Pencil 都能画（用的是 pointer 事件）。线宽和字号按原图宽度换算，所以导出的是原分辨率，不会因为预览小就变细。
+- 文字：点一下位置会出现一个小输入框，回车或点别处后画上去（白描边，压在 K 线上也看得清）。Esc 关掉输入框不画；没有输入框时 Esc 关闭整层。
+- 每一笔（一次按下到抬起）是一条记录，撤销就是删掉最后一条重画，底图不动。清空只清标注。
+
+**保存到哪**
+
+- 「保存给 Claude」把图存到 **`jesse run` 所在项目目录**下的 `storage/screenshots/`：文件名是 UTC 的 `YYYYMMDD-HHMMSS-<label>.png`（label 如 `finder-3m`、`finder-all`、`review-3m`、`review-all`），同一秒同名会加 `-2`、`-3`；`latest.png` 永远覆盖成最新的一张。
+- 工具条里「备注（可选）」有字时，会写一份同名 `.txt`（最长 2000 字符）。存好后页面会显示文件名，提示「跟 Claude 说『看最新截图』即可」。
+- 上传走 `POST /review/screenshot`（body `{image, label, note}`，`image` 是不含 `data:` 前缀的 base64 PNG）。服务端只接受 PNG 文件头（否则 400），超过 15 MB 返回 413；一张 4 图拼接截图通常 1–3 MB。
+
+**复制/下载/分享的区别**
+
+- 「复制」调用剪贴板写图片，桌面浏览器可以直接粘给 Claude；不支持的浏览器（Safari、部分手机浏览器）会提示改用下载或保存给 Claude。
+- 「下载」就是普通下载，文件名同上；「分享」调系统分享面板（手机上可发到别处）。
+
+**实现与测试**
+
+- 全部在 `snapshot.mjs`：`captureCard`（一张卡片）、`captureGrid`（网格拼接）、`openAnnotator`（遮罩层）、`gridLayout` / `snapshotFileName` / `utcStamp`（纯函数）。图表图片用 Lightweight Charts 自带的 `chart.takeScreenshot()`，没有新增依赖。
+- `tests/review-snapshot.test.mjs` 测纯函数，`tests/test_review_screenshot.py` 测后端保存（正常保存、latest.png、备注、非 PNG 400、label 清洗、重名加后缀）。

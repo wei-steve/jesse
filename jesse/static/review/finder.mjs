@@ -1,13 +1,14 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261111g';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261111g';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261111g';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261111g';
-import { calculateIndicator } from './indicators.mjs?v=20261111g';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261111g';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261111g';
+import { t as createChart } from './lightweight-charts.mjs?v=20261112a';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261112a';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261112a';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261112a';
+import { calculateIndicator } from './indicators.mjs?v=20261112a';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261112a';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261112a';
+import { addSnapshotButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112a';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -190,6 +191,29 @@ function addOverlay(panel, preferences) {
   }
 }
 
+// ---- Snapshots -------------------------------------------------------------
+// Title bar of one card's snapshot: the timeframe on the left, symbol plus the selected interval (or the
+// status bar text when nothing is selected) on the right.
+function snapshotCaption(panel) {
+  const info = $('trade-info').textContent.trim() || $('signal-text').textContent.trim() || '未选择区间';
+  return { title: timeframeLabel(panel.interval), subtitle: `${result?.symbol ?? form.symbol} · ${info}` };
+}
+function openSnapshot(canvas, label) {
+  openAnnotator(canvas, { onSave: screenshotSaver(post, label), fileLabel: label });
+}
+function snapshotPanel(panel) {
+  if (!panel || panel.empty) return;
+  const label = `finder-${timeframeLabel(panel.interval)}`;
+  openSnapshot(captureCard(panel.card, [panel.chart], snapshotCaption(panel)), label);
+}
+function snapshotAll() {
+  const shown = panels.filter(panel => !panel.empty);
+  if (!shown.length) { status('还没有可以截图的结果，先点“查找”。', true); return; }
+  const info = $('trade-info').textContent.trim() || $('signal-text').textContent.trim() || '最新';
+  const header = `因子查找器 · ${result?.symbol ?? form.symbol} · ${utcStamp()} UTC · ${info}`;
+  openSnapshot(captureGrid(shown.map(panel => captureCard(panel.card, [panel.chart], snapshotCaption(panel))), 2, header), 'finder-all');
+}
+
 function makePanel(tf, item, preferences) {
   const interval = timeframeMinutes(tf);
   const card = document.createElement('article');
@@ -217,6 +241,7 @@ function makePanel(tf, item, preferences) {
   addRides(panel);
   const count = rides.filter(r => r.minutes === interval).length;
   meta.textContent = `${item.candles.length.toLocaleString()} 根完整 K 线 · ${count} 个区间`;
+  addSnapshotButton(card, () => snapshotPanel(panel));
   for (const event of ['pointerdown', 'wheel']) host.addEventListener(event, () => rangeLink?.activate(panel), { capture: true, passive: true });
   panel.chart.subscribeCrosshairMove(event => syncCrosshair(panel, typeof event.time === 'number' ? event.time : null));
   // A chart given its window before it had a size shows the wrong span: apply it again when first sized.
@@ -445,6 +470,7 @@ async function start() {
   $('finder-form').onsubmit = event => { event.preventDefault(); run(); };
   $('f-import').onclick = importLatest;
   $('f-latest').onclick = () => gotoLatest();
+  $('snapshot-all').onclick = snapshotAll;
   // The list is start-ordered, so its last ride is the newest; selectRide renders the chunks up to it and scrolls there.
   $('ride-latest').onclick = () => { const list = shownRides(); if (list.length) selectRide(list[list.length - 1]); };
   // #trades scrolls vertically (horizontally on narrow screens): load the next chunk near either end.

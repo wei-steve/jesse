@@ -1,14 +1,15 @@
 // Reuse the dependency already shipped with this Jesse dashboard. No CDN or
 // third-party requests are needed; the adapter is isolated for future rebuilds.
-import { t as createChart } from './lightweight-charts.mjs?v=20261111g';
-import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261111g';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261111g';
-import { calculateIndicator } from './indicators.mjs?v=20261111g';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261111g';
-import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261111g';
-import { mountControls } from './controls.mjs?v=20261111g';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261111g';
-import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261111g';
+import { t as createChart } from './lightweight-charts.mjs?v=20261112a';
+import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261112a';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261112a';
+import { calculateIndicator } from './indicators.mjs?v=20261112a';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261112a';
+import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261112a';
+import { mountControls } from './controls.mjs?v=20261112a';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261112a';
+import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261112a';
+import { addSnapshotButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112a';
 
 const $ = id => document.getElementById(id);
 const money = value => Number.isFinite(value) ? value.toFixed(2) : '—';
@@ -208,7 +209,32 @@ function makePanel(interval, source) {
     tags.append(tag);
   }
   card.querySelector('.chart-meta').textContent = `${candles.length.toLocaleString()} 根完整 K 线 · 略过 ${omittedBuckets} 个不完整区间`;
+  addSnapshotButton(card, () => snapshotPanel(panel));
   return panel;
+}
+
+// ---- Snapshots -------------------------------------------------------------
+// One card = its main chart plus the sub-panes that are currently shown.
+function panelCharts(panel) {
+  return [panel.main.chart, ...panel.panes.map(pane => pane.view.chart)];
+}
+function snapshotCaption(panel) {
+  const info = $('trade-info').textContent.trim() || '未选择交易';
+  return { title: panel.label, subtitle: `${$('session-title').textContent.trim()} · ${info}` };
+}
+function openSnapshot(canvas, label) {
+  openAnnotator(canvas, { onSave: screenshotSaver(post, label), fileLabel: label });
+}
+function snapshotPanel(panel) {
+  if (!panel || panel.empty) return;
+  openSnapshot(captureCard(panel.card, panelCharts(panel), snapshotCaption(panel)), `review-${panel.label}`);
+}
+function snapshotAll() {
+  const shown = panels.filter(panel => !panel.empty);
+  if (!shown.length) { status('还没有可以截图的结果。', true); return; }
+  const info = $('trade-info').textContent.trim() || (signalMode ? '最新' : '未选择交易');
+  const header = `多周期复盘 · ${route?.symbol ?? ''} · ${utcStamp()} UTC · ${info}`;
+  openSnapshot(captureGrid(shown.map(panel => captureCard(panel.card, panelCharts(panel), snapshotCaption(panel))), 2, header), 'review-all');
 }
 
 function valuesText(item, time) {
@@ -708,6 +734,7 @@ async function start() {
   $('entry').onclick = () => { if (selected) focusAt(selected.opened_at / 1000); };
   $('exit').onclick = () => { if (selected?.closed_at) focusAt(selected.closed_at / 1000); };
   $('span').onchange = () => focusAt(anchor, false);
+  $('snapshot-all').onclick = snapshotAll;
   $('all-markers').onchange = updateMarkers;
   // Entry/exit conditions can be folded away; remembered with the display settings.
   $('conditions-toggle').onclick = () => {
