@@ -38,3 +38,27 @@ main[hidden]{display:none}
 .price-fit{position:absolute;right:4px;bottom:4px;z-index:4;width:22px;height:20px;padding:0;font-size:11px;font-weight:600;line-height:18px;color:#5e6f88;background:#fff;border:1px solid #dce3ee;border-radius:4px}.price-fit[aria-pressed=true]{color:#fff;background:#315cd0;border-color:#315cd0}
 
 :root[data-chart-h] .chart-host{height:var(--chart-h)}
+
+/* Chart snapshots: the 「截图」 button in a card title and the full-screen annotator (snapshot.mjs). */
+.chart-head h3 .snapshot-btn{margin-left:auto;flex:none;padding:1px 7px;font-size:11px;font-weight:400}.chart-head h3 .snapshot-btn:hover{background:#edf3ff}
+.snapshot-annotator{position:fixed;inset:0;z-index:40;display:flex;flex-direction:column;background:#0b1220;color:#e6ebf5;font-size:13px}
+.snapshot-top{padding:8px 10px;background:#131c2e;border-bottom:1px solid #24314a;display:flex;flex-direction:column;gap:7px}
+.snapshot-tools{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.snapshot-tools button{min-height:34px;padding:5px 10px;background:#1d2942;border:1px solid #2b3a56;color:#e6ebf5;border-radius:7px}
+.snapshot-tools button:hover{background:#26344f;border-color:#3b4f74}
+.snapshot-tools button[aria-pressed=true]{background:#315cd0;border-color:#315cd0;color:#fff}
+.snapshot-tools .snapshot-color{width:34px;padding:0;border-radius:17px;border:2px solid #2b3a56}
+.snapshot-tools .snapshot-color[aria-pressed=true]{box-shadow:0 0 0 2px #fff}
+.snapshot-tools .snapshot-sep{width:1px;height:22px;background:#2b3a56;margin:0 3px}
+.snapshot-tools .snapshot-spacer{flex:1}
+.snapshot-tools .snapshot-close{background:#7a2233;border-color:#96303f}
+.snapshot-note{display:flex;align-items:center;gap:8px;color:#9fb0c9}
+.snapshot-note input{flex:1;max-width:520px;padding:6px 8px;border-radius:7px;border:1px solid #2b3a56;background:#0b1220;color:#e6ebf5;font:inherit}
+.snapshot-message{color:#9ae6b4;min-height:1.3em}
+.snapshot-message.error{color:#ffb4c0}
+.snapshot-stage{flex:1;display:flex;align-items:center;justify-content:center;padding:10px;overflow:auto}
+.snapshot-frame{position:relative;background:#fff;box-shadow:0 6px 24px #0008;touch-action:none}
+.snapshot-frame canvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
+.snapshot-overlay{cursor:crosshair}
+.snapshot-text-input{position:absolute;z-index:2;padding:2px 4px;border:1px dashed #315cd0;background:#ffffffe6;color:#101828;font:inherit}
+@media(max-width:700px){.snapshot-tools button{min-height:40px;padding:7px 11px;font-size:14px}.snapshot-tools .snapshot-color{width:40px;border-radius:20px}.snapshot-note input{max-width:none}}
