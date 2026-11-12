@@ -62,3 +62,7 @@ main[hidden]{display:none}
 .snapshot-overlay{cursor:crosshair}
 .snapshot-text-input{position:absolute;z-index:2;padding:2px 4px;border:1px dashed #315cd0;background:#ffffffe6;color:#101828;font:inherit}
 @media(max-width:700px){.snapshot-tools button{min-height:40px;padding:7px 11px;font-size:14px}.snapshot-tools .snapshot-color{width:40px;border-radius:20px}.snapshot-note input{max-width:none}}
+.chart-grid.has-maximized{grid-template-columns:minmax(0,1fr)}
+.chart-grid.has-maximized>.chart-card:not(.maximized){display:none}
+.chart-grid.has-maximized>.chart-card.maximized .chart-host{height:max(260px,calc(100vh - 130px))}
+.chart-head h3 .maximize-btn{margin-left:4px}

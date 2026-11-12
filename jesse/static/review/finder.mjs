@@ -1,14 +1,14 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261112b';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261112b';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261112b';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261112b';
-import { calculateIndicator } from './indicators.mjs?v=20261112b';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261112b';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261112b';
-import { addSnapshotButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112b';
+import { t as createChart } from './lightweight-charts.mjs?v=20261112c';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261112c';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261112c';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261112c';
+import { calculateIndicator } from './indicators.mjs?v=20261112c';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261112c';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261112c';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112c';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -242,6 +242,7 @@ function makePanel(tf, item, preferences) {
   const count = rides.filter(r => r.minutes === interval).length;
   meta.textContent = `${item.candles.length.toLocaleString()} 根完整 K 线 · ${count} 个区间`;
   addSnapshotButton(card, () => snapshotPanel(panel));
+  addMaximizeButton(card);
   for (const event of ['pointerdown', 'wheel']) host.addEventListener(event, () => rangeLink?.activate(panel), { capture: true, passive: true });
   panel.chart.subscribeCrosshairMove(event => syncCrosshair(panel, typeof event.time === 'number' ? event.time : null));
   // A chart given its window before it had a size shows the wrong span: apply it again when first sized.

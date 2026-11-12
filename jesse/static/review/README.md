@@ -46,7 +46,7 @@ Jesse 的静态服务没有 `Cache-Control`，浏览器会按启发式缓存 `.m
 
 **以后改了 `jesse/static/review/` 里任何文件（`.mjs`、`.css`、`index.html`），提交前必须换版本号：**
 
-1. 选一个新版本号，建议日期加字母，如 `20261112b`（当天再改就 `b`）。
+1. 选一个新版本号，建议日期加字母，如 `20261112c`（当天再改就 `b`）。
 2. 把 `index.html` 和 `finder.html` 里的 `REVIEW_VERSION`、`review.css?v=` 和所有 `.mjs` 文件里 `?v=` 后面的旧版本号全部替换成新的（可用 `grep -rn "?v=" jesse/static/review/` 找，或全局替换旧版本号字符串）。
 3. 新增模块时，import 也要写成带同一个 `?v=` 的形式。
 4. 运行 `node --test tests/review-*.test.mjs`。`tests/review-version.test.mjs` 会检查 `index.html` 和所有 import 的版本号一致，漏改会报错（它不能检查你“有没有换新版本号”，所以第 1 步要自己记得）。
@@ -167,3 +167,7 @@ def compute(candles_by_tf: dict, params: dict) -> dict:
 
 - 全部在 `snapshot.mjs`：`captureCard`（一张卡片）、`captureGrid`（网格拼接）、`openAnnotator`（遮罩层）、`gridLayout` / `snapshotFileName` / `utcStamp`（纯函数）。图表图片用 Lightweight Charts 自带的 `chart.takeScreenshot()`，没有新增依赖。
 - `tests/review-snapshot.test.mjs` 测纯函数，`tests/test_review_screenshot.py` 测后端保存（正常保存、latest.png、备注、非 PNG 400、label 清洗、重名加后缀）。
+
+## 放大单张图
+
+每张图标题右边「截图」旁有「放大」：这张图占满图表区，其他周期暂时隐藏；按钮变成「还原」，再点一次或按 Esc 回到多图。隐藏的图仍在后台跟着时间联动，还原后位置正确。代码在 `snapshot.mjs` 的 `toggleMaximize` / `addMaximizeButton`，样式是 `review.css` 的 `.chart-grid.has-maximized`。

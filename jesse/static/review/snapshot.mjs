@@ -178,6 +178,42 @@ export function addSnapshotButton(card, onClick, text = '截图') {
   return button;
 }
 
+// ---- Maximize ---------------------------------------------------------------
+// 放大: one card fills the chart grid and the other timeframes are hidden (display:none, so their charts
+// keep running and catch up through the normal range linking when shown again). 还原 / Esc restores.
+export function toggleMaximize(card, force) {
+  const grid = card?.closest('.chart-grid');
+  if (!grid) return;
+  const on = force ?? !card.classList.contains('maximized');
+  for (const other of grid.querySelectorAll('.chart-card.maximized')) other.classList.remove('maximized');
+  for (const button of grid.querySelectorAll('.maximize-btn')) button.textContent = '放大';
+  grid.classList.toggle('has-maximized', on);
+  if (!on) return;
+  card.classList.add('maximized');
+  const button = card.querySelector('.maximize-btn');
+  if (button) button.textContent = '还原';
+  card.scrollIntoView({ block: 'start' });
+}
+
+export function addMaximizeButton(card) {
+  const button = document.createElement('button');
+  button.type = 'button'; button.className = 'snapshot-btn maximize-btn'; button.textContent = '放大';
+  button.title = '放大这张图，隐藏其他周期（再点一次或按 Esc 还原）';
+  button.onclick = () => toggleMaximize(card);
+  (card.querySelector('.chart-head h3') ?? card.querySelector('.chart-head') ?? card).append(button);
+  return button;
+}
+
+// Registered when the module loads, i.e. before any annotator's own capture listener, so it runs first and
+// can tell that an open annotator (or a text box in it) owns this Esc.
+if (typeof document !== 'undefined') {
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || document.querySelector('.snapshot-annotator')) return;
+    const card = document.querySelector('.chart-card.maximized');
+    if (card) toggleMaximize(card, false);
+  }, true);
+}
+
 // ---- Annotator -------------------------------------------------------------
 
 function drawShape(ctx, shape, lineWidth, fontSize) {
