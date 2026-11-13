@@ -46,7 +46,7 @@ Jesse 的静态服务没有 `Cache-Control`，浏览器会按启发式缓存 `.m
 
 **以后改了 `jesse/static/review/` 里任何文件（`.mjs`、`.css`、`index.html`），提交前必须换版本号：**
 
-1. 选一个新版本号，建议日期加字母，如 `20261113a`（同一天再改就 `b`）。
+1. 选一个新版本号，建议日期加字母，如 `20261113b`（同一天再改就 `b`）。
 2. 把 `index.html` 和 `finder.html` 里的 `REVIEW_VERSION`、`review.css?v=` 和所有 `.mjs` 文件里 `?v=` 后面的旧版本号全部替换成新的（可用 `grep -rn "?v=" jesse/static/review/` 找，或全局替换旧版本号字符串）。
 3. 新增模块时，import 也要写成带同一个 `?v=` 的形式。
 4. 运行 `node --test tests/review-*.test.mjs`。`tests/review-version.test.mjs` 会检查 `index.html` 和所有 import 的版本号一致，漏改会报错（它不能检查你“有没有换新版本号”，所以第 1 步要自己记得）。
@@ -138,24 +138,25 @@ def compute(candles_by_tf: dict, params: dict) -> dict:
 - 挂单的成交与结果判定（每根挂单价只对下一根有效：开盘越过挂单价算这一次不成交、`gapBars` 计数并继续等下一根，最低/最高价越过挂单价算成交；止损 = 挂单价 ∓ k·ATR（用算出这个挂单价那根的 ATR），止盈 = 挂单价 ± r·(k·ATR)；成交那根只查止损，同一根两碰按止损，超过持有根数按收盘平；`open` 规则照旧下一根开盘成交）在 `limit-rules.mjs`（纯函数，`tests/review-limit-rules.test.mjs`），ATR(14) 用 Wilder 平滑，与复盘页附图口径一致。
 - 测试：`tests/test_factor_finder.py`（后端，用示例因子和造的 K 线）、`tests/review-finder-data.test.mjs`（表单、请求、阶梯序列转换）。
 
-## 标注（因子查找器里按键盘标“好 / 坏”）
+## 标注（因子查找器里分开标「趋势判断」和「挂单」）
 
-因子查找器里发现信号或挂单不对时，不再一张张截图：翻到那个信号，按一下键标“好 / 坏”，可加一句备注。标注写进**项目目录**（`jesse run` 的 cwd）下的 `storage/labels/finder-labels.jsonl`，调度/Claude 直接读这个文件分析，不需要截图。
+因子查找器里发现信号或挂单不对时，不再一张张截图：翻到那个信号，按一下键标“好 / 坏”，可加一句备注。每个信号有**两项独立标注**——「趋势判断」（这个信号该不该出现）和「挂单」（挂单价 / 成交 / 离场合不合理），所以一个“坏”能说清楚错在哪儿。标注写进**项目目录**（`jesse run` 的 cwd）下的 `storage/labels/finder-labels.jsonl`，调度/Claude 直接读这个文件分析，不需要截图。
 
 **快捷键**（焦点在输入框、下拉框里时不响应）
 
 - `←` / `→` 或 `k` / `j`：上一个 / 下一个信号（和工具栏按钮、`rides.mjs` 的 `neighbour` 同一套导航，遵守周期和标注筛选）。
-- `g`：标“好”；`b`：标“坏”；`0`：清除标注。标完自动跳到下一个信号，可以一路按下去。
-- `n`：打开一行备注输入框（页面内的，不用 `prompt`）。回车保存：已经标过就再存一条（`label` 沿用当前值），还没标就提示“先按 g 或 b”且不保存（备注先记着，等按 g / b 时随标注一起存）。`Esc` 关掉输入框。
-- 列表每项右侧显示 ✓（绿）/ ✗（红），有备注时鼠标悬停显示备注；列表上方是“好 x / 坏 y / 未标 z”统计、全部 / 未标 / 好 / 坏 筛选和一行快捷键说明。统计只按周期筛选算，不跟着标注筛选变。
+- 趋势判断：`g` 好、`b` 坏；挂单：`f` 好、`v` 坏（键盘上 f / v 就在 g / b 左边）。标完只有**两项都标了**才跳到下一个信号；趋势标了“坏”时直接跳（趋势错了，挂单不用评）。
+- `0`：清除这个信号的两项标注（备注是单独一项，不跟着清）。
+- `n`：打开一行备注输入框（页面内的，不用 `prompt`）。回车存成 `kind=note` 的一行，不要求先标好 / 坏；空着回车就是删掉这个备注；`Esc` 关掉输入框不保存。
+- 列表每项右侧显示 `势✓` / `势✗` 和 `挂✓` / `挂✗`（没标的不显示），有备注时鼠标悬停显示备注；列表上方是「趋势 好 x / 坏 y · 挂单 好 x / 坏 y · 未标 z」统计（未标 = 两项都没标）、全部 / 未标 / 趋势坏 / 挂单坏 / 都好 筛选和一行快捷键说明。统计只按周期筛选算，不跟着标注筛选变。选中信号的信息栏也显示当前两项标注和备注。
 
-**文件格式**：一行一条 JSON，只追加、不改旧行。字段：`key`（`factor|exchange|symbol|tf|start|dir`，前端在 `labels.mjs` 拼）、`label`（`good` / `bad` / `clear`）、`note`、`factor`、`version`、`params`（这次实际用的因子参数）、`exchange`、`symbol`、`tf`、`start`（区间开始，UTC 秒）、`dir`（1 / -1）、`order`（当时页面上的挂单：算法 `rule`、挂单价 `price`、状态 `status`（`filled` / `open` / `unfilled` / `waiting`）、等了几根 `waitBars`、成交价 `fillPrice`、止损 `stop`、止盈 `target`、结果 `R`）、`saved_at`（UTC ISO）。
+**文件格式**：一行一条 JSON，只追加、不改旧行。字段：`key`（`factor|exchange|symbol|tf|start|dir`，前端在 `labels.mjs` 拼）、`kind`（`trend` / `order` / `note`；缺省 = `trend`，所以旧行就是趋势标注）、`label`（`good` / `bad` / `clear`；`kind=note` 的行没有这个字段）、`note`、`factor`、`version`、`params`（这次实际用的因子参数）、`exchange`、`symbol`、`tf`、`start`（区间开始，UTC 秒）、`dir`（1 / -1）、`order`（当时页面上的挂单：算法 `rule`、挂单价 `price`、状态 `status`（`filled` / `open` / `unfilled` / `waiting`）、等了几根 `waitBars`、成交价 `fillPrice`、止损 `stop`、止盈 `target`、结果 `R`）、`saved_at`（UTC ISO）。
 
-读法：同一个 `key` 取**最后一条**，`clear` 表示取消标注（去掉这个 key）。页面用 `POST /review/labels {factor, exchange, symbol}` 拿回来，接口做的就是这件事；也可以直接读文件。`key` 上限 200 字符，一条记录序列化后超过 8 KB 返回 413，备注超过 500 字符会截断（不丢标注）。
+读法：同一个 `key`、同一个 `kind` 取**最后一条**，`clear` 表示取消这一项标注（这项变成空）；备注取该 key 最后一条带备注的行、或最后一条 `kind=note` 的行（`kind=note` 且备注为空 = 删掉备注）。三项全空的 key 不返回。页面用 `POST /review/labels {factor, exchange, symbol}` 拿回 `{ labels: { key: { trend, order, note } } }`，接口做的就是这件事；也可以直接读文件。`key` 上限 200 字符，一条记录序列化后超过 8 KB 返回 413，备注超过 500 字符会截断（不丢标注）。
 
-**接口**：`POST /review/label`（写一条，`{ok: true}`；`label` 不是 good/bad/clear 返回 400）和 `POST /review/labels`（读最新标注，文件不存在返回空），都在 `jesse/controllers/review_controller.py`，与截图接口同一个 router、同样需要登录。
+**接口**：`POST /review/label`（写一条，`{ok: true}`；`kind` 不是 trend/order/note 返回 400，trend/order 的 `label` 不是 good/bad/clear 也返回 400，`kind=note` 可以不带 `label`）和 `POST /review/labels`（读当前两项标注和备注，文件不存在返回空），都在 `jesse/controllers/review_controller.py`，与截图接口同一个 router、同样需要登录。
 
-**测试**：`tests/review-labels.test.mjs`（`labels.mjs` 的 `labelKey` / `labelCounts` / `latestLabels` / `filterByLabel`）、`tests/test_review_labels.py`（写入、覆盖、clear、非法 label、超长 413、按 factor/symbol 过滤）。
+**测试**：`tests/review-labels.test.mjs`（`labels.mjs` 的 `labelKey` / `labelCounts` / `countsText` / `latestLabels` / `filterByLabel`）、`tests/test_review_labels.py`（写入、kind 缺省为 trend、order 与 trend 互不覆盖、备注单独存 / 清、clear、非法 kind 和 label、旧行兼容、超长 413、按 factor/symbol 过滤）。
 
 ## 截图与标注
 

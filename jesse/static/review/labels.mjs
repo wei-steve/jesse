@@ -1,52 +1,101 @@
-// Signal labels of the factor finder: one key per signal, the effective mark per key and the counts shown above
-// the list. Pure functions, no DOM (tests/review-labels.test.mjs). The rows themselves live in the project file
+// Signal labels of the factor finder: two marks per signal (trend judgement and limit order) plus one note, the
+// effective state per key and the counts / filters shown above the list. Pure functions, no DOM
+// (tests/review-labels.test.mjs). The rows themselves live in the project file
 // storage/labels/finder-labels.jsonl and are written / read by POST /review/label and POST /review/labels.
 
-export const LABELS = new Set(['good', 'bad', 'clear']);
-export const LABEL_TEXT = { good: '✓', bad: '✗' };
+export const MARK_KINDS = ['trend', 'order'];
+export const MARKS = new Set(['good', 'bad', 'clear']);
+// What a mark looks like in the list: the kind is prefixed so 势✓ and 挂✓ cannot be confused at a glance.
+export const MARK_TEXT = {
+  trend: { good: '势✓', bad: '势✗' },
+  order: { good: '挂✓', bad: '挂✗' },
+};
+export const KIND_TEXT = { trend: '趋势', order: '挂单' };
 
 // The identity of one signal: `factor|exchange|symbol|tf|start|dir`, the format the backend documents. Two marks
 // of "the same signal" must land on the same key; another factor, exchange or symbol must not inherit the marks.
 export const labelKey = (form, ride) =>
   [form?.factor, form?.exchange, form?.symbol, ride?.tf, ride?.start, ride?.dir].join('|');
 
-// Effective mark lookup over either the server's `{ key: { label, note } }` object or a Map of the same shape.
-// `clear` is not a mark: it removes one, so it reads as unlabeled.
-export function labelOf(labels, key) {
+const entryOfLabel = (labels, key) => {
   if (!labels || !key) return null;
-  const entry = labels instanceof Map ? labels.get(key) : labels[key];
-  return entry?.label === 'good' || entry?.label === 'bad' ? entry : null;
+  return (labels instanceof Map ? labels.get(key) : labels[key]) ?? null;
+};
+
+// One mark of a signal ('good' / 'bad'), or null when it is not marked. Accepts the server's
+// `{ key: { trend, order, note } }` object or a Map of the same shape.
+export function markOf(labels, key, kind = 'trend') {
+  const value = entryOfLabel(labels, key)?.[kind];
+  return value === 'good' || value === 'bad' ? value : null;
 }
 
-// Rows of the label file (oldest first) → Map of key → mark. The last row of a key wins; a `clear` row removes
-// the key. Used by the tests and by anything that reads the file directly; the page gets the same answer from
-// POST /review/labels.
+export const noteOf = (labels, key) => entryOfLabel(labels, key)?.note ?? '';
+
+// The two marks and the note of a signal, always the same shape, so callers never need a null check.
+export function entryOf(labels, key) {
+  return { trend: markOf(labels, key, 'trend'), order: markOf(labels, key, 'order'), note: noteOf(labels, key) };
+}
+
+// The two marks are reviewed independently: the note box and the list only care whether a signal has any mark.
+export const isUnmarked = entry => !entry.trend && !entry.order;
+export const bothMarked = entry => !!entry.trend && !!entry.order;
+
+// Rows of the label file (oldest first) → Map of key → { trend, order, note }, the same answer POST
+// /review/labels gives. The last row of a kind wins, a `clear` row removes that kind, and a row without a kind
+// is a trend mark (that is all that existed before the split). Used by the tests and by anything that reads the
+// file directly.
 export function latestLabels(rows) {
   const latest = new Map();
   for (const row of rows ?? []) {
     if (!row?.key) continue;
-    if (row.label === 'clear') latest.delete(row.key);
-    else if (row.label === 'good' || row.label === 'bad') latest.set(row.key, { label: row.label, note: row.note ?? '' });
+    const kind = row.kind === 'note' ? 'note' : MARK_KINDS.includes(row.kind) ? row.kind : 'trend';
+    const entry = latest.get(row.key) ?? { trend: null, order: null, note: '' };
+    if (kind === 'note') entry.note = row.note ?? '';
+    else {
+      if (MARKS.has(row.label)) entry[kind] = row.label === 'clear' ? null : row.label;
+      if (row.note) entry.note = row.note;
+    }
+    if (entry.trend || entry.order || entry.note) latest.set(row.key, entry);
+    else latest.delete(row.key);
   }
   return latest;
 }
 
-// How many of the listed signals are marked good / bad / not marked at all. `keyOf` reads the key of a signal;
-// the finder puts it on the ride itself (ride.key), so the two-argument call works there.
+// How many of the listed signals are marked good / bad per kind, and how many have no mark at all (neither kind).
+// `keyOf` reads the key of a signal; the finder puts it on the ride itself (ride.key), so the two-argument call
+// works there.
 export function labelCounts(rides, labels, keyOf = ride => ride.key) {
-  const counts = { good: 0, bad: 0, unlabeled: 0 };
+  const counts = { trend: { good: 0, bad: 0 }, order: { good: 0, bad: 0 }, unlabeled: 0 };
   for (const ride of rides ?? []) {
-    const entry = labelOf(labels, keyOf(ride));
-    counts[entry?.label ?? 'unlabeled'] += 1;
+    const entry = entryOf(labels, keyOf(ride));
+    for (const kind of MARK_KINDS) if (entry[kind]) counts[kind][entry[kind]] += 1;
+    if (isUnmarked(entry)) counts.unlabeled += 1;
   }
   return counts;
 }
 
-// One filter id per button above the list: everything, only unmarked signals, only good, only bad.
-export const LABEL_FILTERS = [['all', '全部'], ['unlabeled', '未标'], ['good', '好'], ['bad', '坏']];
+// The line above the list: `趋势 好 x / 坏 y · 挂单 好 x / 坏 y · 未标 z`.
+export function countsText(counts) {
+  const parts = MARK_KINDS.map(kind => `${KIND_TEXT[kind]} 好 ${counts[kind].good} / 坏 ${counts[kind].bad}`);
+  return `${parts.join(' · ')} · 未标 ${counts.unlabeled}`;
+}
+
+// One filter id per button above the list. "未标" is no mark of either kind, "都好" is both kinds good, and the two
+// bad filters find the signals whose trend judgement / limit order was wrong.
+export const LABEL_FILTERS = [['all', '全部'], ['unlabeled', '未标'], ['trendBad', '趋势坏'],
+  ['orderBad', '挂单坏'], ['bothGood', '都好']];
+
+const PASSES = {
+  unlabeled: entry => isUnmarked(entry),
+  trendBad: entry => entry.trend === 'bad',
+  orderBad: entry => entry.order === 'bad',
+  bothGood: entry => bothMarked(entry) && entry.trend === 'good' && entry.order === 'good',
+};
 
 // Does a signal pass the current label filter? `label` is the filter id ('all' shows everything).
 export function filterByLabel(rides, labels, label, keyOf = ride => ride.key) {
   if (!label || label === 'all') return rides;
-  return rides.filter(ride => (labelOf(labels, keyOf(ride))?.label ?? 'unlabeled') === label);
+  const passes = PASSES[label];
+  if (!passes) return rides;
+  return rides.filter(ride => passes(entryOf(labels, keyOf(ride))));
 }

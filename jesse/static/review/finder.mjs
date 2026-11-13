@@ -1,16 +1,16 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261113a';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261113a';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261113a';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261113a';
-import { calculateIndicator } from './indicators.mjs?v=20261113a';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261113a';
-import { LIMIT_RULES, LIMIT_DEFAULTS, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261113a';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261113a';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261113a';
-import { labelKey, labelCounts, labelOf, filterByLabel, LABEL_FILTERS, LABEL_TEXT } from './labels.mjs?v=20261113a';
+import { t as createChart } from './lightweight-charts.mjs?v=20261113b';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261113b';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261113b';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261113b';
+import { calculateIndicator } from './indicators.mjs?v=20261113b';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261113b';
+import { LIMIT_RULES, LIMIT_DEFAULTS, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261113b';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261113b';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261113b';
+import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS } from './labels.mjs?v=20261113b';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -25,11 +25,9 @@ const TIMEFRAME_CHOICES = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '1D
 let token, form, factors = [], result = null, rides = [], rideData = [], shownTfs = new Set();
 let panels = [], selectedRide = null, statusTime, wantedRange, rangeLink, syncing = false, runVersion = 0;
 const rideButtons = new Map();
-// Labels of the signals on screen: `key -> {label, note}`, as returned by POST /review/labels. A new run starts
-// empty and reloads, so marks of another factor / symbol never show up here. `labelFilter` narrows the list.
+// Labels of the signals on screen: `key -> {trend, order, note}`, as returned by POST /review/labels. A new run
+// starts empty and reloads, so marks of another factor / symbol never show up here. `labelFilter` narrows the list.
 let labels = {}, labelFilter = 'all';
-// A note typed with `n` for a signal that has no good/bad mark yet: kept until the next g / b saves it with the mark.
-const pendingNotes = new Map();
 
 try { form = restoreForm(localStorage.getItem(FORM_KEY)); } catch { form = restoreForm(null); }
 const saveForm = () => { try { localStorage.setItem(FORM_KEY, JSON.stringify(form)); } catch { /* still works for this page */ } };
@@ -518,13 +516,20 @@ function rideButton(ride) {
   const head = document.createElement('strong');
   const side = document.createElement('span'); side.className = ride.dir > 0 ? 'up' : 'down'; side.textContent = arrow(ride.dir);
   head.append(document.createTextNode(`${ride.tf} `), side, document.createTextNode(` ${maText(ride.periods)}`));
-  // The mark of the review pass: ✓ green / ✗ red on the right of the row, the note on hover.
-  const entry = labelEntry(ride);
-  const mark = document.createElement('span');
-  mark.className = `label-mark${entry ? ` ${entry.label}` : ''}`;
-  mark.textContent = entry ? LABEL_TEXT[entry.label] : '';
-  if (entry?.note) mark.title = entry.note;
-  head.append(mark);
+  // The marks of the review pass on the right of the row: 势✓ / 势✗ for the trend judgement, 挂✓ / 挂✗ for the limit
+  // order, only the ones that were made, the note on hover.
+  const entry = entryOf(labels, ride.key);
+  const marks = document.createElement('span');
+  marks.className = 'label-marks';
+  if (entry.note) marks.title = entry.note;
+  for (const kind of MARK_KINDS) {
+    if (!entry[kind]) continue;
+    const mark = document.createElement('span');
+    mark.className = `label-mark ${kind} ${entry[kind]}`;
+    mark.textContent = MARK_TEXT[kind][entry[kind]];
+    marks.append(mark);
+  }
+  head.append(marks);
   const details = document.createElement('small');
   details.textContent = `${stamp(ride.start + 60)} UTC · ${ride.bars} 根${ride.ended ? '' : '（进行中）'}`;
   button.append(head, details);
@@ -583,10 +588,19 @@ function updateNav() {
 
 // ---- Labels ----------------------------------------------------------------
 // Marking a signal appends one line to the project's storage/labels/finder-labels.jsonl (POST /review/label), which
-// is what the person (or Claude) reads afterwards instead of a screenshot per signal. The page keeps the last mark
-// per key in `labels` and only mirrors the file; the file itself is append-only and never rewritten here.
-const labelEntry = ride => labelOf(labels, ride?.key);
-const NOTE_HINT_UNMARKED = '先按 g 或 b（Esc 关掉输入框；备注已记住，标完一起保存）';
+// is what the person (or Claude) reads afterwards instead of a screenshot per signal. A signal carries two marks —
+// `trend` (should this signal exist at all) and `order` (was the limit price / fill / exit usable) — plus one note,
+// so a “坏” says which of the two was wrong. The page keeps the current state per key in `labels` and only mirrors
+// the file; the file itself is append-only and never rewritten here.
+
+// The info line of the selected signal, the two marks included: the verdicts can be read without looking back at
+// the list. Repainted after marking, so a fresh mark shows up immediately.
+let selectedOrder = null;
+function paintTradeInfo(ride) {
+  const entry = entryOf(labels, ride.key);
+  const marks = MARK_KINDS.map(kind => `${KIND_TEXT[kind]}${entry[kind] === 'good' ? '✓' : entry[kind] === 'bad' ? '✗' : '—'}`).join(' ');
+  $('trade-info').textContent = `${ride.tf} ${arrow(ride.dir)} ${maText(ride.periods)} · ${stampFull(ride.start + 60)} UTC 起${orderText(selectedOrder)} · 持续 ${ride.bars} 根${ride.ended ? '' : '（进行中）'}${ride.maxTouches ? ` · 最多回踩 ${ride.maxTouches} 次` : ''} · ${marks}${entry.note ? ` · 备注：${entry.note}` : ''}`;
+}
 
 // The factor run the marks belong to. The result's own identity, not the form's: the user may already have
 // picked another factor / symbol in the form without running it, and a mark must still describe what is on screen.
@@ -600,8 +614,7 @@ function keyRides() {
 }
 
 function paintLabelBar() {
-  const counts = labelCounts(tfRides(), labels);
-  $('label-counts').textContent = `好 ${counts.good} / 坏 ${counts.bad} / 未标 ${counts.unlabeled}`;
+  $('label-counts').textContent = countsText(labelCounts(tfRides(), labels));
   for (const button of $('label-filter').children) button.setAttribute('aria-pressed', String(button.dataset.filter === labelFilter));
 }
 
@@ -625,38 +638,59 @@ function orderPayload(ride) {
     stop: sim?.stop ?? null, target: sim?.target ?? null, R: sim?.R ?? null };
 }
 
-// One mark: send it, then mirror it locally. The note of an existing mark is kept when none is passed, so
-// pressing g on an already noted signal does not wipe the note.
-async function saveLabel(ride, label, note) {
-  const text = label === 'clear' ? '' : (note ?? pendingNotes.get(ride.key) ?? labelEntry(ride)?.note ?? '').slice(0, 500);
+// One line of the file: a mark (`kind` trend / order, `label` good / bad / clear) or the note (`kind` note). The
+// request also carries the note and the order that was on screen, so the row explains itself long after the screen
+// is gone. The local mirror is updated from the same values, so the list repaints without waiting for a reload.
+async function saveLabel(ride, kind, label, note) {
+  const entry = entryOf(labels, ride.key);
+  const text = kind === 'note' ? (note ?? '') : entry.note;
   await post('/review/label', {
     key: ride.key, ...runIdentity(), version: result?.version ?? null, params: result?.params ?? {},
-    tf: ride.tf, start: ride.start, dir: ride.dir, label, note: text, order: orderPayload(ride),
+    tf: ride.tf, start: ride.start, dir: ride.dir, kind, label: label ?? undefined, note: text,
+    order: orderPayload(ride),
   });
-  if (label === 'clear') delete labels[ride.key];
-  else labels[ride.key] = { label, note: text };
+  const next = { ...entry, note: text };
+  if (kind !== 'note') next[kind] = label === 'clear' ? null : label;
+  if (next.trend || next.order || next.note) labels[ride.key] = next;
+  else delete labels[ride.key];
+  if (selectedRide === ride) paintTradeInfo(ride);
   paintRides();
 }
 
-// g / b / 0: mark the selected signal, then move on to the next one, so a range can be reviewed in one pass.
-async function markSelected(label) {
+// g / b (trend) and f / v (order): mark the selected signal. It moves on only when both marks are in, or right
+// away when the trend judgement is wrong — a signal that should not exist needs no verdict on its limit order.
+async function markSelected(kind, label) {
   const ride = selectedRide;
-  if (!ride) { status('先选一个信号（← → 或 k j），再按 g / b / 0。', true); return; }
-  try {
-    await saveLabel(ride, label, pendingNotes.get(ride.key));
-  } catch (error) { status(error.message, true); return; }
-  status('');
+  if (!ride) { status('先选一个信号（← → 或 k j），再按 g / b / f / v。', true); return; }
+  try { await saveLabel(ride, kind, label); }
+  catch (error) { status(error.message, true); return; }
+  const what = `${KIND_TEXT[kind]}${label === 'good' ? '好' : '坏'}`;
+  const entry = entryOf(labels, ride.key);
+  if (entry.trend !== 'bad' && !(entry.trend && entry.order)) {
+    const other = kind === 'trend' ? KIND_TEXT.order : KIND_TEXT.trend;
+    status(`已标${what}：${ride.tf} ${stamp(ride.start + 60)} UTC（再标${other}）`);
+    return;
+  }
   // The list was just repainted (a filter may have dropped this signal), so look for the next one there.
   const next = neighbour(shownRides(), ride, 1);
-  if (next) selectRide(next);
-  else status(label === 'clear' ? '已清除这个信号的标注' : `已标${label === 'good' ? '好' : '坏'}：${ride.tf} ${stamp(ride.start + 60)} UTC（列表里没有下一个了）`);
+  if (next) { status(''); selectRide(next); }
+  else status(`已标${what}：${ride.tf} ${stamp(ride.start + 60)} UTC（列表里没有下一个了）`);
+}
+
+// 0: drop both marks of the selected signal. The note is its own item and stays (an empty note removes it).
+async function clearMarks() {
+  const ride = selectedRide;
+  if (!ride) { status('先选一个信号（← → 或 k j），再按 0。', true); return; }
+  try { for (const kind of MARK_KINDS) await saveLabel(ride, kind, 'clear'); }
+  catch (error) { status(error.message, true); return; }
+  status(`已清除两项标注：${ride.tf} ${stamp(ride.start + 60)} UTC`);
 }
 
 function openNote() {
   const ride = selectedRide;
   if (!ride) { status('先选一个信号，再按 n 写备注。', true); return; }
   $('note-row').hidden = false;
-  $('note-input').value = pendingNotes.get(ride.key) ?? labelEntry(ride)?.note ?? '';
+  $('note-input').value = entryOf(labels, ride.key).note;
   $('note-hint').textContent = '';
   $('note-input').focus();
   $('note-input').select();
@@ -666,16 +700,13 @@ function closeNote() {
   $('note-row').hidden = true; $('note-hint').textContent = ''; $('note-input').value = '';
 }
 
-// Enter in the note box: a noted signal saves the note with its current mark; an unmarked one only remembers the
-// text (the hint next to the box says to press g / b first), and that mark saves the note with it.
+// Enter in the note box: the note is its own row (kind=note), so it no longer waits for a good / bad mark. An empty
+// box removes the note. Esc leaves without saving.
 async function submitNote() {
   const ride = selectedRide;
   if (!ride) { closeNote(); return; }
-  const text = $('note-input').value.slice(0, 500);
-  pendingNotes.set(ride.key, text);
-  const entry = labelEntry(ride);
-  if (!entry) { $('note-hint').textContent = NOTE_HINT_UNMARKED; return; }
-  try { await saveLabel(ride, entry.label, text); closeNote(); status('备注已保存'); }
+  const text = $('note-input').value.trim().slice(0, 500);
+  try { await saveLabel(ride, 'note', null, text); closeNote(); status(text ? '备注已保存' : '备注已清除'); }
   catch (error) { $('note-hint').textContent = error.message; }
 }
 
@@ -707,9 +738,12 @@ function onKeydown(event) {
   const key = event.key;
   if (key === 'ArrowLeft' || key === 'k' || key === 'K') { event.preventDefault(); stepRide(-1); }
   else if (key === 'ArrowRight' || key === 'j' || key === 'J') { event.preventDefault(); stepRide(1); }
-  else if (key === 'g' || key === 'G') { event.preventDefault(); markSelected('good'); }
-  else if (key === 'b' || key === 'B') { event.preventDefault(); markSelected('bad'); }
-  else if (key === '0') { event.preventDefault(); markSelected('clear'); }
+  // 趋势 on g / b and 挂单 on f / v: on the keyboard f / v sit just left of g / b.
+  else if (key === 'g' || key === 'G') { event.preventDefault(); markSelected('trend', 'good'); }
+  else if (key === 'b' || key === 'B') { event.preventDefault(); markSelected('trend', 'bad'); }
+  else if (key === 'f' || key === 'F') { event.preventDefault(); markSelected('order', 'good'); }
+  else if (key === 'v' || key === 'V') { event.preventDefault(); markSelected('order', 'bad'); }
+  else if (key === '0') { event.preventDefault(); clearMarks(); }
   else if (key === 'n' || key === 'N') { event.preventDefault(); openNote(); }
 }
 
@@ -745,7 +779,8 @@ function selectRide(ride, focus = true) {
       }
     }
   }
-  $('trade-info').textContent = `${ride.tf} ${arrow(ride.dir)} ${maText(ride.periods)} · ${stampFull(ride.start + 60)} UTC 起${orderText(order)} · 持续 ${ride.bars} 根${ride.ended ? '' : '（进行中）'}${ride.maxTouches ? ` · 最多回踩 ${ride.maxTouches} 次` : ''}`;
+  selectedOrder = order;
+  paintTradeInfo(ride);
   paintSignalBar(statusTime); updateNav();
   if (focus) showRange(centeredRange(ride.start, Number($('f-window').value)), true, 0.75);
 }
@@ -755,6 +790,7 @@ function gotoLatest(keepSpan = true) {
   if (!result) return;
   if (selectedRide) rideButtons.get(selectedRide)?.setAttribute('aria-pressed', 'false');
   selectedRide = null; statusTime = result.last_candle_time;
+  selectedOrder = null;
   for (const panel of panels) panel.card.classList.remove('chosen');
   $('trade-info').textContent = '最新：各周期在最后一根已收盘 K 线时的状态';
   paintSignalBar(statusTime); updateNav();
@@ -832,7 +868,8 @@ async function start() {
   try { token = JSON.parse(localStorage.getItem('main') ?? '{}').authToken; } catch { token = null; }
   if (!token) throw new Error('请先在同一地址的 Jesse 页面登录，再刷新此页。localhost 与 127.0.0.1 的登录状态不同。');
   paintForm(); paintHeight(); paintLimit(); buildLabelFilter();
-  // g / b / 0 mark the selected signal and step on; ← → / k j walk the list. The note box has its own keys.
+  // g / b / f / v mark the selected signal (and step on once both marks are in), 0 clears both, n writes the note;
+  // ← → / k j walk the list. The note box has its own keys.
   document.addEventListener('keydown', onKeydown);
   $('note-input').onkeydown = event => {
     if (event.key === 'Enter') { event.preventDefault(); submitNote(); }
