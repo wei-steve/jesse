@@ -1,16 +1,16 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261113b';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261113b';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261113b';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261113b';
-import { calculateIndicator } from './indicators.mjs?v=20261113b';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261113b';
-import { LIMIT_RULES, LIMIT_DEFAULTS, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261113b';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261113b';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261113b';
-import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS } from './labels.mjs?v=20261113b';
+import { t as createChart } from './lightweight-charts.mjs?v=20261113c';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261113c';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261113c';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261113c';
+import { calculateIndicator } from './indicators.mjs?v=20261113c';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261113c';
+import { LIMIT_RULES, LIMIT_DEFAULTS, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261113c';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261113c';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261113c';
+import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS } from './labels.mjs?v=20261113c';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -654,7 +654,25 @@ async function saveLabel(ride, kind, label, note) {
   if (next.trend || next.order || next.note) labels[ride.key] = next;
   else delete labels[ride.key];
   if (selectedRide === ride) paintTradeInfo(ride);
+  refreshRideRow(ride);
+}
+
+// After a mark, only that row changes. Rebuilding the whole list put it back at the top with only the first chunk
+// rendered, so marking from the newest signal threw the view to the oldest one (2026-11-13, the user: "标注以后又
+// 跳回首个信号"). The full rebuild is only needed when a label filter is on (the row may drop out of the list); then
+// the selected signal is rendered and scrolled back into view.
+function refreshRideRow(ride) {
+  const old = rideButtons.get(ride);
+  if (labelFilter === 'all' && old) {
+    old.replaceWith(rideButton(ride));
+    paintLabelBar(); updateNav();
+    return;
+  }
   paintRides();
+  if (selectedRide && listShown.includes(selectedRide)) {
+    ensureRendered(selectedRide);
+    rideButtons.get(selectedRide)?.scrollIntoView?.({ block: 'nearest' });
+  }
 }
 
 // g / b (trend) and f / v (order): mark the selected signal. It moves on only when both marks are in, or right
@@ -672,7 +690,7 @@ async function markSelected(kind, label) {
     return;
   }
   // The list was just repainted (a filter may have dropped this signal), so look for the next one there.
-  const next = neighbour(shownRides(), ride, 1);
+  const next = neighbour(shownRides(), ride, navStep);
   if (next) { status(''); selectRide(next); }
   else status(`已标${what}：${ride.tf} ${stamp(ride.start + 60)} UTC（列表里没有下一个了）`);
 }
@@ -747,7 +765,11 @@ function onKeydown(event) {
   else if (key === 'n' || key === 'N') { event.preventDefault(); openNote(); }
 }
 
+// Direction of the last move through the list: marking moves on the same way. Starting from 最新信号 and going
+// back in time (←) must keep going back after a mark, not forward past the end.
+let navStep = 1;
 function stepRide(step) {
+  navStep = step;
   const ride = neighbour(shownRides(), selectedRide, step);
   if (ride) selectRide(ride);
 }
@@ -879,7 +901,7 @@ async function start() {
   $('f-latest').onclick = () => gotoLatest();
   $('snapshot-all').onclick = snapshotAll;
   // The list is start-ordered, so its last ride is the newest; selectRide renders the chunks up to it and scrolls there.
-  $('ride-latest').onclick = () => { const list = shownRides(); if (list.length) selectRide(list[list.length - 1]); };
+  $('ride-latest').onclick = () => { const list = shownRides(); navStep = -1; if (list.length) selectRide(list[list.length - 1]); };
   // #trades scrolls vertically (horizontally on narrow screens): load the next chunk near either end.
   $('trades').addEventListener('scroll', event => {
     const box = event.currentTarget;
@@ -899,6 +921,7 @@ async function start() {
   };
   $('f-factor').onchange = () => { form.factor = $('f-factor').value; saveForm(); paintParams(); paintTimeframes(); $('f-run').disabled = !!currentFactor()?.error; };
   for (const [id, step] of [['previous', -1], ['next', 1]]) $(id).onclick = () => {
+    navStep = step;
     const ride = neighbour(shownRides(), selectedRide, step); if (ride) selectRide(ride);
   };
   factors = await post('/factors/list');
