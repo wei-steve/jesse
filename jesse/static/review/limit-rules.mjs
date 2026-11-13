@@ -152,8 +152,11 @@ function tradeResult(bars, side, fillIndex, price, atr, opts, out) {
 //   opts.ended      whether the trend marker is already gone. An ended trend cancels the order at lastIndex + 1:
 //                   lastIndex closed while the trend was still there, so it keeps the order alive for that bar,
 //                   and that bar's close has no trend left. A trend still running keeps the order to the data end.
-// A bar that OPENS at or past the limit price is not a fill (the open was already a better market entry, the
-// user asked for it to be reported separately on 2026-11-12): it counts in `gapBars` and the order waits on.
+// A bar that OPENS at or past the limit price fills at its open (`gapFill`: the order would have been placed
+// below the market for a short / above it for a long, i.e. a taker fill at a price at least as good as the limit).
+// Until 2026-11-13 such a bar was skipped; the user pointed at BTC 3m 10-27 06:30 (short, limit 79712.5, the bar
+// opened 79724.5 and rose) and asked why it did not fill — with their 0.006% taker fee it is a real entry.
+// `gapBars` stays (0 or 1) so the info line can say 开盘成交.
 // Returns
 //   { status, fillIndex, fillPrice, exitIndex, exitPrice, R, stop, target, reason, waitBars, gapBars, path }
 // status: 'filled'   filled and closed; `reason` is 'stop', 'target' or 'time'
@@ -186,7 +189,10 @@ export function simulateOrder(candles, j, dir, ruleId, opts = {}) {
     if (!order) continue;
     const bar = bars[i + 1], price = order.price;
     path.push({ index: i, price });
-    if (Number.isFinite(bar.open) && (side > 0 ? bar.open <= price : bar.open >= price)) { gapBars++; continue; }
+    if (Number.isFinite(bar.open) && (side > 0 ? bar.open <= price : bar.open >= price)) {
+      gapBars++;
+      return tradeResult(bars, side, i + 1, bar.open, atr[i], opts, { waitBars: i + 1 - j, gapBars, gapFill: true, path });
+    }
     if (!(side > 0 ? bar.low < price : bar.high > price)) continue;
     return tradeResult(bars, side, i + 1, price, atr[i], opts, { waitBars: i + 1 - j, gapBars, path });
   }

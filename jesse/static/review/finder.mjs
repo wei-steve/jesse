@@ -1,16 +1,16 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261113e';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261113e';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261113e';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261113e';
-import { calculateIndicator } from './indicators.mjs?v=20261113e';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261113e';
-import { LIMIT_RULES, LIMIT_DEFAULTS, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261113e';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261113e';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261113e';
-import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS } from './labels.mjs?v=20261113e';
+import { t as createChart } from './lightweight-charts.mjs?v=20261113f';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261113f';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261113f';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261113f';
+import { calculateIndicator } from './indicators.mjs?v=20261113f';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261113f';
+import { LIMIT_RULES, LIMIT_DEFAULTS, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261113f';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261113f';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261113f';
+import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS } from './labels.mjs?v=20261113f';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -233,7 +233,7 @@ function orderText(order) {
   const head = [filled ? `第 ${sim.waitBars} 根成交，挂单价 ${sim.fillPrice.toFixed(2)}`
     : sim.status === 'unfilled' ? `趋势结束仍没成交（等了 ${sim.waitBars} 根）`
       : `等待成交（已等 ${sim.waitBars} 根）`];
-  if (sim.gapBars) head.push(`开盘越过 ${sim.gapBars} 根`);
+  if (sim.gapFill) head.push('开盘就越过挂单价，按开盘价成交');
   if (!filled) return ` · ${head.join(' · ')}`;
   head.push(`止损 ${sim.stop.toFixed(2)}`, `止盈 ${sim.target.toFixed(2)}`);
   if (sim.status === 'filled') head.push(`${signedR(sim.R)}（${REASON_TEXT[sim.reason]}，第 ${sim.exitIndex - sim.fillIndex + 1} 根离场）`);

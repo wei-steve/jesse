@@ -157,32 +157,25 @@ test('a trend still running keeps the order alive to the end of the data', () =>
   assert.equal(filled.waitBars, 14);
 });
 
-test('a bar that opens past the limit is not a fill, and later bars still can', () => {
+test('a bar that opens past the limit fills at its open (taker, at least as good as the limit)', () => {
   const candles = calm();
-  at(candles, 16, [100.2, 100.5, 99.8, 100]);   // short: the open is at/above the limit -> gap, no fill
-  at(candles, 17, [99.5, 100.4, 99, 100]);      // opens below it and trades up to it -> filled
+  at(candles, 16, [100.2, 100.5, 99.8, 100]);   // short: the open is above the limit -> filled at 100.2
   const result = simulateOrder(candles, 15, -1, 'close', { atr: atr14(candles), hold: 1 });
   assert.equal(result.status, 'filled');
-  assert.equal(result.fillIndex, 17);
-  assert.equal(result.waitBars, 2);
+  assert.equal(result.fillIndex, 16);
+  assert.equal(result.waitBars, 1);
   assert.equal(result.gapBars, 1);
-  near(result.fillPrice, 100);
+  assert.equal(result.gapFill, true);
+  near(result.fillPrice, 100.2);
   assert.equal(result.reason, 'time');           // hold 1: closed at the fill bar's close
-  // long mirror: the open below the limit is a gap too
+  // long mirror: the open below the limit fills at that open
   const longs = above();
   at(longs, 16, [99.5, 100.6, 99.4, 100]);
-  at(longs, 17, [100.5, 101, 99.5, 100]);
   const long = simulateOrder(longs, 15, 1, 'close', { atr: atr14(longs), hold: 1 });
   assert.equal(long.status, 'filled');
-  assert.equal(long.fillIndex, 17);
-  assert.equal(long.gapBars, 1);
-  // only gaps, never a fill: counted, and the order is still unfilled / waiting
-  const gapped = calm();
-  for (let i = 16; i <= 19; i++) at(gapped, i, [100.2, 100.5, 99.8, 100]);
-  const none = simulateOrder(gapped, 15, -1, 'close', { atr: atr14(gapped), lastIndex: 18, ended: true });
-  assert.equal(none.status, 'unfilled');
-  assert.equal(none.gapBars, 4);
-  assert.equal(none.waitBars, 4);
+  assert.equal(long.fillIndex, 16);
+  near(long.fillPrice, 99.5);
+  assert.equal(long.gapFill, true);
 });
 
 test('the stop is sized with the ATR of the bar whose close set the price', () => {
