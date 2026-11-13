@@ -1,16 +1,19 @@
 // Pure helpers of the factor finder page (finder.mjs): request building, saved form, and turning the
 // `/factors/run` answer into the same step series the signal mode of the review page uses (rides.mjs).
 // Nothing here knows what a factor does; the page only draws the numbers the factor file returns.
-import { timeframeMinutes } from './settings.mjs?v=20261112k';
+import { timeframeMinutes } from './settings.mjs?v=20261112m';
+import { LIMIT_RULES, LIMIT_DEFAULTS } from './limit-rules.mjs?v=20261112m';
 
 export const FORM_KEY = 'jesse.finder.form.v1';
 export const RECENT_DAYS = [1, 3, 7, 14, 30, 90, 180, 365];
 export const WINDOWS = [[21600, '6 小时'], [43200, '12 小时'], [86400, '24 小时'], [259200, '3 天'], [604800, '7 天']];
+const LIMIT_IDS = LIMIT_RULES.map(rule => rule.id);
 const pad = n => String(n).padStart(2, '0');
 
 export function defaultForm() {
   return { exchange: 'Binance Perpetual Futures', symbol: 'BTC-USDT', rangeMode: 'recent', recentDays: 7,
-    start: '', finish: '', factor: '', params: {}, timeframes: {}, overlay: false, window: 86400 };
+    start: '', finish: '', factor: '', params: {}, timeframes: {}, overlay: false, window: 86400,
+    limit: { ...LIMIT_DEFAULTS } };
 }
 
 const text = (value, fallback) => typeof value === 'string' && value.trim() ? value.trim() : fallback;
@@ -30,6 +33,11 @@ export function restoreForm(serialized) {
   for (const [factor, list] of Object.entries(record(value.timeframes))) {
     if (Array.isArray(list)) timeframes[factor] = list.filter(tf => timeframeMinutes(tf) !== null);
   }
+  // "挂单" controls: an unknown rule id or a value that cannot size a stop falls back to the default; x and y
+  // may be 0 (no allowance), hold is a whole number of bars, at least 1.
+  const limit = record(value.limit);
+  const num = (key) => Number.isFinite(limit[key]) ? limit[key] : base.limit[key];
+  const above = (key, min) => Math.max(min, num(key));
   return {
     exchange: text(value.exchange, base.exchange), symbol: text(value.symbol, base.symbol),
     rangeMode: value.rangeMode === 'custom' ? 'custom' : 'recent',
@@ -37,6 +45,12 @@ export function restoreForm(serialized) {
     start: text(value.start, ''), finish: text(value.finish, ''), factor: text(value.factor, ''),
     params, timeframes, overlay: value.overlay === true,
     window: WINDOWS.some(([seconds]) => seconds === value.window) ? value.window : base.window,
+    limit: {
+      rule: LIMIT_IDS.includes(limit.rule) ? limit.rule : base.limit.rule,
+      x: above('x', 0), y: above('y', 0),
+      k: above('k', 0.01), r: above('r', 0.01),
+      hold: Math.round(above('hold', 1)),
+    },
   };
 }
 

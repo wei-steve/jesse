@@ -1,14 +1,15 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261112k';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261112k';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261112k';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261112k';
-import { calculateIndicator } from './indicators.mjs?v=20261112k';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideEntry } from './rides.mjs?v=20261112k';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261112k';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112k';
+import { t as createChart } from './lightweight-charts.mjs?v=20261112m';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261112m';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261112m';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261112m';
+import { calculateIndicator } from './indicators.mjs?v=20261112m';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261112m';
+import { LIMIT_RULES, LIMIT_DEFAULTS, atr14, limitOrder, simulateOrder, summarize } from './limit-rules.mjs?v=20261112m';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261112m';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112m';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -16,6 +17,8 @@ const stampFull = seconds => `${new Date(seconds * 1000).toISOString().replace('
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
 // Entry-price levels: darker than the ridden-SMA line so the two do not blend.
 const UP_ENTRY = '#0b5e4c', DOWN_ENTRY = '#a3283a';
+// Limit levels of orders that never traded (unfilled, or the next bar opened past the limit).
+const GREY = '#9aa7b8';
 const TIMEFRAME_CHOICES = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '1D'];
 
 let token, form, factors = [], result = null, rides = [], rideData = [], shownTfs = new Set();
@@ -151,6 +154,105 @@ function selectedParams(factor) {
   return params;
 }
 
+// ---- Limit orders -----------------------------------------------------------
+// The "挂单" controls: how the limit price of a signal is computed, and the stop / target / holding time used to
+// judge the trade. The math is in limit-rules.mjs; the values are saved with the rest of the finder form.
+const REASON_TEXT = { target: '止盈', stop: '止损', time: '超时', open: '进行中' };
+const LIMIT_FIELDS = [['f-limit-x', 'x', 0.05], ['f-limit-y', 'y', 0.05], ['f-limit-k', 'k', 0.1],
+  ['f-limit-r', 'r', 0.5], ['f-limit-hold', 'hold', 1]];
+const limitOptions = () => ({ ...LIMIT_DEFAULTS, ...form.limit });
+const percent = value => `${Math.round(value * 100)}%`;
+const signedR = value => `${value >= 0 ? '+' : '-'}${Math.abs(value).toFixed(2)}R`;
+
+function paintLimit() {
+  const select = $('f-limit-rule');
+  select.replaceChildren(...LIMIT_RULES.map(rule => {
+    const option = document.createElement('option'); option.value = rule.id; option.textContent = rule.label; return option;
+  }));
+  select.value = limitOptions().rule;
+  select.onchange = () => { form.limit.rule = select.value; saveForm(); repaintOrders(); };
+  for (const [id, key, step] of LIMIT_FIELDS) {
+    const input = $(id);
+    input.step = step; input.value = String(form.limit[key]);
+    input.onchange = () => {
+      // A blank box, or a value that cannot size a stop (k/r must stay above 0), falls back to the default
+      // instead of drawing nonsense; hold is whole bars, at least 1.
+      const raw = Number(input.value);
+      const minimum = key === 'hold' ? 1 : key === 'k' || key === 'r' ? 0.01 : 0;
+      let value = Number.isFinite(raw) && raw >= minimum ? raw : LIMIT_DEFAULTS[key];
+      if (key === 'hold') value = Math.max(1, Math.round(value));
+      input.value = String(value); form.limit[key] = value; saveForm(); repaintOrders();
+    };
+  }
+}
+
+// Limit-order settings only change the drawing: redraw from the same result and keep the selected signal.
+function repaintOrders() {
+  if (!result) return;
+  const keep = selectedRide;
+  render(result);
+  const again = keep && rides.find(ride => ride.tf === keep.tf && ride.start === keep.start && ride.dir === keep.dir);
+  if (again) selectRide(again, false);
+}
+
+// One order per signal of this timeframe: the limit price on the signal bar, the simulated fill on the next bar
+// and the outcome. ATR is computed once per chart and handed down (opts.atr), so a long range stays linear.
+function ordersFor(panel) {
+  const opts = limitOptions();
+  const atr = atr14(panel.candles);
+  const orders = [];
+  for (const ride of rides) {
+    if (ride.minutes !== panel.interval) continue;
+    const span = rideSpan(panel.candles, ride);
+    if (!span) continue;
+    const order = limitOrder(panel.candles, span.first, ride.dir, opts.rule, { ...opts, atr });
+    const sim = order && simulateOrder(panel.candles, span.first, ride.dir, order.price, { ...opts, ruleId: opts.rule, atr });
+    orders.push({ ride, index: span.first, price: order?.price ?? null, sim });
+  }
+  return orders;
+}
+
+const orderOf = ride => panels.find(panel => panel.interval === ride.minutes && !panel.empty)
+  ?.orders?.find(order => order.ride === ride) ?? null;
+
+// The selected signal's order in words: limit price, fill status, stop / target, result and exit reason.
+function orderText(order) {
+  if (!order) return '';
+  if (order.price === null) return ' · 挂单：这个信号的数据还不够算挂单价';
+  const head = [`挂单价 ${order.price.toFixed(2)}`];
+  const sim = order.sim;
+  if (!sim) return ` · ${head.join(' · ')}（数据不够，无法判断成交）`;
+  head.push(sim.status === 'gap' ? '开盘越过（不算成交）' : sim.status === 'unfilled' ? '没成交'
+    : sim.status === 'open' ? '成交（还在走）' : '成交');
+  if (sim.status === 'gap' || sim.status === 'unfilled') return ` · ${head.join(' · ')}`;
+  head.push(`止损 ${sim.stop.toFixed(2)}`, `止盈 ${sim.target.toFixed(2)}`);
+  if (sim.status === 'filled') head.push(`${signedR(sim.R)}（${REASON_TEXT[sim.reason]}，第 ${sim.exitIndex - sim.fillIndex + 1} 根离场）`);
+  return ` · ${head.join(' · ')}`;
+}
+
+// The rule in force plus, per timeframe, how its signals would have done as limit orders.
+function paintLimitSummary() {
+  const box = $('limit-summary');
+  const rows = panels.filter(panel => panel.summary);
+  if (!result || !rows.length) { box.replaceChildren(); return; }
+  const opts = limitOptions();
+  const head = document.createElement('strong');
+  head.textContent = `挂单：${LIMIT_RULES.find(rule => rule.id === opts.rule)?.label ?? opts.rule}`
+    + `（x ${opts.x} · y ${opts.y} · 止损 ${opts.k}·ATR · 止盈 ${opts.r}R · 最多 ${opts.hold} 根）`;
+  const list = document.createElement('span');
+  list.className = 'finder-limit-list';
+  for (const panel of rows) {
+    const totals = panel.summary;
+    const closed = panel.orders.filter(order => order.sim?.status === 'filled').length;
+    // With no closed trade the win rate and the R totals have nothing to say: a dash, not 0%.
+    const tail = closed ? `胜率 ${percent(totals.winRate)} · 平均 ${signedR(totals.avgR)} · 合计 ${signedR(totals.sumR)}`
+      : '胜率 — · 平均 — · 合计 —';
+    list.append(`${timeframeLabel(panel.interval)} 标记 ${totals.marks} · 成交率 ${percent(totals.fillRate)}`
+      + ` · 开盘越过 ${totals.gap} · ${tail}　`);
+  }
+  box.replaceChildren(head, list);
+}
+
 // ---- Charts ----------------------------------------------------------------
 function newChart(host) {
   return createChart(host, {
@@ -168,24 +270,51 @@ function newChart(host) {
 }
 
 // The ridden SMA of all intervals is one thick line series; the segments between intervals are transparent
-// (see joinRideLines). One series per interval froze the page on long ranges.
+// (see joinRideLines). One series per interval froze the page on long ranges. The limit level of every signal is
+// drawn from the signal bar to the next one: dark for an order that was filled, grey for one that never traded,
+// plus a marker at the fill and one at the exit.
 function addRides(panel) {
   const cache = new Map();
   const smaFor = period => {
     if (!cache.has(period)) cache.set(period, new Map(sma(panel.candles, period, panel.interval).filter(p => Number.isFinite(p.value)).map(p => [p.time, p.value])));
     return cache.get(period);
   };
-  const { markers, lines, entries } = rideAnnotations(panel.candles, rides.filter(r => r.minutes === panel.interval), smaFor);
-  panel.series.setMarkers(markers);
+  const { markers, lines } = rideAnnotations(panel.candles, rides.filter(r => r.minutes === panel.interval), smaFor);
+  const orders = ordersFor(panel);
+  panel.orders = orders;
+  panel.summary = summarize(orders.map(order => order.sim));
+  const levels = { up: [], down: [] }, untraded = { up: [], down: [] };
+  for (const { ride, index, price, sim } of orders) {
+    if (price === null) continue;
+    const data = [index, index + 1].filter(i => i < panel.candles.length).map(i => ({ time: panel.candles[i].time, value: price }));
+    if (sim?.status === 'gap' || sim?.status === 'unfilled') untraded.up.push(data);
+    else (ride.dir > 0 ? levels.up : levels.down).push(data);
+    if (sim?.status === 'filled' || sim?.status === 'open') {
+      // This chart library has no triangle shape: the arrow points at the fill from the side the price came
+      // from (down into a buy limit, up into a sell limit), which reads the same.
+      const fill = panel.candles[sim.fillIndex];
+      markers.push({ time: fill.time, position: ride.dir > 0 ? 'aboveBar' : 'belowBar',
+        shape: ride.dir > 0 ? 'arrowDown' : 'arrowUp', color: ride.dir > 0 ? UP_ENTRY : DOWN_ENTRY, text: '' });
+      if (sim.status === 'filled') markers.push({ time: panel.candles[sim.exitIndex].time, position: 'aboveBar',
+        shape: 'circle', color: sim.R >= 0 ? UP : DOWN,
+        text: `${sim.R >= 0 ? '+' : '-'}${Math.abs(sim.R).toFixed(1)}R` });
+    }
+  }
+  panel.series.setMarkers(markers.sort((a, b) => a.time - b.time));
   const data = joinRideLines(lines, { up: UP, down: DOWN });
   if (data.length) {
     const line = panel.chart.addLineSeries({ color: UP, lineWidth: 4, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
     line.setData(data);
   }
-  const levels = joinRideLines(entries, { up: UP_ENTRY, down: DOWN_ENTRY });
-  if (levels.length) {
+  const levelData = joinRideLines(levels, { up: UP_ENTRY, down: DOWN_ENTRY });
+  if (levelData.length) {
     const line = panel.chart.addLineSeries({ color: UP_ENTRY, lineWidth: 3, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
-    line.setData(levels);
+    line.setData(levelData);
+  }
+  const untradedData = joinRideLines(untraded, { up: GREY, down: GREY });
+  if (untradedData.length) {
+    const line = panel.chart.addLineSeries({ color: GREY, lineWidth: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+    line.setData(untradedData);
   }
 }
 
@@ -394,18 +523,17 @@ function selectRide(ride, focus = true) {
   ensureRendered(ride);
   rideButtons.get(ride)?.setAttribute('aria-pressed', 'true');
   rideButtons.get(ride)?.scrollIntoView?.({ block: 'nearest' });
-  // The selected signal's entry price as a dashed line with an axis label, on its own timeframe's chart.
-  let entry = null;
+  // The selected signal's limit price as a dashed line with an axis label, on its own timeframe's chart.
+  let order = null;
   for (const panel of panels) {
     panel.card.classList.toggle('chosen', panel.interval === ride.minutes);
-    if (panel.entryLine) { panel.series.removePriceLine(panel.entryLine); panel.entryLine = null; }
+    if (panel.limitLine) { panel.series.removePriceLine(panel.limitLine); panel.limitLine = null; }
     if (panel.interval !== ride.minutes || !panel.candles?.length) continue;
-    entry = rideEntry(panel.candles, ride);
-    if (entry) panel.entryLine = panel.series.createPriceLine({ price: entry.price, color: ride.dir > 0 ? UP_ENTRY : DOWN_ENTRY,
-      lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '入场' });
+    order = orderOf(ride);
+    if (order?.price != null) panel.limitLine = panel.series.createPriceLine({ price: order.price, color: ride.dir > 0 ? UP_ENTRY : DOWN_ENTRY,
+      lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '挂单' });
   }
-  const entryText = entry ? ` · 入场价 ${entry.price.toFixed(2)}（${stampFull(entry.time)} 开盘）` : ' · 入场：下一根开盘（还没出来）';
-  $('trade-info').textContent = `${ride.tf} ${arrow(ride.dir)} ${maText(ride.periods)} · ${stampFull(ride.start + 60)} UTC 起${entryText} · 持续 ${ride.bars} 根${ride.ended ? '' : '（进行中）'}${ride.maxTouches ? ` · 最多回踩 ${ride.maxTouches} 次` : ''}`;
+  $('trade-info').textContent = `${ride.tf} ${arrow(ride.dir)} ${maText(ride.periods)} · ${stampFull(ride.start + 60)} UTC 起${orderText(order)} · 持续 ${ride.bars} 根${ride.ended ? '' : '（进行中）'}${ride.maxTouches ? ` · 最多回踩 ${ride.maxTouches} 次` : ''}`;
   paintSignalBar(statusTime); updateNav();
   if (focus) showRange(centeredRange(ride.start, Number($('f-window').value)), true, 0.75);
 }
@@ -436,7 +564,7 @@ function render(data) {
   panels = order.map(tf => makePanel(tf, data.timeframes[tf], preferences));
   rangeLink = linkTimeRanges(panels.filter(p => !p.empty));
   $('results').hidden = false;
-  paintFilter(); paintRides(); paintDataNote();
+  paintFilter(); paintRides(); paintDataNote(); paintLimitSummary();
   $('f-latest').disabled = false;
   gotoLatest();
 }
@@ -487,7 +615,7 @@ async function importLatest() {
 async function start() {
   try { token = JSON.parse(localStorage.getItem('main') ?? '{}').authToken; } catch { token = null; }
   if (!token) throw new Error('请先在同一地址的 Jesse 页面登录，再刷新此页。localhost 与 127.0.0.1 的登录状态不同。');
-  paintForm(); paintHeight();
+  paintForm(); paintHeight(); paintLimit();
   $('finder-form').onsubmit = event => { event.preventDefault(); run(); };
   $('f-import').onclick = importLatest;
   $('f-latest').onclick = () => gotoLatest();

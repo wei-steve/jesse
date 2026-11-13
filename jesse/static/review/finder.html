@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>因子查找器 · Jesse</title>
   <link rel="icon" href="/favicon.ico">
-  <link rel="stylesheet" href="./review.css?v=20261112k">
+  <link rel="stylesheet" href="./review.css?v=20261112m">
 </head>
 <body class="signal-mode finder">
   <header>
@@ -29,6 +29,15 @@
     <p id="f-description" class="finder-description"></p>
     <div class="finder-row">
       <span id="f-params" class="finder-params"></span>
+    </div>
+    <div class="finder-row">
+      <span class="finder-label">挂单</span>
+      <label>算法 <select id="f-limit-rule" aria-label="挂单价算法"></select></label>
+      <label>x（ATR）<input id="f-limit-x" type="number" step="0.05" min="0" aria-label="收盘价往回让 x 倍 ATR"></label>
+      <label>y（回撤）<input id="f-limit-y" type="number" step="0.05" min="0" aria-label="回撤 y 倍振幅"></label>
+      <label>止损 k·ATR <input id="f-limit-k" type="number" step="0.1" min="0.01" aria-label="止损 ATR 倍数"></label>
+      <label>止盈 rR <input id="f-limit-r" type="number" step="0.5" min="0.01" aria-label="止盈 R 倍数"></label>
+      <label>最多持有 <input id="f-limit-hold" type="number" step="1" min="1" aria-label="最多持有根数"></label>
     </div>
     <div class="finder-row">
       <span class="finder-label">周期</span><span id="f-timeframes" class="timeframe-list"></span>
@@ -58,6 +67,7 @@
         <div id="signal-bar" class="signal-bar" role="status"><strong id="signal-text"></strong><span id="signal-advice"></span></div>
         <div id="trade-info"></div>
         <div id="condition" class="finder-condition"><strong id="condition-params"></strong><span id="condition-text"></span></div>
+        <div id="limit-summary" class="finder-limit-summary"></div>
       </section>
       <div class="notice">时间统一为 UTC。数据直接来自数据库的 1m K 线（可含今天），只用已收盘的完整 K 线；最后一根未收盘的高周期 K 线不显示。区间从所选范围的起点开始算，范围之前已经开始的区间会被截断。默认只画 K 线和所骑的均线；均线周期大于范围内已有 K 线根数时，起点附近画不出线。</div>
       <div id="charts" class="chart-grid hide-values"></div>
@@ -66,7 +76,7 @@
   <script type="module">
     // REVIEW_VERSION: change it (and every "?v=" in the .mjs imports and the stylesheet link) whenever
     // any file in this folder changes. tests/review-version.test.mjs checks that they all match.
-    const REVIEW_VERSION = '20261112k';
+    const REVIEW_VERSION = '20261112m';
     import(`./finder.mjs?v=${REVIEW_VERSION}`).catch(error => {
       const status = document.getElementById('status');
       status.hidden = false; status.classList.add('error'); status.textContent = `查找器脚本加载失败：${error.message}`;

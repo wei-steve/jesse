@@ -18,6 +18,15 @@ test('restoreForm falls back to defaults field by field', () => {
   assert.equal(saved.overlay, true);
 });
 
+test('the 挂单 controls are saved with the form and sanitized', () => {
+  assert.deepEqual(defaultForm().limit, { rule: 'open', x: 0.25, y: 0.382, k: 1, r: 2, hold: 48 });
+  const saved = restoreForm(JSON.stringify({ limit: { rule: 'retrace', x: 0, y: 1.5, k: 0, r: -2, hold: 2.6 } }));
+  assert.deepEqual(saved.limit, { rule: 'retrace', x: 0, y: 1.5, k: 0.01, r: 0.01, hold: 3 });
+  // an unknown rule or non-numbers fall back to the defaults instead of drawing nonsense
+  assert.deepEqual(restoreForm(JSON.stringify({ limit: { rule: 'nope', x: 'a', y: null, k: 999, r: 1, hold: 0 } })).limit,
+    { rule: 'open', x: 0.25, y: 0.382, k: 999, r: 1, hold: 1 });
+});
+
 test('datetime-local values are UTC', () => {
   assert.equal(localToIso('2026-10-27T08:30'), '2026-10-27T08:30:00Z');
   assert.equal(localToIso(''), null);
