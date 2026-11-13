@@ -1,16 +1,16 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261112q';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261112q';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261112q';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261112q';
-import { calculateIndicator } from './indicators.mjs?v=20261112q';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261112q';
-import { LIMIT_RULES, LIMIT_DEFAULTS, atr14, limitOrder, simulateOrder, summarize } from './limit-rules.mjs?v=20261112q';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261112q';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112q';
-import { labelKey, labelCounts, labelOf, filterByLabel, LABEL_FILTERS, LABEL_TEXT } from './labels.mjs?v=20261112q';
+import { t as createChart } from './lightweight-charts.mjs?v=20261113a';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261113a';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261113a';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261113a';
+import { calculateIndicator } from './indicators.mjs?v=20261113a';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261113a';
+import { LIMIT_RULES, LIMIT_DEFAULTS, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261113a';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261113a';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261113a';
+import { labelKey, labelCounts, labelOf, filterByLabel, LABEL_FILTERS, LABEL_TEXT } from './labels.mjs?v=20261113a';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -201,8 +201,10 @@ function repaintOrders() {
   if (again) selectRide(again, false);
 }
 
-// One order per signal of this timeframe: the limit price on the signal bar, the simulated fill on the next bar
-// and the outcome. ATR is computed once per chart and handed down (opts.atr), so a long range stays linear.
+// One order per signal of this timeframe. The order stays in force while the ride lasts, so it gets the ride's
+// last bar and whether the ride already ended (see simulateOrder); ATR is computed once per chart and handed
+// down (opts.atr), so a long range stays linear. `price` is the level the page labels the order with: the price
+// it was filled at, or — when it never filled — the last price it would have had.
 function ordersFor(panel) {
   const opts = limitOptions();
   const atr = atr14(panel.candles);
@@ -211,9 +213,10 @@ function ordersFor(panel) {
     if (ride.minutes !== panel.interval) continue;
     const span = rideSpan(panel.candles, ride);
     if (!span) continue;
-    const order = limitOrder(panel.candles, span.first, ride.dir, opts.rule, { ...opts, atr });
-    const sim = order && simulateOrder(panel.candles, span.first, ride.dir, order.price, { ...opts, ruleId: opts.rule, atr });
-    orders.push({ ride, index: span.first, price: order?.price ?? null, sim });
+    const sim = simulateOrder(panel.candles, span.first, ride.dir, opts.rule,
+      { ...opts, atr, lastIndex: span.last, ended: ride.ended });
+    const price = sim?.fillPrice ?? sim?.path?.at(-1)?.price ?? null;
+    orders.push({ ride, price, sim });
   }
   return orders;
 }
@@ -221,16 +224,19 @@ function ordersFor(panel) {
 const orderOf = ride => panels.find(panel => panel.interval === ride.minutes && !panel.empty)
   ?.orders?.find(order => order.ride === ride) ?? null;
 
-// The selected signal's order in words: limit price, fill status, stop / target, result and exit reason.
+// The selected signal's order in words: how many bars it waited, the price it filled at (or that it never did),
+// how many bars opened past it, then stop / target, result and exit reason.
 function orderText(order) {
   if (!order) return '';
   if (order.price === null) return ' · 挂单：这个信号的数据还不够算挂单价';
-  const head = [`挂单价 ${order.price.toFixed(2)}`];
   const sim = order.sim;
-  if (!sim) return ` · ${head.join(' · ')}（数据不够，无法判断成交）`;
-  head.push(sim.status === 'gap' ? '开盘越过（不算成交）' : sim.status === 'unfilled' ? '没成交'
-    : sim.status === 'open' ? '成交（还在走）' : '成交');
-  if (sim.status === 'gap' || sim.status === 'unfilled') return ` · ${head.join(' · ')}`;
+  if (!sim) return ' · 挂单：数据不够，无法判断成交';
+  const filled = sim.status === 'filled' || sim.status === 'open';
+  const head = [filled ? `第 ${sim.waitBars} 根成交，挂单价 ${sim.fillPrice.toFixed(2)}`
+    : sim.status === 'unfilled' ? `趋势结束仍没成交（等了 ${sim.waitBars} 根）`
+      : `等待成交（已等 ${sim.waitBars} 根）`];
+  if (sim.gapBars) head.push(`开盘越过 ${sim.gapBars} 根`);
+  if (!filled) return ` · ${head.join(' · ')}`;
   head.push(`止损 ${sim.stop.toFixed(2)}`, `止盈 ${sim.target.toFixed(2)}`);
   if (sim.status === 'filled') head.push(`${signedR(sim.R)}（${REASON_TEXT[sim.reason]}，第 ${sim.exitIndex - sim.fillIndex + 1} 根离场）`);
   return ` · ${head.join(' · ')}`;
@@ -254,7 +260,7 @@ function paintLimitSummary() {
     const tail = closed ? `胜率 ${percent(totals.winRate)} · 平均 ${signedR(totals.avgR)} · 合计 ${signedR(totals.sumR)}`
       : '胜率 — · 平均 — · 合计 —';
     list.append(`${timeframeLabel(panel.interval)} 标记 ${totals.marks} · 成交率 ${percent(totals.fillRate)}`
-      + ` · 开盘越过 ${totals.gap} · ${tail}　`);
+      + ` · 等待中 ${totals.waiting} · ${tail}　`);
   }
   box.replaceChildren(head, list);
 }
@@ -277,7 +283,8 @@ function newChart(host) {
 
 // The ridden SMA of all intervals is one thick line series; the segments between intervals are transparent
 // (see joinRideLines). One series per interval froze the page on long ranges. The limit level of every signal is
-// drawn from the signal bar to the next one: dark for an order that was filled, grey for one that never traded,
+// a staircase: one level per bar the order sat there with (the rule re-computed it at every close), from the
+// signal bar to the bar that filled it — dark for an order that was filled, grey for one that never traded —
 // plus a marker at the fill and one at the exit.
 function addRides(panel) {
   const cache = new Map();
@@ -289,7 +296,7 @@ function addRides(panel) {
   const orders = ordersFor(panel);
   panel.orders = orders;
   panel.summary = summarize(orders.map(order => order.sim));
-  const levels = { up: [], down: [] }, untraded = { up: [], down: [] };
+  const levels = { up: [], down: [] }, untraded = { up: [], down: [] }, pending = { up: [], down: [] };
   const stops = { up: [], down: [] }, targets = { up: [], down: [] };
   const last = panel.candles.length - 1;
   // A flat segment at `value` over bars from..to (inclusive, clipped to the chart).
@@ -298,22 +305,26 @@ function addRides(panel) {
     for (let i = from; i <= Math.min(to, last); i++) out.push({ time: panel.candles[i].time, value });
     return out;
   };
-  for (const { ride, index, price, sim } of orders) {
-    if (price === null) continue;
-    if (sim?.status === 'gap' || sim?.status === 'unfilled') {
-      // Signal bar + order bar + two more, so an untraded level is still visible when the chart is zoomed out
-      // (2026-11-12: the user could not see the 2-bar levels).
-      untraded.up.push(flat(index, index + 3, price));
-      continue;
-    }
-    if (sim?.status !== 'filled' && sim?.status !== 'open') {
-      (ride.dir > 0 ? levels.up : levels.down).push(flat(index, index + 1, price));
-      continue;
-    }
-    // A traded order: the entry level runs from the signal bar to the exit (or the last bar while still open),
-    // with its stop and target as dashed levels over the same bars.
+  // The order's staircase: one point per `path` entry (the price its close set), then the last price held to
+  // `end` — the bar that filled the order, or the bar the order was cancelled on.
+  const staircase = (path, end) => {
+    const out = path.filter(point => point.index <= last).map(point => ({ time: panel.candles[point.index].time, value: point.price }));
+    const tail = path.at(-1), stop = Math.min(end, last);
+    if (tail && stop > tail.index) out.push({ time: panel.candles[stop].time, value: tail.price });
+    return out;
+  };
+  for (const { ride, price, sim } of orders) {
+    if (price === null || !sim?.path?.length) continue;
+    // Never filled: the grey staircase still shows where the order sat until the trend ended (or, while the
+    // data runs out first, a grey dashed one to the last bar).
+    if (sim.status === 'unfilled') { untraded.up.push(staircase(sim.path, sim.path.at(-1).index + 1)); continue; }
+    if (sim.status === 'waiting') { pending.up.push(staircase(sim.path, last)); continue; }
+    // A traded order: the staircase runs from the signal bar to the fill bar, then the entry price stays level to
+    // the exit (or the last bar while still open), with its stop and target as dashed levels over the same bars.
     const end = sim.status === 'filled' ? sim.exitIndex : last;
-    (ride.dir > 0 ? levels.up : levels.down).push(flat(index, end, price));
+    const entry = staircase(sim.path, sim.fillIndex);
+    entry.push(...flat(sim.fillIndex + 1, end, sim.fillPrice));
+    (ride.dir > 0 ? levels.up : levels.down).push(entry);
     if (Number.isFinite(sim.stop)) stops.up.push(flat(sim.fillIndex, end, sim.stop));
     if (Number.isFinite(sim.target)) targets.up.push(flat(sim.fillIndex, end, sim.target));
     {
@@ -322,7 +333,7 @@ function addRides(panel) {
       const fill = panel.candles[sim.fillIndex];
       markers.push({ time: fill.time, position: ride.dir > 0 ? 'aboveBar' : 'belowBar',
         shape: ride.dir > 0 ? 'arrowDown' : 'arrowUp', color: ride.dir > 0 ? UP_ENTRY : DOWN_ENTRY,
-        text: `挂 ${price.toLocaleString('en-US', { maximumFractionDigits: price >= 100 ? 0 : 4 })}` });
+        text: `挂 ${sim.fillPrice.toLocaleString('en-US', { maximumFractionDigits: sim.fillPrice >= 100 ? 0 : 4 })}` });
       if (sim.status === 'filled') markers.push({ time: panel.candles[sim.exitIndex].time, position: 'aboveBar',
         shape: 'circle', color: sim.R >= 0 ? UP : DOWN,
         text: `${sim.R >= 0 ? '+' : '-'}${Math.abs(sim.R).toFixed(1)}R` });
@@ -343,6 +354,12 @@ function addRides(panel) {
   if (untradedData.length) {
     const line = panel.chart.addLineSeries({ color: GREY, lineWidth: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
     line.setData(untradedData);
+  }
+  // Still waiting for a fill: dashed, because nothing has been decided for this order yet.
+  const pendingData = joinRideLines(pending, { up: GREY, down: GREY });
+  if (pendingData.length) {
+    const line = panel.chart.addLineSeries({ color: GREY, lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+    line.setData(pendingData);
   }
   for (const [lines, color] of [[stops, DOWN], [targets, UP]]) {
     const dashed = joinRideLines(lines, { up: color, down: color });
@@ -604,6 +621,7 @@ function orderPayload(ride) {
   if (!order) return null;
   const sim = order.sim;
   return { rule: limitOptions().rule, price: order.price, status: sim?.status ?? null,
+    waitBars: sim?.waitBars ?? null, fillPrice: sim?.fillPrice ?? null,
     stop: sim?.stop ?? null, target: sim?.target ?? null, R: sim?.R ?? null };
 }
 
