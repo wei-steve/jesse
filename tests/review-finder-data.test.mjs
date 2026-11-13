@@ -19,12 +19,14 @@ test('restoreForm falls back to defaults field by field', () => {
 });
 
 test('the 挂单 controls are saved with the form and sanitized', () => {
-  assert.deepEqual(defaultForm().limit, { rule: 'open', x: 0.25, y: 0.382, k: 1, r: 2, hold: 48 });
-  const saved = restoreForm(JSON.stringify({ limit: { rule: 'retrace', x: 0, y: 1.5, k: 0, r: -2, hold: 2.6 } }));
-  assert.deepEqual(saved.limit, { rule: 'retrace', x: 0, y: 1.5, k: 0.01, r: 0.01, hold: 3 });
+  assert.deepEqual(defaultForm().limit, { rule: 'sma5', x: 0.25, y: 0.382, k: 1, r: 2, hold: 48 });
+  const saved = restoreForm(JSON.stringify({ limit: { v: 2, rule: 'retrace', x: 0, y: 1.5, k: 0, r: -2, hold: 2.6 } }));
+  assert.deepEqual(saved.limit, { rule: 'retrace', v: 2, x: 0, y: 1.5, k: 0.01, r: 0.01, hold: 3 });
   // an unknown rule or non-numbers fall back to the defaults instead of drawing nonsense
-  assert.deepEqual(restoreForm(JSON.stringify({ limit: { rule: 'nope', x: 'a', y: null, k: 999, r: 1, hold: 0 } })).limit,
-    { rule: 'open', x: 0.25, y: 0.382, k: 999, r: 1, hold: 1 });
+  assert.deepEqual(restoreForm(JSON.stringify({ limit: { v: 2, rule: 'nope', x: 'a', y: null, k: 999, r: 1, hold: 0 } })).limit,
+    { rule: 'sma5', v: 2, x: 0.25, y: 0.382, k: 999, r: 1, hold: 1 });
+  // a form saved before v2 held the old default (next-bar open), not a user choice: it moves to SMA5
+  assert.equal(restoreForm(JSON.stringify({ limit: { rule: 'open', x: 0.25 } })).limit.rule, 'sma5');
 });
 
 test('datetime-local values are UTC', () => {

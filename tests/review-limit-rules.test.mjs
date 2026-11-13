@@ -15,7 +15,7 @@ const near = (actual, expected, message) => assert.ok(Math.abs(actual - expected
 test('the rule list is exactly the seven algorithms, each with a label', () => {
   assert.deepEqual(LIMIT_RULES.map(rule => rule.id), ['open', 'close', 'close_atr', 'mid', 'retrace', 'sma5', 'sma10']);
   for (const rule of LIMIT_RULES) assert.ok(rule.label.length > 0);
-  assert.deepEqual(LIMIT_DEFAULTS, { rule: 'open', x: 0.25, y: 0.382, k: 1, r: 2, hold: 48 });
+  assert.deepEqual(LIMIT_DEFAULTS, { rule: 'sma5', x: 0.25, y: 0.382, k: 1, r: 2, hold: 48 });
 });
 
 test('ATR(14) is Wilder-smoothed and unknown before bar 14', () => {

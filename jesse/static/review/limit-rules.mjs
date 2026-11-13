@@ -19,7 +19,9 @@ export const LIMIT_RULES = [
 ];
 
 // Defaults of the page's "挂单" controls (finder.html); also the fallback when a stored value is not a number.
-export const LIMIT_DEFAULTS = { rule: 'open', x: 0.25, y: 0.382, k: 1, r: 2, hold: 48 };
+// Default rule: projected SMA5 (2026-11-12, the user: "挂单至少要靠近ma5附近" — the next-bar open after a big
+// signal bar sits at the Bollinger band, i.e. a chase).
+export const LIMIT_DEFAULTS = { rule: 'sma5', x: 0.25, y: 0.382, k: 1, r: 2, hold: 48 };
 
 const finite = n => typeof n === 'number' && Number.isFinite(n);
 const number = (value, fallback) => finite(value) ? value : fallback;

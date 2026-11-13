@@ -1,8 +1,8 @@
 // Pure helpers of the factor finder page (finder.mjs): request building, saved form, and turning the
 // `/factors/run` answer into the same step series the signal mode of the review page uses (rides.mjs).
 // Nothing here knows what a factor does; the page only draws the numbers the factor file returns.
-import { timeframeMinutes } from './settings.mjs?v=20261112n';
-import { LIMIT_RULES, LIMIT_DEFAULTS } from './limit-rules.mjs?v=20261112n';
+import { timeframeMinutes } from './settings.mjs?v=20261112p';
+import { LIMIT_RULES, LIMIT_DEFAULTS } from './limit-rules.mjs?v=20261112p';
 
 export const FORM_KEY = 'jesse.finder.form.v1';
 export const RECENT_DAYS = [1, 3, 7, 14, 30, 90, 180, 365];
@@ -46,7 +46,9 @@ export function restoreForm(serialized) {
     params, timeframes, overlay: value.overlay === true,
     window: WINDOWS.some(([seconds]) => seconds === value.window) ? value.window : base.window,
     limit: {
-      rule: LIMIT_IDS.includes(limit.rule) ? limit.rule : base.limit.rule,
+      // v2: the default moved from the next-bar open to SMA5; a form saved before that (no v) still holds the old
+      // default, not a choice the user made, so it moves too.
+      rule: limit.v === 2 && LIMIT_IDS.includes(limit.rule) ? limit.rule : base.limit.rule, v: 2,
       x: above('x', 0), y: above('y', 0),
       k: above('k', 0.01), r: above('r', 0.01),
       hold: Math.round(above('hold', 1)),
