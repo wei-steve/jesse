@@ -1,16 +1,16 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261113g';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261113g';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261113g';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261113g';
-import { calculateIndicator } from './indicators.mjs?v=20261113g';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261113g';
-import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261113g';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261113g';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261113g';
-import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS } from './labels.mjs?v=20261113g';
+import { t as createChart } from './lightweight-charts.mjs?v=20261113h';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261113h';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261113h';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261113h';
+import { calculateIndicator } from './indicators.mjs?v=20261113h';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261113h';
+import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261113h';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261113h';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261113h';
+import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS } from './labels.mjs?v=20261113h';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -18,6 +18,9 @@ const stampFull = seconds => `${new Date(seconds * 1000).toISOString().replace('
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
 // Entry-price levels: darker than the ridden-SMA line so the two do not blend.
 const UP_ENTRY = '#0b5e4c', DOWN_ENTRY = '#a3283a';
+// The selected signal's fill and exit markers: one colour no other marker uses, so it stands out when several
+// entries sit close together (2026-11-13, the user asked for it).
+const CHOSEN = '#f59e0b';
 // Limit levels of orders that never traded (unfilled, or the next bar opened past the limit).
 const GREY = '#9aa7b8';
 const TIMEFRAME_CHOICES = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '1D'];
@@ -280,6 +283,14 @@ function newChart(host) {
   });
 }
 
+// Hands the panel's markers to the chart, the selected signal's fill/exit recoloured (and a bit bigger). The
+// ride tag is ours, so it is stripped before the library sees the marker.
+function paintMarkers(panel) {
+  if (!panel.markers || !panel.series) return;
+  panel.series.setMarkers(panel.markers.map(({ ride, ...marker }) =>
+    ride && ride === selectedRide ? { ...marker, color: CHOSEN, size: 2, text: `▶ ${marker.text}` } : marker));
+}
+
 // The ridden SMA of all intervals is one thick line series; the segments between intervals are transparent
 // (see joinRideLines). One series per interval froze the page on long ranges. The limit level of every signal is
 // a staircase: one level per bar the order sat there with (the rule re-computed it at every close), from the
@@ -330,17 +341,18 @@ function addRides(panel) {
       // This chart library has no triangle shape: the arrow points at the fill from the side the price came
       // from (down into a buy limit, up into a sell limit), which reads the same.
       const fill = panel.candles[sim.fillIndex];
-      markers.push({ time: fill.time, position: ride.dir > 0 ? 'aboveBar' : 'belowBar',
+      markers.push({ ride, time: fill.time, position: ride.dir > 0 ? 'aboveBar' : 'belowBar',
         shape: ride.dir > 0 ? 'arrowDown' : 'arrowUp', color: ride.dir > 0 ? UP_ENTRY : DOWN_ENTRY,
         // "挂 …" read as "an order is waiting here" (2026-11-13, the user asked whether it was a pending order or an
         // entry): it is the fill, so it says 多/空 + 成交.
         text: `${ride.dir > 0 ? '多' : '空'}单成交 ${sim.fillPrice.toLocaleString('en-US', { maximumFractionDigits: sim.fillPrice >= 100 ? 0 : 4 })}` });
-      if (sim.status === 'filled') markers.push({ time: panel.candles[sim.exitIndex].time, position: 'aboveBar',
+      if (sim.status === 'filled') markers.push({ ride, time: panel.candles[sim.exitIndex].time, position: 'aboveBar',
         shape: 'circle', color: sim.R >= 0 ? UP : DOWN,
         text: `平仓 ${sim.R >= 0 ? '+' : '-'}${Math.abs(sim.R).toFixed(1)}R` });
     }
   }
-  panel.series.setMarkers(markers.sort((a, b) => a.time - b.time));
+  panel.markers = markers.sort((a, b) => a.time - b.time);
+  paintMarkers(panel);
   const data = joinRideLines(lines, { up: UP, down: DOWN });
   if (data.length) {
     const line = panel.chart.addLineSeries({ color: UP, lineWidth: 4, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
@@ -823,6 +835,7 @@ function selectRide(ride, focus = true) {
     }
   }
   selectedOrder = order;
+  for (const panel of panels) paintMarkers(panel);
   paintTradeInfo(ride);
   paintSignalBar(statusTime); updateNav();
   if (focus) showRange(centeredRange(ride.start, Number($('f-window').value)), true, 0.75);
@@ -834,7 +847,7 @@ function gotoLatest(keepSpan = true) {
   if (selectedRide) rideButtons.get(selectedRide)?.setAttribute('aria-pressed', 'false');
   selectedRide = null; statusTime = result.last_candle_time;
   selectedOrder = null;
-  for (const panel of panels) panel.card.classList.remove('chosen');
+  for (const panel of panels) { panel.card.classList.remove('chosen'); paintMarkers(panel); }
   $('trade-info').textContent = '最新：各周期在最后一根已收盘 K 线时的状态';
   paintSignalBar(statusTime); updateNav();
   const span = Number($('f-window').value);
