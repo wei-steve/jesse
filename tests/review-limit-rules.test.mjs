@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LIMIT_RULES, LIMIT_DEFAULTS, atr14, limitOrder, simulateOrder, summarize } from '../jesse/static/review/limit-rules.mjs';
+import { FEES, LIMIT_RULES, LIMIT_DEFAULTS, atr14, limitOrder, simulateOrder, summarize } from '../jesse/static/review/limit-rules.mjs';
 
 const STEP = 180;   // 3m bars, like the BTC example below
 const bar = (time, open, high, low, close) => ({ time, open, high, low, close, volume: 0 });
@@ -192,7 +192,7 @@ test('the stop is sized with the ATR of the bar whose close set the price', () =
   near(result.target, 100 - 2 * atr[18]);
   assert.equal(result.reason, 'time');         // hold 1: closed at the fill bar's close
   assert.equal(result.exitIndex, 19);
-  near(result.R, 0);
+  near(result.grossR, 0);
 });
 
 test('the trade is only looked at from the fill bar on: that bar checks the stop, not the target', () => {
@@ -213,7 +213,7 @@ test('the trade is only looked at from the fill bar on: that bar checks the stop
   assert.equal(stopped.status, 'filled');
   assert.equal(stopped.reason, 'stop');
   assert.equal(stopped.exitIndex, 16);
-  near(stopped.R, -1);
+  near(stopped.grossR, -1);
 });
 
 test('a bar that touches both the stop and the target counts as the stop', () => {
@@ -226,7 +226,7 @@ test('a bar that touches both the stop and the target counts as the stop', () =>
   assert.equal(result.reason, 'stop');
   assert.equal(result.exitIndex, 17);
   near(result.exitPrice, stop);
-  near(result.R, -1);
+  near(result.grossR, -1);
 });
 
 test('the target closes the trade, and time closes it after opts.hold bars', () => {
@@ -238,14 +238,14 @@ test('the target closes the trade, and time closes it after opts.hold bars', () 
   assert.equal(hit.reason, 'target');
   assert.equal(hit.exitIndex, 17);
   near(hit.exitPrice, target);
-  near(hit.R, 2);                                          // a 2R target
+  near(hit.grossR, 2);                                          // a 2R target
   // nothing hit: the close of the hold-th bar ends it
   at(candles, 17, [100.5, 101.5, 100.2, 101]);
   const time = simulateOrder(candles, 15, 1, 'close', { atr, hold: 2 });
   assert.equal(time.reason, 'time');
   assert.equal(time.exitIndex, 17);
   near(time.exitPrice, 101);
-  near(time.R, 1);
+  near(time.grossR, 1);
   // fewer candles than the trade needs -> still running
   assert.equal(simulateOrder(candles.slice(0, 17), 15, 1, 'close', { atr: atr.slice(0, 17), hold: 2 }).status, 'open');
 });
@@ -319,4 +319,28 @@ test('BTC 3m 2026-10-27 06:48 short: the SMA5 order is filled two bars later, no
   // the 06:57 and 07:06 highs would have filled the original price, but the order is already filled by then
   assert.ok(candles[8].high > result.fillPrice);
   assert.ok(candles[7].high < result.path[0].price);
+});
+
+test('R is net of the owner fees: maker on a resting entry / take-profit, taker on stops, time exits and open fills', () => {
+  const candles = calm();
+  const atr = atr14(candles), target = 100 + 2 * atr[15];
+  at(candles, 16, [100.5, 100.6, 99.9, 100.3]);
+  at(candles, 17, [100.5, target + 0.2, 100.4, target]);
+  const hit = simulateOrder(candles, 15, 1, 'close', { atr });
+  near(hit.feeR, (FEES.maker * 100 + FEES.maker * target) / atr[15]);
+  near(hit.R, hit.grossR - hit.feeR);
+  // a later bar that opens beyond the stop exits at that open, not at the stop
+  const gap = calm();
+  const stop = 100 - atr14(gap)[15];
+  at(gap, 16, [100.5, 100.6, 99.9, 100.3]);
+  at(gap, 17, [stop - 0.3, stop - 0.1, stop - 0.5, stop - 0.2]);
+  const stopped = simulateOrder(gap, 15, 1, 'close', { atr: atr14(gap) });
+  assert.equal(stopped.reason, 'stop');
+  near(stopped.exitPrice, stop - 0.3);
+  near(stopped.feeR, (FEES.maker * 100 + FEES.taker * (stop - 0.3)) / atr14(gap)[15]);
+  // a target that is only touched (not traded through) leaves the take-profit unfilled
+  const touch = calm();
+  at(touch, 16, [100.5, 100.6, 99.9, 100.3]);
+  at(touch, 17, [100.5, target, 100.4, 100.5]);
+  assert.notEqual(simulateOrder(touch, 15, 1, 'close', { atr, hold: 3 }).reason, 'target');
 });

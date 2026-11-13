@@ -23,6 +23,10 @@ export const LIMIT_RULES = [
 // Default rule: projected SMA5 (2026-11-12, the user: "挂单至少要靠近ma5附近" — the next-bar open after a big
 // signal bar sits at the Bollinger band, i.e. a chase).
 export const LIMIT_DEFAULTS = { rule: 'sma5', x: 0.25, y: 0.382, k: 1, r: 2, hold: 48 };
+// The owner's Deepcoin fees after the 90% rebate (jesse-project CLAUDE.md: maker 0.02% / taker 0.06%): a resting
+// limit (entry, take-profit) pays maker, anything that takes liquidity (stop, time exit, a fill at the open) pays
+// taker. Every R below is net of both legs (2026-11-13, the owner: "必须真实反映出我们的策略在真实交易里的效果").
+export const FEES = { maker: 0.00002, taker: 0.00006 };
 
 const finite = n => typeof n === 'number' && Number.isFinite(n);
 const number = (value, fallback) => finite(value) ? value : fallback;
@@ -123,22 +127,31 @@ function tradeResult(bars, side, fillIndex, price, atr, opts, out) {
   const stop = price - side * risk;
   const target = price + side * r * risk;
   const levels = { ...out, fillIndex, fillPrice: price, stop, target };
+  const maker = number(opts.makerFee, FEES.maker), taker = number(opts.takerFee, FEES.taker);
+  const entryFee = (out.gapFill || out.market ? taker : maker) * price;
+  // R after fees: gross move over the risk, minus both legs' fees in the same unit.
+  const close = (index, exitPrice, reason) => {
+    const grossR = side * (exitPrice - price) / risk;
+    const feeR = (entryFee + (reason === 'target' ? maker : taker) * exitPrice) / risk;
+    return { ...levels, status: 'filled', exitIndex: index, exitPrice, reason, grossR, feeR, R: grossR - feeR };
+  };
   for (let index = fillIndex, held = 1; ; index++, held++) {
     const bar = candle(bars, index);
     if (!bar) return { ...levels, exitIndex: null, exitPrice: null, R: null, status: 'open', reason: 'open' };
     // A bar that touches both levels counts as the stop: the intrabar path is unknown, so assume the worse one.
+    // A later bar that OPENS past the stop exits at that open (a stop-market order fills there, not at the stop).
     if (side > 0 ? bar.low <= stop : bar.high >= stop) {
-      return { ...levels, status: 'filled', exitIndex: index, exitPrice: stop, reason: 'stop', R: side * (stop - price) / risk };
+      const gapped = held > 1 && Number.isFinite(bar.open) && (side > 0 ? bar.open < stop : bar.open > stop);
+      return close(index, gapped ? bar.open : stop, 'stop');
     }
     // The fill bar only checks the stop: it may have touched the target before the fill, which the candles
-    // cannot show (conservative, as asked).
-    if (held > 1 && (side > 0 ? bar.high >= target : bar.low <= target)) {
-      return { ...levels, status: 'filled', exitIndex: index, exitPrice: target, reason: 'target', R: side * (target - price) / risk };
-    }
+    // cannot show (conservative, as asked). The take-profit is a resting limit: like the entry it needs price to
+    // trade THROUGH it (a touch may leave it unfilled in the queue).
+    if (held > 1 && (side > 0 ? bar.high > target : bar.low < target)) return close(index, target, 'target');
     // `hold` bars were given to the trade and none of the two levels was hit: close it at this bar's close.
     if (held >= hold) {
       if (!Number.isFinite(bar.close)) return { ...levels, exitIndex: null, exitPrice: null, R: null, status: 'open', reason: 'open' };
-      return { ...levels, status: 'filled', exitIndex: index, exitPrice: bar.close, reason: 'time', R: side * (bar.close - price) / risk };
+      return close(index, bar.close, 'time');
     }
   }
 }
@@ -177,7 +190,7 @@ export function simulateOrder(candles, j, dir, ruleId, opts = {}) {
     const next = candle(bars, j + 1);
     if (!Number.isFinite(next?.open)) return null;
     return tradeResult(bars, side, j + 1, next.open, atr[j], opts,
-      { waitBars: 1, gapBars: 0, path: [{ index: j, price: next.open }] });
+      { waitBars: 1, gapBars: 0, market: true, path: [{ index: j, price: next.open }] });
   }
   // The order is cancelled when the trend is known to be over; an unfilled order then stops waiting.
   const cancelBar = opts.ended === true ? lastIndex + 1 : Infinity;
