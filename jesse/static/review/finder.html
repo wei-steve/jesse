@@ -12,7 +12,8 @@
     <div><span class="brand">J</span><div><h1>因子查找器</h1><p id="data-note">正在读取因子…</p></div></div>
     <a id="back" href="./index.html">← 返回复盘页</a>
   </header>
-  <form id="finder-form" class="finder-form" aria-label="查找条件" autocomplete="off">
+  <!-- novalidate: the 挂单 boxes keep their arrow steps (0.05 / 0.1 / 0.5) but defaults like y 0.382 and k 1 (min 0.01) are off that grid, and the browser then refused to submit "查找"; the page clamps every value itself. -->
+  <form id="finder-form" class="finder-form" aria-label="查找条件" autocomplete="off" novalidate>
     <div class="finder-row">
       <label>交易所 <input id="f-exchange" aria-label="交易所" size="24"></label>
       <label>品种 <input id="f-symbol" aria-label="品种" size="10"></label>
