@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>因子查找器 · Jesse</title>
   <link rel="icon" href="/favicon.ico">
-  <link rel="stylesheet" href="./review.css?v=20261112p">
+  <link rel="stylesheet" href="./review.css?v=20261112q">
 </head>
 <body class="signal-mode finder">
   <header>
@@ -60,6 +60,15 @@
         <button id="ride-latest" class="ride-latest" type="button" disabled title="选中列表里最新的一个区间">最新信号 ↓</button>
         <div id="ride-filter" class="ride-filter" aria-label="按周期过滤"></div>
       </div>
+      <div class="label-bar">
+        <span id="label-counts" class="label-counts">好 0 / 坏 0 / 未标 0</span>
+        <span id="label-filter" class="label-filter" aria-label="按标注过滤"></span>
+      </div>
+      <p class="label-keys">快捷键：← → / k j 上一个下一个 · g 好 · b 坏 · 0 清除 · n 备注（Esc 关掉输入框）</p>
+      <div id="note-row" class="label-note" hidden>
+        <input id="note-input" maxlength="500" aria-label="这个信号的备注" placeholder="备注，回车保存">
+        <span id="note-hint" class="label-note-hint"></span>
+      </div>
       <div id="trades" aria-label="区间列表"></div>
     </aside>
     <section class="review">
@@ -76,7 +85,7 @@
   <script type="module">
     // REVIEW_VERSION: change it (and every "?v=" in the .mjs imports and the stylesheet link) whenever
     // any file in this folder changes. tests/review-version.test.mjs checks that they all match.
-    const REVIEW_VERSION = '20261112p';
+    const REVIEW_VERSION = '20261112q';
     import(`./finder.mjs?v=${REVIEW_VERSION}`).catch(error => {
       const status = document.getElementById('status');
       status.hidden = false; status.classList.add('error'); status.textContent = `查找器脚本加载失败：${error.message}`;

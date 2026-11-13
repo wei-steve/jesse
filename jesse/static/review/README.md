@@ -138,6 +138,25 @@ def compute(candles_by_tf: dict, params: dict) -> dict:
 - 挂单的成交与结果判定（只看信号后一根：开盘越过挂单价算 `gap` 不计成交，最低/最高价越过挂单价算成交；止损 = 挂单价 ∓ k·ATR，止盈 = 挂单价 ± r·(k·ATR)；成交那根只查止损，同一根两碰按止损，超过持有根数按收盘平）在 `limit-rules.mjs`（纯函数，`tests/review-limit-rules.test.mjs`），ATR(14) 用 Wilder 平滑，与复盘页附图口径一致。
 - 测试：`tests/test_factor_finder.py`（后端，用示例因子和造的 K 线）、`tests/review-finder-data.test.mjs`（表单、请求、阶梯序列转换）。
 
+## 标注（因子查找器里按键盘标“好 / 坏”）
+
+因子查找器里发现信号或挂单不对时，不再一张张截图：翻到那个信号，按一下键标“好 / 坏”，可加一句备注。标注写进**项目目录**（`jesse run` 的 cwd）下的 `storage/labels/finder-labels.jsonl`，调度/Claude 直接读这个文件分析，不需要截图。
+
+**快捷键**（焦点在输入框、下拉框里时不响应）
+
+- `←` / `→` 或 `k` / `j`：上一个 / 下一个信号（和工具栏按钮、`rides.mjs` 的 `neighbour` 同一套导航，遵守周期和标注筛选）。
+- `g`：标“好”；`b`：标“坏”；`0`：清除标注。标完自动跳到下一个信号，可以一路按下去。
+- `n`：打开一行备注输入框（页面内的，不用 `prompt`）。回车保存：已经标过就再存一条（`label` 沿用当前值），还没标就提示“先按 g 或 b”且不保存（备注先记着，等按 g / b 时随标注一起存）。`Esc` 关掉输入框。
+- 列表每项右侧显示 ✓（绿）/ ✗（红），有备注时鼠标悬停显示备注；列表上方是“好 x / 坏 y / 未标 z”统计、全部 / 未标 / 好 / 坏 筛选和一行快捷键说明。统计只按周期筛选算，不跟着标注筛选变。
+
+**文件格式**：一行一条 JSON，只追加、不改旧行。字段：`key`（`factor|exchange|symbol|tf|start|dir`，前端在 `labels.mjs` 拼）、`label`（`good` / `bad` / `clear`）、`note`、`factor`、`version`、`params`（这次实际用的因子参数）、`exchange`、`symbol`、`tf`、`start`（区间开始，UTC 秒）、`dir`（1 / -1）、`order`（当时页面上的挂单：算法 `rule`、挂单价 `price`、状态 `status`、止损 `stop`、止盈 `target`、结果 `R`）、`saved_at`（UTC ISO）。
+
+读法：同一个 `key` 取**最后一条**，`clear` 表示取消标注（去掉这个 key）。页面用 `POST /review/labels {factor, exchange, symbol}` 拿回来，接口做的就是这件事；也可以直接读文件。`key` 上限 200 字符，一条记录序列化后超过 8 KB 返回 413，备注超过 500 字符会截断（不丢标注）。
+
+**接口**：`POST /review/label`（写一条，`{ok: true}`；`label` 不是 good/bad/clear 返回 400）和 `POST /review/labels`（读最新标注，文件不存在返回空），都在 `jesse/controllers/review_controller.py`，与截图接口同一个 router、同样需要登录。
+
+**测试**：`tests/review-labels.test.mjs`（`labels.mjs` 的 `labelKey` / `labelCounts` / `latestLabels` / `filterByLabel`）、`tests/test_review_labels.py`（写入、覆盖、clear、非法 label、超长 413、按 factor/symbol 过滤）。
+
 ## 截图与标注
 
 给两个页面（`index.html` 复盘页、`finder.html` 因子查找器）用，方便把图发给 Claude 讨论：截图 → 简单画几笔 → 一键存到 Mac 上的固定文件夹。手机上（iPad、iPhone 经 Tailscale 打开）也能用。
