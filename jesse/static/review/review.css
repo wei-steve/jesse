@@ -68,8 +68,8 @@ main[hidden]{display:none}
 .chart-grid.has-maximized>.chart-card.maximized .chart-host{height:max(260px,calc(100vh - 130px))}
 .chart-head h3 .maximize-btn{margin-left:4px}
 
-/* Signal labels (labels.mjs, POST /review/label): counts + filter + shortcut line above the list, the ✓ / ✗ in
-   every row, and the one-line note box opened with `n`. */
+/* Signal labels (labels.mjs, POST /review/label): counts + filter + shortcut line above the list, the 势 / 挂 marks
+   in every row, and the one-line note box opened with `n`. */
 .label-bar{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:8px 12px 0;font-size:12px;color:#4d5f7a;font-variant-numeric:tabular-nums}
 .label-counts{font-weight:600;color:#2b3a52}
 .label-filter{display:flex;gap:4px;margin-left:auto}
@@ -80,6 +80,7 @@ main[hidden]{display:none}
 .label-note[hidden]{display:none}
 .label-note input{flex:1;min-width:0;border:1px solid #dce3ee;border-radius:7px;padding:5px 7px;font:inherit;font-size:12px}
 .label-note-hint{font-size:10px;line-height:1.4;color:#c73f58;max-width:52%}
-.label-mark{float:right;margin-left:6px;font-weight:700}
+.label-marks{float:right;display:inline-flex;gap:5px;margin-left:6px}
+.label-mark{font-weight:700}
 .label-mark.good{color:#008268}
 .label-mark.bad{color:#c73f58}

@@ -40,7 +40,13 @@ MAX_LABEL_NOTE = 500
 # One record is one line: the page sends the factor params and the order it had on screen, which is a handful of
 # numbers. A record above 8 KB is a mistake (or abuse), not a label.
 MAX_RECORD_BYTES = 8 * 1024
+# One signal carries three independent marks: whether the trend judgement was right (`trend`), whether the limit
+# order was usable (`order`), and one free-text note. The page sends the machine choices and the person reads the
+# file, so the reason a signal is bad stays distinguishable. Rows written before the split have no `kind` and are
+# trend marks.
 LABEL_VALUES = ('good', 'bad', 'clear')
+LABEL_KINDS = ('trend', 'order', 'note')
+DEFAULT_LABEL_KIND = 'trend'
 
 
 class ScreenshotRequestJson(BaseModel):
@@ -106,7 +112,10 @@ def save_screenshot(request_json: ScreenshotRequestJson) -> JSONResponse:
 
 class LabelRequestJson(BaseModel):
     key: str
-    label: str
+    # Required for trend / order (good / bad / clear), ignored for note rows, which only carry the text.
+    label: Optional[str] = None
+    # trend / order / note; missing means trend, so a page (or script) written before the split still works.
+    kind: Optional[str] = None
     factor: Optional[str] = None
     version: Optional[str] = None
     params: Optional[dict] = None
@@ -132,6 +141,13 @@ def labels_path() -> str:
     return os.path.join(os.getcwd(), LABELS_FOLDER, LABELS_FILE)
 
 
+def label_kind(row: dict) -> str:
+    """The kind of one stored row. Rows without `kind` (and hand-edited nonsense) are trend marks, the only mark
+    that existed when they were written; nothing is rewritten on disk."""
+    kind = row.get('kind')
+    return kind if kind in LABEL_KINDS else DEFAULT_LABEL_KIND
+
+
 def read_label_rows(path: str) -> list:
     """Every readable row, oldest first. A hand-edited broken line is skipped instead of failing the read."""
     try:
@@ -152,8 +168,12 @@ def read_label_rows(path: str) -> list:
 
 @router.post('/label')
 def save_label(request_json: LabelRequestJson) -> JSONResponse:
-    """Append one mark (good / bad / clear) with its optional note to the project's label file."""
-    if request_json.label not in LABEL_VALUES:
+    """Append one mark (kind trend / order, good / bad / clear) or one note to the project's label file."""
+    kind = (request_json.kind or DEFAULT_LABEL_KIND).strip()
+    if kind not in LABEL_KINDS:
+        return JSONResponse({'error': 'kind 只能是 ' + ' / '.join(LABEL_KINDS)}, status_code=400)
+    # A note row needs no good / bad; a trend or order row is nothing without its label.
+    if kind != 'note' and request_json.label not in LABEL_VALUES:
         return JSONResponse({'error': 'label 只能是 ' + ' / '.join(LABEL_VALUES)}, status_code=400)
     key = request_json.key.strip()
     if not key:
@@ -163,10 +183,15 @@ def save_label(request_json: LabelRequestJson) -> JSONResponse:
 
     record = request_json.model_dump(exclude_none=True)
     record['key'] = key
+    record['kind'] = kind
     # A note is trimmed and capped instead of rejected: losing the tail of one line of text is better than losing
-    # the mark the user just made. `clear` keeps no note, the note belonged to the mark being removed.
-    note = '' if request_json.label == 'clear' else (request_json.note or '').strip()[:MAX_LABEL_NOTE]
-    if note:
+    # the mark the user just made. The note is its own mark now (kind=note), so clearing a good / bad leaves it.
+    note = (request_json.note or '').strip()[:MAX_LABEL_NOTE]
+    if kind == 'note':
+        # Only the text: a note row is not a mark, and an empty note is the explicit "clear the note" row.
+        record.pop('label', None)
+        record['note'] = note
+    elif note:
         record['note'] = note
     else:
         record.pop('note', None)
@@ -186,15 +211,28 @@ def save_label(request_json: LabelRequestJson) -> JSONResponse:
 
 @router.post('/labels')
 def get_labels(request_json: LabelsRequestJson) -> JSONResponse:
-    """The current mark of every signal of this factor / exchange / symbol: the last row per key, minus clears."""
+    """Every signal's two marks and its note, as the last row of each kind per key."""
     latest = {}
     for row in read_label_rows(labels_path()):
         if any(wanted is not None and row.get(field) != wanted
                for field, wanted in (('factor', request_json.factor), ('exchange', request_json.exchange),
                                      ('symbol', request_json.symbol))):
             continue
-        # Rows are read oldest first, so a later row for the same key replaces the earlier one.
-        latest[row['key']] = row
-    labels = {key: {'label': row['label'], 'note': row.get('note') or ''}
-              for key, row in latest.items() if row.get('label') in ('good', 'bad')}
+        # Rows are read oldest first, so the last row of a kind is the current state of that kind.
+        entry = latest.setdefault(row['key'], {'trend': None, 'order': None, 'note': ''})
+        kind = label_kind(row)
+        if kind == 'note':
+            # A note row states the note of the signal: text, or explicitly none.
+            entry['note'] = row.get('note') or ''
+            continue
+        label = row.get('label')
+        if label in ('good', 'bad'):
+            entry[kind] = label
+        elif label == 'clear':
+            entry[kind] = None
+        # Marks written before the note was its own kind carry it; a newer note row still wins.
+        if row.get('note'):
+            entry['note'] = row['note']
+    labels = {key: entry for key, entry in latest.items()
+              if entry['trend'] or entry['order'] or entry['note']}
     return JSONResponse({'labels': labels})
