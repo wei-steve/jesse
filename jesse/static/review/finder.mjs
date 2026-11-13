@@ -1,16 +1,16 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261113d';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261113d';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261113d';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261113d';
-import { calculateIndicator } from './indicators.mjs?v=20261113d';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261113d';
-import { LIMIT_RULES, LIMIT_DEFAULTS, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261113d';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261113d';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261113d';
-import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS } from './labels.mjs?v=20261113d';
+import { t as createChart } from './lightweight-charts.mjs?v=20261113e';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261113e';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261113e';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261113e';
+import { calculateIndicator } from './indicators.mjs?v=20261113e';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261113e';
+import { LIMIT_RULES, LIMIT_DEFAULTS, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261113e';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261113e';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261113e';
+import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS } from './labels.mjs?v=20261113e';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -331,10 +331,12 @@ function addRides(panel) {
       const fill = panel.candles[sim.fillIndex];
       markers.push({ time: fill.time, position: ride.dir > 0 ? 'aboveBar' : 'belowBar',
         shape: ride.dir > 0 ? 'arrowDown' : 'arrowUp', color: ride.dir > 0 ? UP_ENTRY : DOWN_ENTRY,
-        text: `挂 ${sim.fillPrice.toLocaleString('en-US', { maximumFractionDigits: sim.fillPrice >= 100 ? 0 : 4 })}` });
+        // "挂 …" read as "an order is waiting here" (2026-11-13, the user asked whether it was a pending order or an
+        // entry): it is the fill, so it says 多/空 + 成交.
+        text: `${ride.dir > 0 ? '多' : '空'}单成交 ${sim.fillPrice.toLocaleString('en-US', { maximumFractionDigits: sim.fillPrice >= 100 ? 0 : 4 })}` });
       if (sim.status === 'filled') markers.push({ time: panel.candles[sim.exitIndex].time, position: 'aboveBar',
         shape: 'circle', color: sim.R >= 0 ? UP : DOWN,
-        text: `${sim.R >= 0 ? '+' : '-'}${Math.abs(sim.R).toFixed(1)}R` });
+        text: `平仓 ${sim.R >= 0 ? '+' : '-'}${Math.abs(sim.R).toFixed(1)}R` });
     }
   }
   panel.series.setMarkers(markers.sort((a, b) => a.time - b.time));
@@ -809,7 +811,9 @@ function selectRide(ride, focus = true) {
     if (panel.interval !== ride.minutes || !panel.candles?.length) continue;
     order = orderOf(ride);
     if (order?.price != null) panel.limitLine = panel.series.createPriceLine({ price: order.price, color: ride.dir > 0 ? UP_ENTRY : DOWN_ENTRY,
-      lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '挂单' });
+      lineWidth: 1, lineStyle: 2, axisLabelVisible: true,
+      // Filled orders show their entry price; only an order that never traded is still a 挂单.
+      title: order.sim?.status === 'filled' || order.sim?.status === 'open' ? '入场' : '挂单（未成交）' });
     // Stop and target of a traded order, so all three prices can be read off the scale.
     if (order?.sim && (order.sim.status === 'filled' || order.sim.status === 'open')) {
       for (const [price, color, title] of [[order.sim.stop, DOWN, '止损'], [order.sim.target, UP, '止盈']]) {
