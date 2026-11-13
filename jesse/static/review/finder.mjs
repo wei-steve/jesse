@@ -1,15 +1,16 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261112p';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261112p';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261112p';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261112p';
-import { calculateIndicator } from './indicators.mjs?v=20261112p';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261112p';
-import { LIMIT_RULES, LIMIT_DEFAULTS, atr14, limitOrder, simulateOrder, summarize } from './limit-rules.mjs?v=20261112p';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261112p';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112p';
+import { t as createChart } from './lightweight-charts.mjs?v=20261112q';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261112q';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261112q';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261112q';
+import { calculateIndicator } from './indicators.mjs?v=20261112q';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261112q';
+import { LIMIT_RULES, LIMIT_DEFAULTS, atr14, limitOrder, simulateOrder, summarize } from './limit-rules.mjs?v=20261112q';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261112q';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112q';
+import { labelKey, labelCounts, labelOf, filterByLabel, LABEL_FILTERS, LABEL_TEXT } from './labels.mjs?v=20261112q';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -24,6 +25,11 @@ const TIMEFRAME_CHOICES = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '1D
 let token, form, factors = [], result = null, rides = [], rideData = [], shownTfs = new Set();
 let panels = [], selectedRide = null, statusTime, wantedRange, rangeLink, syncing = false, runVersion = 0;
 const rideButtons = new Map();
+// Labels of the signals on screen: `key -> {label, note}`, as returned by POST /review/labels. A new run starts
+// empty and reloads, so marks of another factor / symbol never show up here. `labelFilter` narrows the list.
+let labels = {}, labelFilter = 'all';
+// A note typed with `n` for a signal that has no good/bad mark yet: kept until the next g / b saves it with the mark.
+const pendingNotes = new Map();
 
 try { form = restoreForm(localStorage.getItem(FORM_KEY)); } catch { form = restoreForm(null); }
 const saveForm = () => { try { localStorage.setItem(FORM_KEY, JSON.stringify(form)); } catch { /* still works for this page */ } };
@@ -478,7 +484,10 @@ function paintDataNote() {
 }
 
 // ---- Ride list -------------------------------------------------------------
-const shownRides = () => filterRides(rides, shownTfs);
+// The timeframe filter and the label filter both narrow the list; the counts above it only follow the timeframe
+// filter, otherwise marking a signal would change the number of "unlabeled" it was just counted in.
+const tfRides = () => filterRides(rides, shownTfs);
+const shownRides = () => filterByLabel(tfRides(), labels, labelFilter);
 
 // A long range has tens of thousands of intervals; building every button at once stalls the page, so the
 // list is built in chunks: more are appended when the list is scrolled near its end, or when a ride further
@@ -492,6 +501,13 @@ function rideButton(ride) {
   const head = document.createElement('strong');
   const side = document.createElement('span'); side.className = ride.dir > 0 ? 'up' : 'down'; side.textContent = arrow(ride.dir);
   head.append(document.createTextNode(`${ride.tf} `), side, document.createTextNode(` ${maText(ride.periods)}`));
+  // The mark of the review pass: ✓ green / ✗ red on the right of the row, the note on hover.
+  const entry = labelEntry(ride);
+  const mark = document.createElement('span');
+  mark.className = `label-mark${entry ? ` ${entry.label}` : ''}`;
+  mark.textContent = entry ? LABEL_TEXT[entry.label] : '';
+  if (entry?.note) mark.title = entry.note;
+  head.append(mark);
   const details = document.createElement('small');
   details.textContent = `${stamp(ride.start + 60)} UTC · ${ride.bars} 根${ride.ended ? '' : '（进行中）'}`;
   button.append(head, details);
@@ -518,12 +534,16 @@ function paintRides() {
   const box = $('trades'); box.replaceChildren();
   if (!list.length) {
     const none = document.createElement('p'); none.className = 'rides-empty';
-    none.textContent = rides.length ? '没有勾选的周期' : '这个范围内没有找到区间'; box.append(none);
+    // Say which filter emptied the list, otherwise an empty list after pressing g looks like a lost result.
+    none.textContent = !rides.length ? '这个范围内没有找到区间'
+      : labelFilter === 'all' ? '没有勾选的周期'
+      : `没有“${LABEL_FILTERS.find(([id]) => id === labelFilter)?.[1] ?? labelFilter}”标注的信号，点“全部”看回所有`;
+    box.append(none);
   }
   renderMoreRides(LIST_CHUNK);
   $('trade-count').textContent = `${list.length}/${rides.length} 个`;
   $('ride-latest').disabled = !list.length;
-  updateNav();
+  paintLabelBar(); updateNav();
 }
 
 function paintFilter() {
@@ -544,7 +564,145 @@ function updateNav() {
   $('next').disabled = !neighbour(list, selectedRide, 1);
 }
 
+// ---- Labels ----------------------------------------------------------------
+// Marking a signal appends one line to the project's storage/labels/finder-labels.jsonl (POST /review/label), which
+// is what the person (or Claude) reads afterwards instead of a screenshot per signal. The page keeps the last mark
+// per key in `labels` and only mirrors the file; the file itself is append-only and never rewritten here.
+const labelEntry = ride => labelOf(labels, ride?.key);
+const NOTE_HINT_UNMARKED = '先按 g 或 b（Esc 关掉输入框；备注已记住，标完一起保存）';
+
+// The factor run the marks belong to. The result's own identity, not the form's: the user may already have
+// picked another factor / symbol in the form without running it, and a mark must still describe what is on screen.
+const runIdentity = () => ({ factor: result?.factor ?? form.factor, exchange: result?.exchange ?? form.exchange,
+  symbol: result?.symbol ?? form.symbol });
+
+// Every ride needs its key before the list is drawn or the keys are pressed.
+function keyRides() {
+  const identity = runIdentity();
+  for (const ride of rides) ride.key = labelKey(identity, ride);
+}
+
+function paintLabelBar() {
+  const counts = labelCounts(tfRides(), labels);
+  $('label-counts').textContent = `好 ${counts.good} / 坏 ${counts.bad} / 未标 ${counts.unlabeled}`;
+  for (const button of $('label-filter').children) button.setAttribute('aria-pressed', String(button.dataset.filter === labelFilter));
+}
+
+function buildLabelFilter() {
+  $('label-filter').replaceChildren(...LABEL_FILTERS.map(([id, text]) => {
+    const button = document.createElement('button');
+    button.type = 'button'; button.dataset.filter = id; button.textContent = text;
+    button.onclick = () => { labelFilter = id; paintRides(); };
+    return button;
+  }));
+}
+
+// What the 挂单 row would trade for this signal right now, saved with the mark so the reader of the file knows
+// which order was on screen when the signal was judged.
+function orderPayload(ride) {
+  const order = orderOf(ride);
+  if (!order) return null;
+  const sim = order.sim;
+  return { rule: limitOptions().rule, price: order.price, status: sim?.status ?? null,
+    stop: sim?.stop ?? null, target: sim?.target ?? null, R: sim?.R ?? null };
+}
+
+// One mark: send it, then mirror it locally. The note of an existing mark is kept when none is passed, so
+// pressing g on an already noted signal does not wipe the note.
+async function saveLabel(ride, label, note) {
+  const text = label === 'clear' ? '' : (note ?? pendingNotes.get(ride.key) ?? labelEntry(ride)?.note ?? '').slice(0, 500);
+  await post('/review/label', {
+    key: ride.key, ...runIdentity(), version: result?.version ?? null, params: result?.params ?? {},
+    tf: ride.tf, start: ride.start, dir: ride.dir, label, note: text, order: orderPayload(ride),
+  });
+  if (label === 'clear') delete labels[ride.key];
+  else labels[ride.key] = { label, note: text };
+  paintRides();
+}
+
+// g / b / 0: mark the selected signal, then move on to the next one, so a range can be reviewed in one pass.
+async function markSelected(label) {
+  const ride = selectedRide;
+  if (!ride) { status('先选一个信号（← → 或 k j），再按 g / b / 0。', true); return; }
+  try {
+    await saveLabel(ride, label, pendingNotes.get(ride.key));
+  } catch (error) { status(error.message, true); return; }
+  status('');
+  // The list was just repainted (a filter may have dropped this signal), so look for the next one there.
+  const next = neighbour(shownRides(), ride, 1);
+  if (next) selectRide(next);
+  else status(label === 'clear' ? '已清除这个信号的标注' : `已标${label === 'good' ? '好' : '坏'}：${ride.tf} ${stamp(ride.start + 60)} UTC（列表里没有下一个了）`);
+}
+
+function openNote() {
+  const ride = selectedRide;
+  if (!ride) { status('先选一个信号，再按 n 写备注。', true); return; }
+  $('note-row').hidden = false;
+  $('note-input').value = pendingNotes.get(ride.key) ?? labelEntry(ride)?.note ?? '';
+  $('note-hint').textContent = '';
+  $('note-input').focus();
+  $('note-input').select();
+}
+
+function closeNote() {
+  $('note-row').hidden = true; $('note-hint').textContent = ''; $('note-input').value = '';
+}
+
+// Enter in the note box: a noted signal saves the note with its current mark; an unmarked one only remembers the
+// text (the hint next to the box says to press g / b first), and that mark saves the note with it.
+async function submitNote() {
+  const ride = selectedRide;
+  if (!ride) { closeNote(); return; }
+  const text = $('note-input').value.slice(0, 500);
+  pendingNotes.set(ride.key, text);
+  const entry = labelEntry(ride);
+  if (!entry) { $('note-hint').textContent = NOTE_HINT_UNMARKED; return; }
+  try { await saveLabel(ride, entry.label, text); closeNote(); status('备注已保存'); }
+  catch (error) { $('note-hint').textContent = error.message; }
+}
+
+// The saved marks of this factor / exchange / symbol, so reopening the page or switching back shows them.
+async function loadLabels(version) {
+  try {
+    const data = await post('/review/labels', runIdentity());
+    if (version !== runVersion) return;
+    labels = data.labels ?? {};
+  } catch {
+    if (version !== runVersion) return;
+    labels = {};
+  }
+  paintRides();
+}
+
+// Keys are ignored while a text field or a select has the focus: typing a param must not mark a signal or jump.
+const typing = () => {
+  const active = document.activeElement;
+  return !!active && (active.tagName === 'INPUT' || active.tagName === 'SELECT' || active.tagName === 'TEXTAREA'
+    || active.isContentEditable);
+};
+
+function onKeydown(event) {
+  if (!result || event.metaKey || event.ctrlKey || event.altKey) return;
+  // Esc closes the note box even while the cursor sits in it.
+  if (event.key === 'Escape' && !$('note-row').hidden) { closeNote(); return; }
+  if (typing()) return;
+  const key = event.key;
+  if (key === 'ArrowLeft' || key === 'k' || key === 'K') { event.preventDefault(); stepRide(-1); }
+  else if (key === 'ArrowRight' || key === 'j' || key === 'J') { event.preventDefault(); stepRide(1); }
+  else if (key === 'g' || key === 'G') { event.preventDefault(); markSelected('good'); }
+  else if (key === 'b' || key === 'B') { event.preventDefault(); markSelected('bad'); }
+  else if (key === '0') { event.preventDefault(); markSelected('clear'); }
+  else if (key === 'n' || key === 'N') { event.preventDefault(); openNote(); }
+}
+
+function stepRide(step) {
+  const ride = neighbour(shownRides(), selectedRide, step);
+  if (ride) selectRide(ride);
+}
+
 function selectRide(ride, focus = true) {
+  // The note box belongs to the signal that was selected when it was opened: drop it when the selection moves.
+  if (ride !== selectedRide && !$('note-row').hidden) closeNote();
   const previous = selectedRide;
   selectedRide = ride; statusTime = ride.start;
   if (previous && rideButtons.has(previous)) rideButtons.get(previous).setAttribute('aria-pressed', 'false');
@@ -593,6 +751,7 @@ function render(data) {
   const extra = rideExtra(data.timeframes);
   rideData = rideSeries(extra);
   rides = buildRides(extra, data.last_candle_time + 60);
+  keyRides();
   shownTfs = new Set(rideData.map(s => s.title)); selectedRide = null;
   let preferences;
   try { preferences = restorePreferences(localStorage.getItem(STORAGE_KEY)); } catch { preferences = restorePreferences(null); }
@@ -620,8 +779,11 @@ async function run() {
     const data = await post('/factors/run', body);
     if (version !== runVersion) return;
     status('');
+    // Marks belong to the previous factor / exchange / symbol: start empty and load this run's own marks.
+    labels = {};
     render(data);
     paintCondition(factor, params);
+    await loadLabels(version);
   } catch (error) {
     if (version === runVersion) status(error.message, true);
   } finally { if (version === runVersion) $('f-run').disabled = false; }
@@ -651,7 +813,12 @@ async function importLatest() {
 async function start() {
   try { token = JSON.parse(localStorage.getItem('main') ?? '{}').authToken; } catch { token = null; }
   if (!token) throw new Error('请先在同一地址的 Jesse 页面登录，再刷新此页。localhost 与 127.0.0.1 的登录状态不同。');
-  paintForm(); paintHeight(); paintLimit();
+  paintForm(); paintHeight(); paintLimit(); buildLabelFilter();
+  // g / b / 0 mark the selected signal and step on; ← → / k j walk the list. The note box has its own keys.
+  document.addEventListener('keydown', onKeydown);
+  $('note-input').onkeydown = event => {
+    if (event.key === 'Enter') { event.preventDefault(); submitNote(); }
+  };
   $('finder-form').onsubmit = event => { event.preventDefault(); run(); };
   $('f-import').onclick = importLatest;
   $('f-latest').onclick = () => gotoLatest();
