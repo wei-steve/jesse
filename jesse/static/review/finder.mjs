@@ -1,15 +1,15 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261112m';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261112m';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261112m';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261112m';
-import { calculateIndicator } from './indicators.mjs?v=20261112m';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261112m';
-import { LIMIT_RULES, LIMIT_DEFAULTS, atr14, limitOrder, simulateOrder, summarize } from './limit-rules.mjs?v=20261112m';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261112m';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112m';
+import { t as createChart } from './lightweight-charts.mjs?v=20261112n';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261112n';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261112n';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261112n';
+import { calculateIndicator } from './indicators.mjs?v=20261112n';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261112n';
+import { LIMIT_RULES, LIMIT_DEFAULTS, atr14, limitOrder, simulateOrder, summarize } from './limit-rules.mjs?v=20261112n';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261112n';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261112n';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -284,17 +284,39 @@ function addRides(panel) {
   panel.orders = orders;
   panel.summary = summarize(orders.map(order => order.sim));
   const levels = { up: [], down: [] }, untraded = { up: [], down: [] };
+  const stops = { up: [], down: [] }, targets = { up: [], down: [] };
+  const last = panel.candles.length - 1;
+  // A flat segment at `value` over bars from..to (inclusive, clipped to the chart).
+  const flat = (from, to, value) => {
+    const out = [];
+    for (let i = from; i <= Math.min(to, last); i++) out.push({ time: panel.candles[i].time, value });
+    return out;
+  };
   for (const { ride, index, price, sim } of orders) {
     if (price === null) continue;
-    const data = [index, index + 1].filter(i => i < panel.candles.length).map(i => ({ time: panel.candles[i].time, value: price }));
-    if (sim?.status === 'gap' || sim?.status === 'unfilled') untraded.up.push(data);
-    else (ride.dir > 0 ? levels.up : levels.down).push(data);
-    if (sim?.status === 'filled' || sim?.status === 'open') {
+    if (sim?.status === 'gap' || sim?.status === 'unfilled') {
+      // Signal bar + order bar + two more, so an untraded level is still visible when the chart is zoomed out
+      // (2026-11-12: the user could not see the 2-bar levels).
+      untraded.up.push(flat(index, index + 3, price));
+      continue;
+    }
+    if (sim?.status !== 'filled' && sim?.status !== 'open') {
+      (ride.dir > 0 ? levels.up : levels.down).push(flat(index, index + 1, price));
+      continue;
+    }
+    // A traded order: the entry level runs from the signal bar to the exit (or the last bar while still open),
+    // with its stop and target as dashed levels over the same bars.
+    const end = sim.status === 'filled' ? sim.exitIndex : last;
+    (ride.dir > 0 ? levels.up : levels.down).push(flat(index, end, price));
+    if (Number.isFinite(sim.stop)) stops.up.push(flat(sim.fillIndex, end, sim.stop));
+    if (Number.isFinite(sim.target)) targets.up.push(flat(sim.fillIndex, end, sim.target));
+    {
       // This chart library has no triangle shape: the arrow points at the fill from the side the price came
       // from (down into a buy limit, up into a sell limit), which reads the same.
       const fill = panel.candles[sim.fillIndex];
       markers.push({ time: fill.time, position: ride.dir > 0 ? 'aboveBar' : 'belowBar',
-        shape: ride.dir > 0 ? 'arrowDown' : 'arrowUp', color: ride.dir > 0 ? UP_ENTRY : DOWN_ENTRY, text: '' });
+        shape: ride.dir > 0 ? 'arrowDown' : 'arrowUp', color: ride.dir > 0 ? UP_ENTRY : DOWN_ENTRY,
+        text: `挂 ${price.toLocaleString('en-US', { maximumFractionDigits: price >= 100 ? 0 : 4 })}` });
       if (sim.status === 'filled') markers.push({ time: panel.candles[sim.exitIndex].time, position: 'aboveBar',
         shape: 'circle', color: sim.R >= 0 ? UP : DOWN,
         text: `${sim.R >= 0 ? '+' : '-'}${Math.abs(sim.R).toFixed(1)}R` });
@@ -315,6 +337,12 @@ function addRides(panel) {
   if (untradedData.length) {
     const line = panel.chart.addLineSeries({ color: GREY, lineWidth: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
     line.setData(untradedData);
+  }
+  for (const [lines, color] of [[stops, DOWN], [targets, UP]]) {
+    const dashed = joinRideLines(lines, { up: color, down: color });
+    if (!dashed.length) continue;
+    const line = panel.chart.addLineSeries({ color, lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+    line.setData(dashed);
   }
 }
 
@@ -528,10 +556,18 @@ function selectRide(ride, focus = true) {
   for (const panel of panels) {
     panel.card.classList.toggle('chosen', panel.interval === ride.minutes);
     if (panel.limitLine) { panel.series.removePriceLine(panel.limitLine); panel.limitLine = null; }
+    for (const extra of panel.orderLines ?? []) panel.series.removePriceLine(extra);
+    panel.orderLines = [];
     if (panel.interval !== ride.minutes || !panel.candles?.length) continue;
     order = orderOf(ride);
     if (order?.price != null) panel.limitLine = panel.series.createPriceLine({ price: order.price, color: ride.dir > 0 ? UP_ENTRY : DOWN_ENTRY,
       lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '挂单' });
+    // Stop and target of a traded order, so all three prices can be read off the scale.
+    if (order?.sim && (order.sim.status === 'filled' || order.sim.status === 'open')) {
+      for (const [price, color, title] of [[order.sim.stop, DOWN, '止损'], [order.sim.target, UP, '止盈']]) {
+        if (Number.isFinite(price)) panel.orderLines.push(panel.series.createPriceLine({ price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title }));
+      }
+    }
   }
   $('trade-info').textContent = `${ride.tf} ${arrow(ride.dir)} ${maText(ride.periods)} · ${stampFull(ride.start + 60)} UTC 起${orderText(order)} · 持续 ${ride.bars} 根${ride.ended ? '' : '（进行中）'}${ride.maxTouches ? ` · 最多回踩 ${ride.maxTouches} 次` : ''}`;
   paintSignalBar(statusTime); updateNav();
