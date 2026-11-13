@@ -1,12 +1,13 @@
-// Limit-order rules of the factor finder: where a signal's order sits, whether the next candle fills it, and
-// what the trade would have done afterwards. Pure functions only (the page passes its candles in); no DOM, no
-// imports, so tests/review-limit-rules.test.mjs can drive every rule.
+// Limit-order rules of the factor finder: where a signal's order sits, which candle fills it, and what the trade
+// would have done afterwards. Pure functions only (the page passes its candles in); no DOM, no imports, so
+// tests/review-limit-rules.test.mjs can drive every rule.
 //
 // Conventions:
 //   j    index of the SIGNAL bar: the bar whose close the factor value is known at (the bar with the arrow)
 //   dir  +1 long, -1 short
-//   The order can only be filled by the bar after the signal bar (j + 1), because the signal is unknown until
-//   the signal bar closes. Prices are that timeframe's own candle values.
+//   The order is placed when the signal bar closes, so the earliest bar that can fill it is j + 1. It then stays
+//   in force while the trend marker it belongs to lasts (see simulateOrder). Prices are that timeframe's own
+//   candle values.
 
 export const LIMIT_RULES = [
   { id: 'open', label: '下一根开盘（市价）' },
@@ -108,40 +109,20 @@ export function limitOrder(candles, j, dir, ruleId, opts = {}) {
 }
 
 // Nothing happened yet: no bar, no levels, no result.
-const NO_LEVELS = { fillIndex: null, exitIndex: null, exitPrice: null, R: null, stop: null, target: null, reason: null };
+const NO_LEVELS = { fillIndex: null, fillPrice: null, exitIndex: null, exitPrice: null, R: null, stop: null, target: null, reason: null };
 
-// Fill and outcome of an order whose limit price is `price`. Returns
-//   { status, fillIndex, exitIndex, exitPrice, R, stop, target, reason }
-// status: 'gap'      the next bar opens at or past the limit -> not counted as a fill (the open would have been
-//                    a better market entry; the user asked for it to be reported separately, 2026-11-12)
-//         'unfilled' the next bar never traded at the limit
-//         'filled'   filled and closed; `reason` is 'stop', 'target' or 'time'
-//         'open'     filled, but the candles end before the trade is over
-// `stop`/`target` are returned for the info line (they are not in the user's wording but the page shows them).
-// Stop = price - dir·k·ATR[j]; target = price + dir·r·|price - stop|. opts: { k (1), r (2), hold (48),
-// ruleId/market } — the 'open' rule is a market order, so it ignores the gap test.
-export function simulateOrder(candles, j, dir, price, opts = {}) {
-  const bars = Array.isArray(candles) ? candles : [];
-  const side = Math.sign(dir);
-  const next = candle(bars, j + 1);
-  const atr = (Array.isArray(opts.atr) ? opts.atr : atr14(bars))[j];
-  if (!side || !next || !Number.isFinite(price) || !Number.isFinite(atr)) return null;
-  const market = opts.market === true || opts.ruleId === 'open';
-  if (!market) {
-    if (Number.isFinite(next.open) && (side > 0 ? next.open <= price : next.open >= price)) return { ...NO_LEVELS, status: 'gap' };
-    const touched = side > 0 ? next.low < price : next.high > price;
-    if (!touched) return { ...NO_LEVELS, status: 'unfilled' };
-  }
+// Outcome of a trade that was filled at `price` on bar `fillIndex`, with the ATR that was known when the price
+// was set. `out` carries the order-specific fields (waitBars / gapBars / path) into every result. null when the
+// ATR cannot size a stop. Stop = price - dir·k·ATR; target = price + dir·r·(k·ATR).
+function tradeResult(bars, side, fillIndex, price, atr, opts, out) {
   const k = Math.max(0, number(opts.k, LIMIT_DEFAULTS.k));
   const r = number(opts.r, LIMIT_DEFAULTS.r);
   const hold = Math.max(1, Math.round(number(opts.hold, LIMIT_DEFAULTS.hold)));
-  // A zero ATR cannot size a stop, so the trade cannot be simulated either.
   const risk = k * atr;
   if (!(risk > 0)) return null;
   const stop = price - side * risk;
   const target = price + side * r * risk;
-  const fillIndex = j + 1;
-  const levels = { fillIndex, stop, target };
+  const levels = { ...out, fillIndex, fillPrice: price, stop, target };
   for (let index = fillIndex, held = 1; ; index++, held++) {
     const bar = candle(bars, index);
     if (!bar) return { ...levels, exitIndex: null, exitPrice: null, R: null, status: 'open', reason: 'open' };
@@ -162,9 +143,62 @@ export function simulateOrder(candles, j, dir, price, opts = {}) {
   }
 }
 
+// Where the order of a signal sat and what it did. The order is placed at the close of the signal bar and stays
+// in force until the trend marker it belongs to disappears: at every bar's close the price is re-computed with
+// the same rule (`limitOrder(candles, i, …)`), and that price is what bar i + 1 can fill. The user's example
+// (3m BTC, 2026-10-27 06:48 short at the SMA5 estimate 79639.5): the next bar's high stopped $1.3 short, and the
+// order was cancelled — although 07:06 traded through it.
+//   opts.lastIndex  index of the trend's last bar (rideSpan(candles, ride).last); defaults to the last candle
+//   opts.ended      whether the trend marker is already gone. An ended trend cancels the order at lastIndex + 1:
+//                   lastIndex closed while the trend was still there, so it keeps the order alive for that bar,
+//                   and that bar's close has no trend left. A trend still running keeps the order to the data end.
+// A bar that OPENS at or past the limit price is not a fill (the open was already a better market entry, the
+// user asked for it to be reported separately on 2026-11-12): it counts in `gapBars` and the order waits on.
+// Returns
+//   { status, fillIndex, fillPrice, exitIndex, exitPrice, R, stop, target, reason, waitBars, gapBars, path }
+// status: 'filled'   filled and closed; `reason` is 'stop', 'target' or 'time'
+//         'open'     filled, but the candles end before the trade is over
+//         'unfilled' the trend ended and no bar up to the cancel bar traded at the limit
+//         'waiting'  the data ends while the order is still in force and no bar traded at the limit
+// `waitBars` counts the bars the order waited for (a fill on bar b waited b - j bars). `path` is
+// [{ index, price }]: one entry per bar whose close set the price, so drawing index -> index+1 gives the
+// staircase the page shows. The market rule ('open', next open) has no gap test and no waiting.
+export function simulateOrder(candles, j, dir, ruleId, opts = {}) {
+  const bars = Array.isArray(candles) ? candles : [];
+  const side = Math.sign(dir);
+  if (!candle(bars, j) || !side) return null;
+  const atr = Array.isArray(opts.atr) ? opts.atr : atr14(bars);
+  const lastBar = bars.length - 1;
+  const lastIndex = Number.isInteger(opts.lastIndex) ? Math.min(opts.lastIndex, lastBar) : lastBar;
+  if (opts.market === true || ruleId === 'open') {
+    const next = candle(bars, j + 1);
+    if (!Number.isFinite(next?.open)) return null;
+    return tradeResult(bars, side, j + 1, next.open, atr[j], opts,
+      { waitBars: 1, gapBars: 0, path: [{ index: j, price: next.open }] });
+  }
+  // The order is cancelled when the trend is known to be over; an unfilled order then stops waiting.
+  const cancelBar = opts.ended === true ? lastIndex + 1 : Infinity;
+  const path = [];
+  let gapBars = 0;
+  for (let i = j, end = Math.min(cancelBar - 1, lastBar - 1); i <= end; i++) {
+    const order = limitOrder(bars, i, side, ruleId, { ...opts, atr });
+    // The rule has no price for this bar (warm-up, malformed data): there is nothing to be filled either.
+    if (!order) continue;
+    const bar = bars[i + 1], price = order.price;
+    path.push({ index: i, price });
+    if (Number.isFinite(bar.open) && (side > 0 ? bar.open <= price : bar.open >= price)) { gapBars++; continue; }
+    if (!(side > 0 ? bar.low < price : bar.high > price)) continue;
+    return tradeResult(bars, side, i + 1, price, atr[i], opts, { waitBars: i + 1 - j, gapBars, path });
+  }
+  // An ended trend whose last bar is the last candle has no cancel bar yet: the order is still alive.
+  const status = cancelBar <= lastBar ? 'unfilled' : 'waiting';
+  return { ...NO_LEVELS, status, waitBars: Math.max(0, Math.min(cancelBar, lastBar) - j), gapBars, path };
+}
+
 // Totals of a timeframe's orders. `filled` counts trades that were filled (closed or still running), because
 // the fill rate is about getting in; wins / win rate / avgR / sumR only use closed trades, so an unfinished
-// trade never inflates or dilutes them.
+// trade never inflates or dilutes them. Orders still waiting for a fill (the data ends before the trend does)
+// are left out of the fill rate: nothing has been decided for them yet, so they would only drag it down.
 export function summarize(results) {
   const list = (Array.isArray(results) ? results : []).filter(Boolean);
   const filled = list.filter(item => item.status === 'filled' || item.status === 'open').length;
@@ -172,9 +206,10 @@ export function summarize(results) {
   const wins = closed.filter(item => item.R > 0).length;
   const sumR = closed.reduce((total, item) => total + item.R, 0);
   const marks = list.length;
-  return { marks, filled, gap: list.filter(item => item.status === 'gap').length,
-    unfilled: list.filter(item => item.status === 'unfilled').length,
-    fillRate: marks ? filled / marks : 0, wins,
+  const waiting = list.filter(item => item.status === 'waiting').length;
+  const decided = marks - waiting;
+  return { marks, filled, waiting, unfilled: list.filter(item => item.status === 'unfilled').length,
+    fillRate: decided ? filled / decided : 0, wins,
     winRate: closed.length ? wins / closed.length : 0,
     avgR: closed.length ? sumR / closed.length : 0, sumR };
 }
