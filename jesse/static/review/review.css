@@ -78,6 +78,9 @@ main[hidden]{display:none}
 .label-keys{padding:3px 12px 8px;font-size:10px;line-height:1.5;color:#8996aa;border-bottom:1px solid #e0e6ef}
 .label-note{display:flex;align-items:center;gap:6px;padding:0 12px 8px}
 .label-note[hidden]{display:none}
+.label-note-show{margin:0 12px 8px;padding:5px 8px;border-radius:7px;background:#fff8e6;color:#6b5418;font-size:12px;line-height:1.45;cursor:pointer;word-break:break-all}
+.label-note-show[hidden]{display:none}
+.label-note-text{display:block;margin-top:2px;color:#9a7a20;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .label-note input{flex:1;min-width:0;border:1px solid #dce3ee;border-radius:7px;padding:5px 7px;font:inherit;font-size:12px}
 .label-note-hint{font-size:10px;line-height:1.4;color:#c73f58;max-width:52%}
 .label-marks{float:right;display:inline-flex;gap:5px;margin-left:6px}

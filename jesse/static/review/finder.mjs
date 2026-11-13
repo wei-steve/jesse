@@ -1,16 +1,16 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261113c';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261113c';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261113c';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261113c';
-import { calculateIndicator } from './indicators.mjs?v=20261113c';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261113c';
-import { LIMIT_RULES, LIMIT_DEFAULTS, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261113c';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261113c';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261113c';
-import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS } from './labels.mjs?v=20261113c';
+import { t as createChart } from './lightweight-charts.mjs?v=20261113d';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261113d';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261113d';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261113d';
+import { calculateIndicator } from './indicators.mjs?v=20261113d';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261113d';
+import { LIMIT_RULES, LIMIT_DEFAULTS, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261113d';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261113d';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261113d';
+import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS } from './labels.mjs?v=20261113d';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -533,6 +533,13 @@ function rideButton(ride) {
   const details = document.createElement('small');
   details.textContent = `${stamp(ride.start + 60)} UTC · ${ride.bars} 根${ride.ended ? '' : '（进行中）'}`;
   button.append(head, details);
+  // The note itself on the row (one line, cut with …), not only on hover: the user could not see what was written
+  // and so could not tell which notes to fix (2026-11-13).
+  if (entry.note) {
+    const note = document.createElement('small');
+    note.className = 'label-note-text'; note.textContent = `备注：${entry.note}`; note.title = entry.note;
+    button.append(note);
+  }
   button.onclick = () => selectRide(ride);
   rideButtons.set(ride, button);
   return button;
@@ -599,6 +606,7 @@ let selectedOrder = null;
 function paintTradeInfo(ride) {
   const entry = entryOf(labels, ride.key);
   const marks = MARK_KINDS.map(kind => `${KIND_TEXT[kind]}${entry[kind] === 'good' ? '✓' : entry[kind] === 'bad' ? '✗' : '—'}`).join(' ');
+  paintNoteShow(entry.note);
   $('trade-info').textContent = `${ride.tf} ${arrow(ride.dir)} ${maText(ride.periods)} · ${stampFull(ride.start + 60)} UTC 起${orderText(selectedOrder)} · 持续 ${ride.bars} 根${ride.ended ? '' : '（进行中）'}${ride.maxTouches ? ` · 最多回踩 ${ride.maxTouches} 次` : ''} · ${marks}${entry.note ? ` · 备注：${entry.note}` : ''}`;
 }
 
@@ -707,7 +715,7 @@ async function clearMarks() {
 function openNote() {
   const ride = selectedRide;
   if (!ride) { status('先选一个信号，再按 n 写备注。', true); return; }
-  $('note-row').hidden = false;
+  $('note-row').hidden = false; $('note-show').hidden = true;
   $('note-input').value = entryOf(labels, ride.key).note;
   $('note-hint').textContent = '';
   $('note-input').focus();
@@ -716,10 +724,18 @@ function openNote() {
 
 function closeNote() {
   $('note-row').hidden = true; $('note-hint').textContent = ''; $('note-input').value = '';
+  paintNoteShow(selectedRide ? entryOf(labels, selectedRide.key).note : '');
 }
 
 // Enter in the note box: the note is its own row (kind=note), so it no longer waits for a good / bad mark. An empty
 // box removes the note. Esc leaves without saving.
+// The selected signal's note above the list, always in view; a click (or n) opens it for editing.
+function paintNoteShow(note) {
+  const box = $('note-show');
+  box.hidden = !note || !$('note-row').hidden;
+  box.textContent = note ? `备注：${note}（点这里或按 n 修改）` : '';
+}
+
 async function submitNote() {
   const ride = selectedRide;
   if (!ride) { closeNote(); return; }
@@ -896,6 +912,7 @@ async function start() {
   $('note-input').onkeydown = event => {
     if (event.key === 'Enter') { event.preventDefault(); submitNote(); }
   };
+  $('note-show').onclick = openNote;
   $('finder-form').onsubmit = event => { event.preventDefault(); run(); };
   $('f-import').onclick = importLatest;
   $('f-latest').onclick = () => gotoLatest();
