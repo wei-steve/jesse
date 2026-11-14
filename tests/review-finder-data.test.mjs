@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultForm, restoreForm, localToIso, isoToLocal, clampParam, runBody, importStartDate, rideExtra } from '../jesse/static/review/finder-data.mjs';
+import { defaultForm, restoreForm, localToIso, isoToLocal, clampParam, runBody, importStartDate, rideExtra,
+  barSnapshot } from '../jesse/static/review/finder-data.mjs';
 import { buildRides, rideSeries, signalStatus } from '../jesse/static/review/rides.mjs';
 
 test('restoreForm falls back to defaults field by field', () => {
@@ -80,4 +81,34 @@ test('rideExtra writes only changes, timed at the last 1m candle of the bar, and
 test('timeframes the page does not know are skipped, empty answers give no series', () => {
   assert.deepEqual(rideExtra({ '7q': { candles: [{ time: 0 }], value: [1] } }), { ride: {}, ride_touches: {} });
   assert.deepEqual(rideExtra({ '1h': { candles: [], value: [] } }).ride, {});
+});
+
+test('barSnapshot carries the numbers of the clicked candle, computed up to it only', () => {
+  // 30 bars of a rising-then-flat series so MA, ATR and BOLL all have full windows.
+  const candles = Array.from({ length: 30 }, (_, i) => {
+    const close = 100 + i;
+    return { time: 1763000000 + i * 180, open: close - 0.5, high: close + 1, low: close - 1, close, volume: 10 };
+  });
+  const time = candles[24].time;
+  const at24 = barSnapshot(candles, time, 3);
+  // The candle's own OHLC is passed through untouched.
+  assert.deepEqual([at24.open, at24.high, at24.low, at24.close], [123.5, 125, 123, 124]);
+  // MA5 / MA10 of closes ending at bar 24 (120, 121, 122, 123, 124 / 115 … 124).
+  assert.equal(at24.ma5, 122);
+  assert.equal(at24.ma10, 119.5);
+  // BOLL(20, 2) over bars 5..24: mid 114.5, the closes step by 1 so the population sd is sqrt((20²-1)/12).
+  const sd = Math.sqrt((20 * 20 - 1) / 12);
+  assert.equal(at24.bollMid, 114.5);
+  assert.equal(at24.bollUpper, Math.round((114.5 + 2 * sd) * 1e6) / 1e6);
+  assert.equal(at24.bollLower, Math.round((114.5 - 2 * sd) * 1e6) / 1e6);
+  // ATR(14) is the Wilder average of the true ranges: every range here is 2, so it is 2 once warmed up.
+  assert.equal(at24.atr, 2);
+  // A bar whose windows are not complete yet has nulls, not invented numbers.
+  const early = barSnapshot(candles, candles[2].time, 3);
+  assert.deepEqual([early.ma5, early.ma10, early.atr, early.bollMid, early.bollUpper], [null, null, null, null, null]);
+  // A time that is not a candle of this series gives nothing to note (the page opens no box for it).
+  assert.equal(barSnapshot(candles, 1763000000 + 1, 3), null);
+  assert.equal(barSnapshot(undefined, 1763000000, 3), null);
+  // The ATR needs a previous bar: the first bar has none.
+  assert.equal(barSnapshot(candles, candles[0].time, 3).atr, null);
 });

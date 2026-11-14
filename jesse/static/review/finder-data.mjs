@@ -1,8 +1,9 @@
 // Pure helpers of the factor finder page (finder.mjs): request building, saved form, and turning the
 // `/factors/run` answer into the same step series the signal mode of the review page uses (rides.mjs).
 // Nothing here knows what a factor does; the page only draws the numbers the factor file returns.
-import { timeframeMinutes } from './settings.mjs?v=20261113i';
-import { LIMIT_RULES, LIMIT_DEFAULTS } from './limit-rules.mjs?v=20261113i';
+import { timeframeMinutes } from './settings.mjs?v=20261114a';
+import { LIMIT_RULES, LIMIT_DEFAULTS, atr14 } from './limit-rules.mjs?v=20261114a';
+import { sma } from './data.mjs?v=20261114a';
 
 export const FORM_KEY = 'jesse.finder.form.v1';
 export const RECENT_DAYS = [1, 3, 7, 14, 30, 90, 180, 365];
@@ -113,3 +114,30 @@ export const latestStatusTime = result => result.last_candle_time;
 
 // Import polling: 'running' keeps waiting; anything else ends.
 export const importDone = status => status?.status !== 'running';
+
+// Six decimals: price levels like 64010.2 are exact enough for reading, and a float sum never writes 64010.199999.
+const round6 = value => (Number.isFinite(value) ? Math.round(value * 1e6) / 1e6 : null);
+
+// The numbers a candle note carries (the page double-clicks a bar, the reader of the label file sees these): OHLC,
+// MA5, MA10, ATR(14) and BOLL(20, 2) as of that bar only, so the note still explains itself after the chart moved on.
+// Conventions match the review page: Wilder ATR (the one the limit orders use) and the population standard deviation
+// for BOLL. A field whose window is not complete is null, never a made-up number, and a time that is not one of the
+// candles gives null (nothing to note).
+export function barSnapshot(candles, time, interval = 1) {
+  const bars = Array.isArray(candles) ? candles : [];
+  const index = bars.findIndex(candle => candle.time === time);
+  if (index < 0) return null;
+  const candle = bars[index];
+  const smaAt = period => {
+    // Over the full series (gaps reset the window, as in the chart), then the last value at or before this bar.
+    const point = sma(bars, period, interval).filter(p => p.time <= time).at(-1);
+    return point?.time === time ? round6(point.value) : null;
+  };
+  const window = bars.slice(Math.max(0, index - 19), index + 1).map(bar => bar.close);
+  const mid = window.length === 20 ? window.reduce((total, close) => total + close, 0) / 20 : null;
+  const sd = mid === null ? null : Math.sqrt(window.reduce((total, close) => total + (close - mid) ** 2, 0) / 20);
+  return { open: candle.open, high: candle.high, low: candle.low, close: candle.close,
+    ma5: smaAt(5), ma10: smaAt(10), atr: round6(atr14(bars)[index]),
+    bollUpper: sd === null ? null : round6(mid + 2 * sd), bollMid: mid === null ? null : round6(mid),
+    bollLower: sd === null ? null : round6(mid - 2 * sd) };
+}
