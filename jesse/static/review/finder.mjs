@@ -1,17 +1,17 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261114a';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261114a';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261114a';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261114a';
-import { calculateIndicator } from './indicators.mjs?v=20261114a';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261114a';
-import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261114a';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone, barSnapshot } from './finder-data.mjs?v=20261114a';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261114a';
+import { t as createChart } from './lightweight-charts.mjs?v=20261114b';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261114b';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261114b';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261114b';
+import { calculateIndicator } from './indicators.mjs?v=20261114b';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261114b';
+import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261114b';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone, barSnapshot } from './finder-data.mjs?v=20261114b';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261114b';
 import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS,
-  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261114a';
+  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261114b';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -735,6 +735,14 @@ function refreshRideRow(ride) {
 async function markSelected(kind, label) {
   const ride = selectedRide;
   if (!ride) { status('先选一个信号（← → 或 k j），再按 g / b / f / v。', true); return; }
+  // The same key again undoes that one mark and stays on the signal (2026-11-14: the user pressed the wrong key
+  // and 0 would have dropped the other mark too).
+  if (entryOf(labels, ride.key)[kind] === label) {
+    try { await saveLabel(ride, kind, 'clear'); }
+    catch (error) { status(error.message, true); return; }
+    status(`已取消${KIND_TEXT[kind]}标注：${ride.tf} ${stamp(ride.start + 60)} UTC`);
+    return;
+  }
   try { await saveLabel(ride, kind, label); }
   catch (error) { status(error.message, true); return; }
   const what = `${KIND_TEXT[kind]}${label === 'good' ? '好' : '坏'}`;
