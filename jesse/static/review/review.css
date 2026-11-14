@@ -87,3 +87,15 @@ main[hidden]{display:none}
 .label-mark{font-weight:700}
 .label-mark.good{color:#008268}
 .label-mark.bad{color:#c73f58}
+
+/* Candle notes (labels.mjs / `kind=bar` rows): the 「注」 square on a noted candle, the one-line box that a
+   double-click opens at the top of a card, the hint line above the list and the full note in the status bar. */
+.bar-note-row{display:flex;align-items:center;gap:6px;padding:0 12px 7px}
+.bar-note-row[hidden]{display:none}
+.bar-note-title{font-size:11px;font-weight:600;color:#5b3fb0;white-space:nowrap}
+.bar-note-row input{flex:1;min-width:0;border:1px solid #b89af0;border-radius:7px;padding:5px 7px;font:inherit;font-size:12px}
+.bar-note-row input:focus{outline:2px solid #7c3aed;outline-offset:0}
+.bar-note-hint{font-size:10px;line-height:1.4;color:#c73f58;max-width:40%}
+.bar-note-help{padding:0 12px 6px;font-size:10px;line-height:1.5;color:#8996aa}
+.signal-bar .bar-note{flex-basis:100%;font-size:12px;color:#5b3fb0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.signal-bar .bar-note[hidden]{display:none}

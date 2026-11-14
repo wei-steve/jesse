@@ -150,13 +150,21 @@ def compute(candles_by_tf: dict, params: dict) -> dict:
 - `n`：打开一行备注输入框（页面内的，不用 `prompt`）。回车存成 `kind=note` 的一行，不要求先标好 / 坏；空着回车就是删掉这个备注；`Esc` 关掉输入框不保存。
 - 列表每项右侧显示 `势✓` / `势✗` 和 `挂✓` / `挂✗`（没标的不显示），有备注时鼠标悬停显示备注；列表上方是「趋势 好 x / 坏 y · 挂单 好 x / 坏 y · 未标 z」统计（未标 = 两项都没标）、全部 / 未标 / 趋势坏 / 挂单坏 / 都好 筛选和一行快捷键说明。统计只按周期筛选算，不跟着标注筛选变。选中信号的信息栏也显示当前两项标注和备注。
 
-**文件格式**：一行一条 JSON，只追加、不改旧行。字段：`key`（`factor|exchange|symbol|tf|start|dir`，前端在 `labels.mjs` 拼）、`kind`（`trend` / `order` / `note`；缺省 = `trend`，所以旧行就是趋势标注）、`label`（`good` / `bad` / `clear`；`kind=note` 的行没有这个字段）、`note`、`factor`、`version`、`params`（这次实际用的因子参数）、`exchange`、`symbol`、`tf`、`start`（区间开始，UTC 秒）、`dir`（1 / -1）、`order`（当时页面上的挂单：算法 `rule`、挂单价 `price`、状态 `status`（`filled` / `open` / `unfilled` / `waiting`）、等了几根 `waitBars`、成交价 `fillPrice`、止损 `stop`、止盈 `target`、结果 `R`）、`saved_at`（UTC ISO）。
+**文件格式**：一行一条 JSON，只追加、不改旧行。字段：`key`（`factor|exchange|symbol|tf|start|dir`，前端在 `labels.mjs` 拼）、`kind`（`trend` / `order` / `note` / `bar`；缺省 = `trend`，所以旧行就是趋势标注）、`label`（`good` / `bad` / `clear`；`kind=note` 的行没有这个字段）、`note`、`factor`、`version`、`params`（这次实际用的因子参数）、`exchange`、`symbol`、`tf`、`start`（区间开始，UTC 秒）、`dir`（1 / -1）、`order`（当时页面上的挂单：算法 `rule`、挂单价 `price`、状态 `status`（`filled` / `open` / `unfilled` / `waiting`）、等了几根 `waitBars`、成交价 `fillPrice`、止损 `stop`、止盈 `target`、结果 `R`）、`saved_at`（UTC ISO）。
 
-读法：同一个 `key`、同一个 `kind` 取**最后一条**，`clear` 表示取消这一项标注（这项变成空）；备注取该 key 最后一条带备注的行、或最后一条 `kind=note` 的行（`kind=note` 且备注为空 = 删掉备注）。三项全空的 key 不返回。页面用 `POST /review/labels {factor, exchange, symbol}` 拿回 `{ labels: { key: { trend, order, note } } }`，接口做的就是这件事；也可以直接读文件。`key` 上限 200 字符，一条记录序列化后超过 8 KB 返回 413，备注超过 500 字符会截断（不丢标注）。
+读法：同一个 `key`、同一个 `kind` 取**最后一条**，`clear` 表示取消这一项标注（这项变成空）；备注取该 key 最后一条带备注的行、或最后一条 `kind=note` 的行（`kind=note` 且备注为空 = 删掉备注）。三项全空的 key 不返回。页面用 `POST /review/labels {factor, exchange, symbol}` 拿回 `{ labels: { key: { trend, order, note } }, bars: { key: { note, tf, time } } }`（`bars` 见下面的 K 线备注），接口做的就是这件事；也可以直接读文件。`key` 上限 200 字符，一条记录序列化后超过 8 KB 返回 413，备注超过 500 字符会截断（不丢标注）。
 
 **接口**：`POST /review/label`（写一条，`{ok: true}`；`kind` 不是 trend/order/note 返回 400，trend/order 的 `label` 不是 good/bad/clear 也返回 400，`kind=note` 可以不带 `label`）和 `POST /review/labels`（读当前两项标注和备注，文件不存在返回空），都在 `jesse/controllers/review_controller.py`，与截图接口同一个 router、同样需要登录。
 
-**测试**：`tests/review-labels.test.mjs`（`labels.mjs` 的 `labelKey` / `labelCounts` / `countsText` / `latestLabels` / `filterByLabel`）、`tests/test_review_labels.py`（写入、kind 缺省为 trend、order 与 trend 互不覆盖、备注单独存 / 清、clear、非法 kind 和 label、旧行兼容、超长 413、按 factor/symbol 过滤）。
+**K 线备注**（任意周期图上的任意一根 K 线，不只信号）
+
+- **双击**任意周期图的 K 线（不要双击价格轴 / 时间轴或最后一根之后的空白，那里没有 K 线，什么也不弹）→ 在该卡片顶部弹出输入框，标题如「10-27 08:36 UTC · 3m 这根 K 线的看法」，这根 K 线已有备注就预填。回车保存，`Esc` 取消，清空后回车 = 删除这条备注。单击行为保持不变；输入框打开时快捷键都不响应。
+- 保存时页面把当时屏幕上的数据一起写进同一行：`bar`（`open` / `high` / `low` / `close` / `ma5` / `ma10` / `atr`（ATR(14)，Wilder 平滑）/ `bollUpper` / `bollMid` / `bollLower`（BOLL 20/2，总体标准差），都只用这根及之前的 K 线算）、`factor` / `version` / `params`（当前因子）、`tf`、`time`（这根 K 线的开盘时间，UTC 秒）、`signal`（当时选中的信号 `key`，没选就没有这个字段），所以以后看图也能知道当时在说什么。
+- 存储：同一份 `storage/labels/finder-labels.jsonl`，一行 `kind=bar`，`key` 为 `bar|exchange|symbol|tf|time`（前端 `labels.mjs` 的 `barKey`；周期在 key 里，所以 3m 的备注不会跑到同一时刻的 15m K 线上），只有 `note` 文字（与 `kind=note` 一样不需要 `label`）；空 `note` 的一行就是删除。读法和其他行一样：每个 key 取最后一条，空 `note` 不返回。
+- `POST /review/labels` 的答案变成 `{labels: {...}, bars: {key: {note, tf, time}}}`：`bars` 只按 `exchange` / `symbol` 过滤（K 线备注与因子无关，切因子照样显示），`labels` 里不会混入 `bar` 行，旧字段和行为不变。
+- 有备注的 K 线在**它自己的周期图**上画一个紫色方块「注」（`#7c3aed`，`aboveBar`）：和信号标记一起交给 `setMarkers`，选中信号的高亮 / 入场平仓标记都不受影响；鼠标悬停到那根 K 线时，状态条下面显示完整备注。列表上方多一行小字提示「双击图上任意 K 线可写看法」。
+
+**测试**：`tests/review-labels.test.mjs`（`labels.mjs` 的 `labelKey` / `labelCounts` / `countsText` / `latestLabels` / `filterByLabel` / `barKey` / `latestBars` / `barNoteOf` / `barLabel` / `barMarkers`）、`tests/test_review_labels.py`（写入、kind 缺省为 trend、order 与 trend 互不覆盖、备注单独存 / 清、clear、非法 kind 和 label、旧行兼容、超长 413、按 factor/symbol 过滤；K 线备注的存 / 改 / 删、不混入 labels、按品种和周期过滤、手写行从 key 读回 tf / time）。
 
 ## 截图与标注
 

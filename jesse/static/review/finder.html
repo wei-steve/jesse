@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>因子查找器 · Jesse</title>
   <link rel="icon" href="/favicon.ico">
-  <link rel="stylesheet" href="./review.css?v=20261113i">
+  <link rel="stylesheet" href="./review.css?v=20261114a">
 </head>
 <body class="signal-mode finder">
   <header>
@@ -66,6 +66,7 @@
         <span id="label-filter" class="label-filter" aria-label="按标注过滤"></span>
       </div>
       <p class="label-keys">快捷键：g/b 趋势好坏 · f/v 挂单好坏 · 0 清除 · n 备注 · ←→ 翻页</p>
+      <p class="bar-note-help">双击图上任意 K 线可写看法</p>
       <div id="note-show" class="label-note-show" role="button" tabindex="0" hidden></div>
       <div id="note-row" class="label-note" hidden>
         <input id="note-input" maxlength="500" aria-label="这个信号的备注" placeholder="备注，回车保存">
@@ -75,7 +76,7 @@
     </aside>
     <section class="review">
       <section class="selection" aria-label="当前状态">
-        <div id="signal-bar" class="signal-bar" role="status"><strong id="signal-text"></strong><span id="signal-advice"></span></div>
+        <div id="signal-bar" class="signal-bar" role="status"><strong id="signal-text"></strong><span id="signal-advice"></span><span id="bar-note" class="bar-note" hidden></span></div>
         <div id="trade-info"></div>
         <div id="condition" class="finder-condition"><strong id="condition-params"></strong><span id="condition-text"></span></div>
         <div id="limit-summary" class="finder-limit-summary"></div>
@@ -87,7 +88,7 @@
   <script type="module">
     // REVIEW_VERSION: change it (and every "?v=" in the .mjs imports and the stylesheet link) whenever
     // any file in this folder changes. tests/review-version.test.mjs checks that they all match.
-    const REVIEW_VERSION = '20261113i';
+    const REVIEW_VERSION = '20261114a';
     import(`./finder.mjs?v=${REVIEW_VERSION}`).catch(error => {
       const status = document.getElementById('status');
       status.hidden = false; status.classList.add('error'); status.textContent = `查找器脚本加载失败：${error.message}`;

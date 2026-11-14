@@ -45,7 +45,10 @@ MAX_RECORD_BYTES = 8 * 1024
 # file, so the reason a signal is bad stays distinguishable. Rows written before the split have no `kind` and are
 # trend marks.
 LABEL_VALUES = ('good', 'bad', 'clear')
-LABEL_KINDS = ('trend', 'order', 'note')
+# `bar` is a note on one candle of any timeframe (not on a signal): the page double-clicks a chart and sends the
+# candle it landed on. Its key is `bar|exchange|symbol|tf|time`, built by the page (labels.mjs) like the signal keys,
+# so the timeframe is part of the identity and a 3m note can never land on the 15m candle of the same clock time.
+LABEL_KINDS = ('trend', 'order', 'note', 'bar')
 DEFAULT_LABEL_KIND = 'trend'
 
 
@@ -127,6 +130,13 @@ class LabelRequestJson(BaseModel):
     dir: Optional[int] = None
     note: Optional[str] = None
     order: Optional[dict] = None
+    # kind=bar only: the candle's open time (seconds) and the numbers the page computed for it (o/h/l/c, MA5, MA10,
+    # ATR, BOLL 20/2), so the note explains itself long after the chart has moved on.
+    time: Optional[Union[int, float]] = None
+    bar: Optional[dict] = None
+    # kind=bar only: the signal that was selected while the candle was noted (`factor|exchange|symbol|tf|start|dir`),
+    # so the reader knows which signal the person was looking at.
+    signal: Optional[str] = None
 
 
 class LabelsRequestJson(BaseModel):
@@ -168,12 +178,12 @@ def read_label_rows(path: str) -> list:
 
 @router.post('/label')
 def save_label(request_json: LabelRequestJson) -> JSONResponse:
-    """Append one mark (kind trend / order, good / bad / clear) or one note to the project's label file."""
+    """Append one mark (kind trend / order, good / bad / clear), one note, or one candle note to the label file."""
     kind = (request_json.kind or DEFAULT_LABEL_KIND).strip()
     if kind not in LABEL_KINDS:
         return JSONResponse({'error': 'kind 只能是 ' + ' / '.join(LABEL_KINDS)}, status_code=400)
-    # A note row needs no good / bad; a trend or order row is nothing without its label.
-    if kind != 'note' and request_json.label not in LABEL_VALUES:
+    # A note / bar row needs no good / bad; a trend or order row is nothing without its label.
+    if kind not in ('note', 'bar') and request_json.label not in LABEL_VALUES:
         return JSONResponse({'error': 'label 只能是 ' + ' / '.join(LABEL_VALUES)}, status_code=400)
     key = request_json.key.strip()
     if not key:
@@ -187,8 +197,8 @@ def save_label(request_json: LabelRequestJson) -> JSONResponse:
     # A note is trimmed and capped instead of rejected: losing the tail of one line of text is better than losing
     # the mark the user just made. The note is its own mark now (kind=note), so clearing a good / bad leaves it.
     note = (request_json.note or '').strip()[:MAX_LABEL_NOTE]
-    if kind == 'note':
-        # Only the text: a note row is not a mark, and an empty note is the explicit "clear the note" row.
+    if kind in ('note', 'bar'):
+        # Only the text: a note row (signal or candle) is not a mark, and an empty note is the explicit "clear it" row.
         record.pop('label', None)
         record['note'] = note
     elif note:
@@ -209,11 +219,38 @@ def save_label(request_json: LabelRequestJson) -> JSONResponse:
     return JSONResponse({'ok': True})
 
 
+def bar_entry(row: dict) -> dict:
+    """`{note, tf, time}` of one `kind=bar` row. The key (`bar|exchange|symbol|tf|time`) is the identity, so a
+    hand-edited line without its own `tf` / `time` still lands on the candle it names."""
+    parts = row['key'].split('|')
+    tf = row.get('tf') if isinstance(row.get('tf'), str) else (parts[3] if len(parts) == 5 else None)
+    time = row.get('time')
+    if not isinstance(time, (int, float)) or isinstance(time, bool):
+        try:
+            time = int(parts[4]) if len(parts) == 5 else None
+        except ValueError:
+            time = None
+    return {'note': row.get('note') or '', 'tf': tf, 'time': time}
+
+
 @router.post('/labels')
 def get_labels(request_json: LabelsRequestJson) -> JSONResponse:
-    """Every signal's two marks and its note, as the last row of each kind per key."""
+    """Every signal's two marks and its note, plus the note on every noted candle, as the last row per key."""
     latest = {}
+    bars = {}
     for row in read_label_rows(labels_path()):
+        if label_kind(row) == 'bar':
+            # A candle note belongs to the chart, not to a factor run: only exchange + symbol narrow it, and the key
+            # already carries the timeframe and the candle time. An empty note is the "deleted" row, so it drops out.
+            if any(wanted is not None and row.get(field) != wanted
+                   for field, wanted in (('exchange', request_json.exchange), ('symbol', request_json.symbol))):
+                continue
+            entry = bar_entry(row)
+            if entry['note']:
+                bars[row['key']] = entry
+            else:
+                bars.pop(row['key'], None)
+            continue
         if any(wanted is not None and row.get(field) != wanted
                for field, wanted in (('factor', request_json.factor), ('exchange', request_json.exchange),
                                      ('symbol', request_json.symbol))):
@@ -235,4 +272,4 @@ def get_labels(request_json: LabelsRequestJson) -> JSONResponse:
             entry['note'] = row['note']
     labels = {key: entry for key, entry in latest.items()
               if entry['trend'] or entry['order'] or entry['note']}
-    return JSONResponse({'labels': labels})
+    return JSONResponse({'labels': labels, 'bars': bars})

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { labelKey, labelCounts, markOf, noteOf, entryOf, latestLabels, filterByLabel, countsText,
-  LABEL_FILTERS, MARK_TEXT } from '../jesse/static/review/labels.mjs';
+  LABEL_FILTERS, MARK_TEXT, barKey, barNoteOf, barLabel, barMarkers, latestBars,
+  BAR_NOTE_COLOR } from '../jesse/static/review/labels.mjs';
 
 const form = { factor: 'ma_pullback', exchange: 'Binance Perpetual Futures', symbol: 'BTC-USDT' };
 const ride = { tf: '15m', start: 1763000000, dir: -1 };
@@ -115,4 +116,71 @@ test('filterByLabel narrows the list to the chosen mark', () => {
   // The ids the buttons use all exist, and an unknown filter shows everything.
   assert.deepEqual(LABEL_FILTERS.map(([id]) => id), ['all', 'unlabeled', 'trendBad', 'orderBad', 'bothGood']);
   assert.deepEqual(tfs('nonsense'), ['15m', '5m', '3m', '1m']);
+});
+
+// ---- Candle notes -----------------------------------------------------------
+// A note on one candle of one timeframe, stored as a `kind=bar` row and answered by POST /review/labels in `bars`.
+const barForm = { exchange: 'Binance Perpetual Futures', symbol: 'BTC-USDT' };
+const barKeyOf = (tf, time) => barKey(barForm, tf, time);
+
+test('barKey is bar|exchange|symbol|tf|time', () => {
+  assert.equal(barKey(barForm, '3m', 1763000000), 'bar|Binance Perpetual Futures|BTC-USDT|3m|1763000000');
+  // The timeframe is part of the identity: the same clock time is another candle on another chart.
+  assert.notEqual(barKey(barForm, '15m', 1763000000), barKey(barForm, '3m', 1763000000));
+  assert.notEqual(barKey({ ...barForm, symbol: 'ETH-USDT' }, '3m', 1763000000), barKey(barForm, '3m', 1763000000));
+  assert.notEqual(barKey(barForm, '3m', 1763000180), barKey(barForm, '3m', 1763000000));
+  // Missing pieces still give a stable key instead of throwing.
+  assert.equal(barKey({}, undefined, undefined), 'bar||||');
+});
+
+test('latestBars mirrors the server: last row per candle wins, an empty note deletes it', () => {
+  const key = barKeyOf('3m', 1763000000);
+  const other = barKeyOf('15m', 1763000000);
+  const rows = [
+    { key, kind: 'bar', note: '第一版', tf: '3m', time: 1763000000 },
+    { key, kind: 'bar', note: '改过', tf: '3m', time: 1763000000 },
+    { key: other, kind: 'bar', note: '15m 的看法', tf: '15m', time: 1763000000 },
+    // Signal marks in the same file are not candle notes.
+    { key: 'ma_pullback|Binance Perpetual Futures|BTC-USDT|15m|1763000000|-1', kind: 'trend', label: 'good' },
+    { key: 'ma_pullback|Binance Perpetual Futures|BTC-USDT|15m|1763000000|-1', kind: 'note', note: '信号的备注' },
+    // A hand-edited line without a key, and a deleted candle note (empty text) that must not come back.
+    { kind: 'bar', note: '没有 key' },
+    { key: key, kind: 'bar', note: '' },
+  ];
+  assert.deepEqual([...latestBars(rows)], [[other, { note: '15m 的看法', tf: '15m', time: 1763000000 }]]);
+  assert.deepEqual([...latestBars(undefined)], []);
+});
+
+test('barNoteOf / barLabel read one candle and stamp its title', () => {
+  const key = barKeyOf('3m', 1763000000);
+  const bars = { [key]: { note: '这里放量', tf: '3m', time: 1763000000 } };
+  assert.equal(barNoteOf(bars, key), '这里放量');
+  // A Map of the same shape, a key that was never noted, a deleted note, nothing at all: '' and no null check.
+  assert.equal(barNoteOf(new Map([[key, { note: '来自 Map', tf: '3m', time: 1763000000 }]]), key), '来自 Map');
+  assert.equal(barNoteOf(bars, barKeyOf('15m', 1763000000)), '');
+  assert.equal(barNoteOf(bars, ''), '');
+  assert.equal(barNoteOf(null, key), '');
+  // 1763000000 = 2026-11-13 02:13:20 UTC; the title keeps minutes and adds the timeframe.
+  assert.equal(barLabel(1763000000, '3m'), '11-13 02:13 UTC · 3m');
+});
+
+test('barMarkers draws only the notes of this chart\'s timeframe, inside the range', () => {
+  const bars = {
+    [barKeyOf('3m', 1763000000)]: { note: '3m 的', tf: '3m', time: 1763000000 },
+    [barKeyOf('3m', 1763000180)]: { note: '3m 另一根', tf: '3m', time: 1763000180 },
+    [barKeyOf('15m', 1763000000)]: { note: '15m 的', tf: '15m', time: 1763000000 },
+  };
+  const inRange = time => time === 1763000000;
+  assert.deepEqual(barMarkers(bars, '3m', inRange), [
+    { bar: true, time: 1763000000, position: 'aboveBar', shape: 'square', color: '#7c3aed', text: '注' },
+  ]);
+  // Without a range filter (a chart with every candle) both 3m notes appear, still none of the 15m one.
+  assert.deepEqual(barMarkers(bars, '3m').map(marker => marker.time), [1763000000, 1763000180]);
+  // Another chart never inherits them, and an empty / missing answer draws nothing.
+  assert.deepEqual(barMarkers(bars, '15m').map(marker => marker.time), [1763000000]);
+  assert.deepEqual(barMarkers({}, '3m'), []);
+  // A Map works too, and a note with no text (deleted) is never drawn.
+  assert.equal(barMarkers(new Map([[barKeyOf('1h', 1763000000), { note: '1h 的', tf: '1h', time: 1763000000 }]]), '1h').length, 1);
+  assert.deepEqual(barMarkers({ [barKeyOf('3m', 1763000000)]: { note: '', tf: '3m', time: 1763000000 } }, '3m'), []);
+  assert.equal(BAR_NOTE_COLOR, '#7c3aed');
 });

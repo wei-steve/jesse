@@ -12,6 +12,16 @@ export const MARK_TEXT = {
 };
 export const KIND_TEXT = { trend: '趋势', order: '挂单' };
 
+// A note on one candle of any timeframe (not on a signal). The timeframe is part of the key because the same clock
+// time is a different candle on another timeframe: a 3m note must never land on the 15m bar. The page sends this
+// key, the backend stores it, and `bar|exchange|symbol|tf|time` is what POST /review/labels groups by.
+export const barKey = (form, tf, time) => ['bar', form?.exchange, form?.symbol, tf, time].join('|');
+
+// How a noted candle looks on the chart: a purple square above the bar with 「注」. Purple is used by nothing else
+// on these charts (entries are dark green/red, the selected signal amber), so a note cannot be mistaken for a signal.
+export const BAR_NOTE_COLOR = '#7c3aed';
+export const BAR_NOTE_TEXT = '注';
+
 // The identity of one signal: `factor|exchange|symbol|tf|start|dir`, the format the backend documents. Two marks
 // of "the same signal" must land on the same key; another factor, exchange or symbol must not inherit the marks.
 export const labelKey = (form, ride) =>
@@ -98,4 +108,48 @@ export function filterByLabel(rides, labels, label, keyOf = ride => ride.key) {
   const passes = PASSES[label];
   if (!passes) return rides;
   return rides.filter(ride => passes(entryOf(labels, keyOf(ride))));
+}
+
+// ---- Candle notes -----------------------------------------------------------
+// `kind=bar` rows of the same file: the note on one candle of one timeframe. The backend answers them as
+// `bars: { key: { note, tf, time } }`, separate from the signal marks, and the page draws a marker per noted candle
+// on its own timeframe's chart.
+
+// Rows of the label file (oldest first) → Map of key → { note, tf, time }, the same answer POST /review/labels gives
+// in `bars`. The last row of a key wins and an empty note is the deleted note (it does not come back).
+export function latestBars(rows) {
+  const latest = new Map();
+  for (const row of rows ?? []) {
+    if (row?.kind !== 'bar' || !row.key) continue;
+    const note = row.note ?? '';
+    if (note) latest.set(row.key, { note, tf: row.tf ?? null, time: row.time ?? null });
+    else latest.delete(row.key);
+  }
+  return latest;
+}
+
+const barEntryOf = (bars, key) => {
+  if (!bars || !key) return null;
+  return (bars instanceof Map ? bars.get(key) : bars[key]) ?? null;
+};
+
+// The note written on that candle, '' when there is none (or when it was deleted).
+export const barNoteOf = (bars, key) => barEntryOf(bars, key)?.note ?? '';
+
+// The title of the note box: `10-27 08:36 UTC · 3m`, the same stamp the list uses, plus the timeframe.
+export const barLabel = (time, tf) =>
+  `${new Date(time * 1000).toISOString().replace('T', ' ').slice(5, 16)} UTC · ${tf}`;
+
+// The purple 「注」 squares for one chart: only notes of that chart's own timeframe whose candle is inside the drawn
+// range (`has(time)`), so a 3m note is not drawn on the 15m chart and a note outside the range draws nothing.
+export function barMarkers(bars, tf, has = () => true) {
+  const entries = bars instanceof Map ? bars.values() : Object.values(bars ?? {});
+  const markers = [];
+  for (const entry of entries) {
+    if (!entry?.note || entry.tf !== tf) continue;
+    const time = Number(entry.time);
+    if (!Number.isFinite(time) || !has(time)) continue;
+    markers.push({ bar: true, time, position: 'aboveBar', shape: 'square', color: BAR_NOTE_COLOR, text: BAR_NOTE_TEXT });
+  }
+  return markers.sort((a, b) => a.time - b.time);
 }
