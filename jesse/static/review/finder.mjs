@@ -1,16 +1,16 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261113h';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261113h';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261113h';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261113h';
-import { calculateIndicator } from './indicators.mjs?v=20261113h';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261113h';
-import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261113h';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261113h';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261113h';
-import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS } from './labels.mjs?v=20261113h';
+import { t as createChart } from './lightweight-charts.mjs?v=20261113i';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261113i';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261113i';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261113i';
+import { calculateIndicator } from './indicators.mjs?v=20261113i';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261113i';
+import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261113i';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone } from './finder-data.mjs?v=20261113i';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261113i';
+import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS } from './labels.mjs?v=20261113i';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -360,7 +360,7 @@ function addRides(panel) {
   }
   const levelData = joinRideLines(levels, { up: UP_ENTRY, down: DOWN_ENTRY });
   if (levelData.length) {
-    const line = panel.chart.addLineSeries({ color: UP_ENTRY, lineWidth: 3, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+    const line = panel.chart.addLineSeries({ color: UP_ENTRY, lineWidth: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
     line.setData(levelData);
   }
   const untradedData = joinRideLines(untraded, { up: GREY, down: GREY });
@@ -823,22 +823,54 @@ function selectRide(ride, focus = true) {
     panel.orderLines = [];
     if (panel.interval !== ride.minutes || !panel.candles?.length) continue;
     order = orderOf(ride);
-    if (order?.price != null) panel.limitLine = panel.series.createPriceLine({ price: order.price, color: ride.dir > 0 ? UP_ENTRY : DOWN_ENTRY,
-      lineWidth: 1, lineStyle: 2, axisLabelVisible: true,
+    if (order?.price != null) panel.limitLine = panel.series.createPriceLine({ price: order.price, color: CHOSEN,
+      lineWidth: 1, lineStyle: 2, lineVisible: false, axisLabelVisible: true,
       // Filled orders show their entry price; only an order that never traded is still a 挂单.
       title: order.sim?.status === 'filled' || order.sim?.status === 'open' ? '入场' : '挂单（未成交）' });
     // Stop and target of a traded order, so all three prices can be read off the scale.
     if (order?.sim && (order.sim.status === 'filled' || order.sim.status === 'open')) {
       for (const [price, color, title] of [[order.sim.stop, DOWN, '止损'], [order.sim.target, UP, '止盈']]) {
-        if (Number.isFinite(price)) panel.orderLines.push(panel.series.createPriceLine({ price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title }));
+        if (Number.isFinite(price)) panel.orderLines.push(panel.series.createPriceLine({ price, color, lineWidth: 1, lineStyle: 2, lineVisible: false, axisLabelVisible: true, title }));
       }
     }
   }
   selectedOrder = order;
-  for (const panel of panels) paintMarkers(panel);
+  for (const panel of panels) { paintMarkers(panel); drawChosen(panel, panel.interval === ride.minutes ? order : null); }
   paintTradeInfo(ride);
   paintSignalBar(statusTime); updateNav();
   if (focus) showRange(centeredRange(ride.start, Number($('f-window').value)), true, 0.75);
+}
+
+// The selected signal's own three prices, drawn only over the bars they apply to (2026-11-13: with every
+// signal's levels on the chart, and the axis price lines running across the whole width, the user could not tell
+// which line was the order and which the stop). Amber: dashed while the order waits, thick once it is filled, to the
+// exit. Red solid: its stop. Green solid: its target. The axis keeps the 入场 / 止损 / 止盈 labels (no full-width line).
+function drawChosen(panel, order) {
+  for (const series of panel.chosenSeries ?? []) { try { panel.chart.removeSeries(series); } catch { /* chart rebuilt */ } }
+  panel.chosenSeries = [];
+  const sim = order?.sim;
+  if (!sim?.path?.length || !panel.candles?.length) return;
+  const last = panel.candles.length - 1;
+  const at = index => panel.candles[Math.min(index, last)].time;
+  const add = (points, options) => {
+    const data = [];
+    for (const point of points) if (!data.length || point.time > data.at(-1).time) data.push(point);
+    if (!data.length) return;
+    const series = panel.chart.addLineSeries({ lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false, ...options });
+    series.setData(data); panel.chosenSeries.push(series);
+  };
+  const traded = sim.status === 'filled' || sim.status === 'open';
+  // Waiting: the order's price at each close, up to the fill (or to the cancel / last bar).
+  const waitEnd = traded ? sim.fillIndex : sim.status === 'waiting' ? last : sim.path.at(-1).index + 1;
+  const wait = sim.path.filter(point => point.index <= Math.min(waitEnd, last)).map(point => ({ time: at(point.index), value: point.price }));
+  if (wait.length && waitEnd > sim.path.at(-1).index) wait.push({ time: at(waitEnd), value: sim.path.at(-1).price });
+  add(wait, { color: CHOSEN, lineWidth: 2, lineStyle: 2 });
+  if (!traded) return;
+  const end = sim.status === 'filled' ? sim.exitIndex : last;
+  const span = value => [{ time: at(sim.fillIndex), value }, { time: at(end), value }];
+  add(span(sim.fillPrice), { color: CHOSEN, lineWidth: 4 });
+  if (Number.isFinite(sim.stop)) add(span(sim.stop), { color: DOWN, lineWidth: 2 });
+  if (Number.isFinite(sim.target)) add(span(sim.target), { color: UP, lineWidth: 2 });
 }
 
 // The newest state: the newest 1m candle is the "now" of the status bar and every chart shows its right edge.
@@ -847,7 +879,7 @@ function gotoLatest(keepSpan = true) {
   if (selectedRide) rideButtons.get(selectedRide)?.setAttribute('aria-pressed', 'false');
   selectedRide = null; statusTime = result.last_candle_time;
   selectedOrder = null;
-  for (const panel of panels) { panel.card.classList.remove('chosen'); paintMarkers(panel); }
+  for (const panel of panels) { panel.card.classList.remove('chosen'); paintMarkers(panel); drawChosen(panel, null); }
   $('trade-info').textContent = '最新：各周期在最后一根已收盘 K 线时的状态';
   paintSignalBar(statusTime); updateNav();
   const span = Number($('f-window').value);

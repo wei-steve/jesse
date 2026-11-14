@@ -1,4 +1,4 @@
-import { validateIndicator, INDICATORS } from './settings.mjs?v=20261113h';
+import { validateIndicator, INDICATORS } from './settings.mjs?v=20261113i';
 
 // EMA starts from the first close, as in the installed Jesse Rust kernel.
 // RSI and ATR use Wilder smoothing; MACD histogram is DIF−DEA, not 2×.
