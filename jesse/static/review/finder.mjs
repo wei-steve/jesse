@@ -1,19 +1,19 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261115j';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261115j';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261115j';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261115j';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261115j';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261115j';
-import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261115j';
+import { t as createChart } from './lightweight-charts.mjs?v=20261116a';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261116a';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261116a';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116a';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116a';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261116a';
+import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261116a';
 import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone, barSnapshot,
-  nextTickDelay, newKeys, atRightEdge, shiftRange } from './finder-data.mjs?v=20261115j';
-import { streamUrl, openTicker, klineStreamUrl, openKlines } from './live-price.mjs?v=20261115j';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261115j';
+  nextTickDelay, newKeys, atRightEdge } from './finder-data.mjs?v=20261116a';
+import { streamUrl, openTicker, klineStreamUrl, openKlines } from './live-price.mjs?v=20261116a';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116a';
 import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS,
-  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261115j';
+  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261116a';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -468,7 +468,7 @@ function makePanel(tf, item, preferences) {
     candles: item.candles, closes: new Map(item.candles.map(c => [c.time, c.close])),
     rideSeries: [], overlaySeries: [], overlayGroups: [], chosenSeries: [],
     // 实时's forming bar (display only) and the bars the stream saw close after the database's last candle.
-    forming: null, streamBars: [], tailTimer: null, formingShift: 0 };
+    forming: null, streamBars: [], tailTimer: null };
   const input = noteRow.querySelector('.bar-note-input');
   input.onkeydown = event => {
     if (event.key === 'Enter') { event.preventDefault(); submitBarNote(panel); }
@@ -1240,8 +1240,10 @@ function paintForming(panel, candle) {
     panel.streamBars.push(formingCandle(previous));
   }
   panel.forming = candle;
+  // No scrolling here: the library itself keeps a chart that shows its newest bar glued to the right edge when
+  // update() appends one, at the same candle width. Moving the window by a time range on every tick (as this did)
+  // got clipped past the newest bar and made the candles wider on every tick (2026-11-16).
   try { panel.series.update(formingCandle(candle)); } catch { return; /* chart rebuilt */ }
-  followForming(panel);
   scheduleTail(panel);
 }
 
@@ -1265,30 +1267,6 @@ function scheduleTail(panel) {
   }, TAIL_MS);
 }
 
-// A chart glued to its newest bar follows the forming bar: when the new candle would fall outside the window, the
-// window moves by the same width (the zoom the owner chose), and back again when 实时 is switched off.
-function followForming(panel) {
-  const range = panelRange(panel);
-  const lastClosed = panel.candles.at(-1)?.time;
-  if (!range || !Number.isFinite(lastClosed) || !panel.forming || !atRightEdge(range, lastClosed)) return;
-  const span = range.to - range.from;
-  const target = panel.forming.time + span * 0.05;
-  if (target <= range.to || span <= 0) return;
-  const delta = target - range.to;
-  rangeLink?.activate(null);
-  panel.chart.timeScale().setVisibleRange({ from: range.from + delta, to: range.to + delta });
-  panel.formingShift += delta;
-}
-
-function unfollowForming(panel) {
-  const delta = panel.formingShift;
-  panel.formingShift = 0;
-  const range = panelRange(panel);
-  if (!delta || !range) return;
-  rangeLink?.activate(null);
-  panel.chart.timeScale().setVisibleRange({ from: range.from - delta, to: range.to - delta });
-}
-
 // Drops the forming bar of every chart and puts the closed data (and its indicator lines) back.
 function clearForming() {
   for (const panel of panels) {
@@ -1299,7 +1277,6 @@ function clearForming() {
 
 function resetPanel(panel) {
   clearTimeout(panel.tailTimer); panel.tailTimer = null;
-  unfollowForming(panel);
   panel.forming = null; panel.streamBars = [];
   panel.series.setData(panel.candles);
   if (form.overlay) addOverlay(panel, panel.preferences); else clearOverlay(panel);
@@ -1371,6 +1348,10 @@ function clearSelection(panel) {
 // Replaces one panel's candles and drawings without touching the chart object, so the time scale (and what the
 // owner is looking at) survives. `range` / `last` are what the chart showed before the update.
 function updatePanel(panel, item, preferences, range, last) {
+  // Bars on screen before the new data (closed + stream-closed + forming) and the window in bars.
+  const barsBefore = panel.candles.length + panel.streamBars.length + (panel.forming ? 1 : 0);
+  let logical = null;
+  try { logical = panel.chart.timeScale().getVisibleLogicalRange(); } catch { /* not sized yet */ }
   panel.preferences = preferences;
   panel.candles = item.candles;
   panel.closes = new Map(item.candles.map(candle => [candle.time, candle.close]));
@@ -1382,12 +1363,14 @@ function updatePanel(panel, item, preferences, range, last) {
   // The forming bar was wiped by setData: put it (and the bars the stream closed meanwhile) back on the new data.
   reinstateForming(panel);
   if (!range) return;
-  // A chart whose right edge was at the newest bar follows the newest bar (same zoom); one dragged into history
-  // gets exactly the range it had.
-  const newest = panel.candles.at(-1).time;
-  panel.formingShift = 0;
-  panel.chart.timeScale().setVisibleRange(atRightEdge(range, last) ? shiftRange(range, newest - last) : range);
-  followForming(panel);
+  // A chart whose right edge was at the newest bar follows the newest bar: its window moves by the number of bars
+  // that came in, in bars, so the candle width stays exactly the same. One dragged into history keeps its time range
+  // (inside the data, so nothing is clipped).
+  const barsAfter = panel.candles.length + panel.streamBars.length + (panel.forming ? 1 : 0);
+  if (logical && logical.to >= barsBefore - 1.5) {
+    const shift = barsAfter - barsBefore;
+    panel.chart.timeScale().setVisibleLogicalRange({ from: logical.from + shift, to: logical.to + shift });
+  } else if (!atRightEdge(range, last)) panel.chart.timeScale().setVisibleRange(range);
 }
 
 // A new signal from this round: the row blinks for 3s and the status bar names it. Nothing else marks the event.
