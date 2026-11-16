@@ -4,7 +4,7 @@
 // No DOM, no fetch, no websocket: tests/review-market-data.test.mjs runs every function in this file with node.
 import { BINANCE_SOURCE, DEFAULT_MARKET, DEFAULT_SOURCE, DEFAULT_YIELD_SYMBOLS, OKX_SOURCE, YIELD_SOURCE, MARKETS,
   aggregateCandles, candleRequest, defaultSymbolOf, migrateSource, normalizeMarket, normalizeSymbol,
-  symbolOf } from './market-sources.mjs?v=20261116j';
+  symbolOf } from './market-sources.mjs?v=20261116k';
 
 // Binance USDTⓈ-M futures, public and CORS-open (`access-control-allow-origin: *`), so the browser talks to the
 // exchange directly: any USDT perpetual can be watched, nothing has to be imported into Jesse's database and no
@@ -16,6 +16,24 @@ const SPOT_KLINE_API = 'https://api.binance.com/api/v3/klines';
 const OKX_API = 'https://www.okx.com/api/v5/market';
 export const OKX_LIMIT = 300;
 export const OKX_HISTORY_LIMIT = 100;
+
+// CNBC is CORS-open too (`access-control-allow-origin: *`), so the treasury yields are read straight from the browser
+// (T-55): its chart endpoint serves `1D` (one-minute bars of the current session) through `6M` (daily, about three
+// years) of the Tradeweb feed, and its quote endpoint takes every maturity of the list in one request.
+const CNBC_CHART_API = 'https://ts-api.cnbc.com/harmony/app/charts';
+const CNBC_QUOTE_API = 'https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol';
+
+/** The CNBC chart request of one range (`1D` / `5D` / `6M`) of one maturity, in CNBC's spelling (`US2Y`). */
+export const cnbcChartUrl = (cnbcSymbol, range) => `${CNBC_CHART_API}/${encodeURIComponent(String(range ?? '1D'))}.json`
+  + `?symbol=${encodeURIComponent(String(cnbcSymbol ?? ''))}`;
+
+/** One CNBC quote request for every yield on screen (`['US2Y', 'US10Y']`), the codes joined with `|`. */
+export const cnbcQuoteUrl = codes => {
+  const list = (Array.isArray(codes) ? codes : []).map(code => String(code ?? '').trim()).filter(Boolean);
+  if (!list.length) return null;
+  return `${CNBC_QUOTE_API}?symbols=${encodeURIComponent(list.join('|'))}`
+    + '&requestMethod=itv&noform=1&partnerId=2&fund=1&exthrs=1&output=json';
+};
 
 // Deepcoin does not send CORS headers: its candles and tickers go through Jesse (see market.mjs).
 export const PROXY_CANDLES = '/review/market/candles';
@@ -105,8 +123,8 @@ export function okxCandlesUrl(instId, timeframe, { limit = OKX_LIMIT, before = n
 export const endTimeBefore = earliestSeconds => Math.round(earliestSeconds * 1000) - 1;
 
 /**
- * The REST URL of one source's klines page, or null when the browser cannot read it (the yields and Deepcoin go
- * through `POST /review/market/candles`).
+ * The REST URL of one source's klines page, or null when that source has no exchange URL the browser could read:
+ * Deepcoin goes through `POST /review/market/candles`, and the treasury yields come from CNBC (`cnbcChartUrl`).
  */
 export function klinesUrlFor(source, market, symbol, timeframe, options = {}) {
   if (source === BINANCE_SOURCE) {
@@ -116,7 +134,8 @@ export function klinesUrlFor(source, market, symbol, timeframe, options = {}) {
   return null;
 }
 
-/** The product list request of one venue: Binance's whole 24h ticker array, OKX's per-market ticker array, or null. */
+/** The product list request of one venue: Binance's whole 24h ticker array, OKX's per-market ticker array, or null.
+ * The yields have no product list of their own: their six rows are quoted by `cnbcQuoteUrl`. */
 export function tickersUrlFor(source, market) {
   if (source === BINANCE_SOURCE) {
     return market === 'spot' ? 'https://api.binance.com/api/v3/ticker/24hr' : 'https://fapi.binance.com/fapi/v1/ticker/24hr';

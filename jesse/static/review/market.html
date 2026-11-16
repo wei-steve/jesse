@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>看行情 · Jesse</title>
   <link rel="icon" href="/favicon.ico">
-  <link rel="stylesheet" href="./review.css?v=20261116j">
+  <link rel="stylesheet" href="./review.css?v=20261116k">
 </head>
 <body class="market">
   <header>
@@ -46,14 +46,14 @@
       </div>
     </aside>
     <section class="review">
-      <div class="notice">顶部「数据源」可切换：<b>Binance</b>、<b>OKX</b>、<b>Deepcoin</b>「合约 / 现货」、<b>美债收益率</b>（US03M / US02Y / US05Y / US10Y / US20Y / US30Y，按 TradingView 习惯命名，数值就是收益率本身，例如 4.02 表示 4.02%）。左栏两个标签：「自选」和当前数据源的名字，后者列出该数据源全部 USDT 产品（按 24 小时成交额排序、可搜索、每行 ☆ 一键加入自选、每 10 秒刷新一次报价），点一行切换图表。Binance / OKX 由浏览器直连交易所（不经过 Jesse、不导入数据库），浅红虚线是最近成交价，最右边随成交跳动的那根是正在形成的 K 线；Deepcoin 不开放跨域，K 线和产品列表经 Jesse 代理，图表每 3 秒轮询一次（价格走它的公开推送），产品列表每 10 秒一次；美债没有实时推送，经 Jesse 代理向 Yahoo / FRED 取数据（需先登录 Jesse），每 60 秒轮询一次，浅红虚线是「最新」收盘值，Yahoo 约延迟 0~10 分钟、只有美股时段更新，US02Y / US20Y 只有 FRED 官方日线（T+1），看小周期时只有提示、1D 图正常画。时间统一为 UTC；上方同时显示本地时间。主图上的均线、布林带等沿用复盘页「周期与指标」里的显示设置（副图指标不画）。Binance / OKX / Deepcoin 来源往左拖到最早一根附近会自动往前加载，每个周期最多 5000 根；美债每个周期按上游最大范围一次拉完。</div>
+      <div class="notice">顶部「数据源」可切换：<b>Binance</b>、<b>OKX</b>、<b>Deepcoin</b>「合约 / 现货」、<b>美债收益率</b>（US03M / US02Y / US05Y / US10Y / US20Y / US30Y，按 TradingView 习惯命名，数值就是收益率本身，例如 4.02 表示 4.02%）。左栏两个标签：「自选」和当前数据源的名字，后者列出该数据源全部 USDT 产品（按 24 小时成交额排序、可搜索、每行 ☆ 一键加入自选、每 10 秒刷新一次报价），点一行切换图表。Binance / OKX 由浏览器直连交易所（不经过 Jesse、不导入数据库），浅红虚线是最近成交价，最右边随成交跳动的那根是正在形成的 K 线；Deepcoin 不开放跨域，K 线和产品列表经 Jesse 代理，图表每 3 秒轮询一次（价格走它的公开推送），产品列表每 10 秒一次；<b>美债收益率</b>六种期限全部由浏览器直连 CNBC（Tradeweb），1 分钟级、约 10 天盘中历史（1D 图是约 3 年的日线），每 15 秒轮询一次，浅红虚线是「实时」值，自选和产品列表的美债报价也是一次拉齐。时间统一为 UTC；上方同时显示本地时间。主图上的均线、布林带等沿用复盘页「周期与指标」里的显示设置（副图指标不画）。Binance / OKX / Deepcoin 来源往左拖到最早一根附近会自动往前加载，每个周期最多 5000 根；美债由 CNBC 一次给出一整段，没有更早的盘中数据，不翻页。</div>
       <div id="charts" class="chart-grid"></div>
     </section>
   </main>
   <script type="module">
     // REVIEW_VERSION: change it (and every "?v=" in the .mjs imports and the stylesheet link) whenever
     // any file in this folder changes. tests/review-version.test.mjs checks that they all match.
-    const REVIEW_VERSION = '20261116j';
+    const REVIEW_VERSION = '20261116k';
     import(`./market.mjs?v=${REVIEW_VERSION}`).catch(error => {
       const status = document.getElementById('status');
       status.hidden = false; status.classList.add('error'); status.textContent = `看行情页脚本加载失败：${error.message}`;

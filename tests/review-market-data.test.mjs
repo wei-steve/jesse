@@ -5,7 +5,7 @@ import { klinesUrl, endTimeBefore, parseKlines, mergeCandles, parseMiniTicker,
   orderTimeframes, shiftLogical, spotKlinesUrl, klinesUrlFor, okxCandlesUrl, tickersUrlFor, watchItem, watchKey,
   withDefaultYields, restoreSelection, defaultSymbolFor, restoreAsideTab, restoreListMarket, parseOkxCandles,
   aggregateAnswer, tickerRows, proxyTickerRows, orderProducts, filterProducts, pageSizeOf, sameWatchItem, OKX_LIMIT,
-  OKX_HISTORY_LIMIT,
+  OKX_HISTORY_LIMIT, cnbcChartUrl, cnbcQuoteUrl,
   PRODUCT_PAGE, DEFAULT_WATCHLIST, DEFAULT_TIMEFRAMES, KLINE_LIMIT, MAX_BARS, MAX_WATCHLIST, MARKET_KEYS } from
   '../jesse/static/review/market-data.mjs';
 import { DEFAULT_YIELD_SYMBOLS, normalizeSymbol } from '../jesse/static/review/market-sources.mjs';
@@ -48,7 +48,7 @@ test('the spot market asks the spot host, and the proxied sources have no exchan
   assert.equal(klinesUrlFor('binance', 'swap', 'BTCUSDT', '4h'), klinesUrl('BTCUSDT', '4h'));
   // The rest of a page request is the same on both markets, `endTime` included.
   assert.ok(klinesUrlFor('binance', 'spot', 'BTCUSDT', '1h', { endTime: 1763199959999 }).endsWith('&endTime=1763199959999'));
-  // The yields and Deepcoin come from Jesse; OKX is its own envelope (below).
+  // The yields are read from CNBC now, Deepcoin from Jesse; OKX is its own envelope (below).
   assert.equal(klinesUrlFor('us-yields', null, 'US10Y', '1h'), null);
   assert.equal(klinesUrlFor('deepcoin', 'swap', 'BTC-USDT-SWAP', '1h'), null);
 });
@@ -75,9 +75,26 @@ test('the product list asks each venue for the tickers of the market on screen',
   assert.equal(tickersUrlFor('binance', 'spot'), 'https://api.binance.com/api/v3/ticker/24hr');
   assert.equal(tickersUrlFor('okx', 'swap'), 'https://www.okx.com/api/v5/market/tickers?instType=SWAP');
   assert.equal(tickersUrlFor('okx', 'spot'), 'https://www.okx.com/api/v5/market/tickers?instType=SPOT');
-  // Deepcoin goes through Jesse's proxy, and the yields are a fixed list of six.
+  // Deepcoin goes through Jesse's proxy (and the yields have no product list of their own).
   assert.equal(tickersUrlFor('deepcoin', 'swap'), null);
   assert.equal(tickersUrlFor('us-yields', null), null);
+});
+
+test('the treasury yields ask CNBC for its chart ranges and all their quotes at once', () => {
+  // The chart endpoint takes the range in the path and CNBC's own symbol (`US2Y`, not US02Y).
+  assert.equal(cnbcChartUrl('US2Y', '1D'), 'https://ts-api.cnbc.com/harmony/app/charts/1D.json?symbol=US2Y');
+  assert.equal(cnbcChartUrl('US3M', '6M'), 'https://ts-api.cnbc.com/harmony/app/charts/6M.json?symbol=US3M');
+  assert.ok(cnbcChartUrl('US10Y', '5D').endsWith('/5D.json?symbol=US10Y'));
+  // One quote request for the whole list: the codes are joined with `|` (percent-encoded).
+  const quoteUrl = cnbcQuoteUrl(['US2Y', 'US10Y', 'US20Y']);
+  assert.ok(quoteUrl.startsWith('https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol?symbols=US2Y%7CUS10Y%7CUS20Y&'));
+  for (const part of ['requestMethod=itv', 'noform=1', 'partnerId=2', 'fund=1', 'exthrs=1', 'output=json']) {
+    assert.ok(quoteUrl.includes(part), part);
+  }
+  // Nothing to quote asks for nothing.
+  assert.equal(cnbcQuoteUrl([]), null);
+  assert.equal(cnbcQuoteUrl(['', null]), null);
+  assert.equal(cnbcQuoteUrl(null), null);
 });
 
 test('the page before the oldest bar ends one millisecond before it', () => {

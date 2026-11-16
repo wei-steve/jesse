@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { MARKET_SOURCES, DEFAULT_SOURCE, DEFAULT_MARKET, MARKETS, YIELD_SOURCE, BINANCE_SOURCE, OKX_SOURCE,
   DEEPCOIN_SOURCE, migrateSource, restoreSource, sourceLabel, marketsOf, hasMarkets, normalizeMarket, defaultSymbolOf,
   exchangeOf, isYieldSource, marketLabel, normalizeSymbol, normalizeInstId, symbolOf, instrumentName, candleRequest,
-  BARS, YIELD_SYMBOLS, DEFAULT_YIELD_SYMBOLS, normalizeYieldSymbol, isDailyOnlyYield, yieldRequest, pollRangeOf,
-  aggregateCandles, parseMarketCandles, yieldQuote, signedPoints, sessionIndicator, sessionTail } from
+  BARS, YIELD_SYMBOLS, YIELD_INSTRUMENTS, DEFAULT_YIELD_SYMBOLS, normalizeYieldSymbol, cnbcSymbolOf, yieldRequest,
+  YIELD_POLL_RANGE, aggregateCandles, mergeYieldBars, mergeYieldDailyClose, parseCnbcBars, parseCnbcQuote,
+  parseMarketCandles, signedPoints, sessionIndicator, sessionTail } from
   '../jesse/static/review/market-sources.mjs';
 import { mergeCandles, watchKey } from '../jesse/static/review/market-data.mjs';
 
@@ -120,7 +121,7 @@ test('each exchange\'s bar spelling of a panel timeframe', () => {
 
 // --- Yield instruments --------------------------------------------------------------------------------------------
 
-test('the six yields are named the way the owner names them', () => {
+test('the six yields are named the way the owner names them, and CNBC spells them its own way', () => {
   assert.deepEqual(YIELD_SYMBOLS, ['US03M', 'US02Y', 'US05Y', 'US10Y', 'US20Y', 'US30Y']);
   assert.deepEqual(DEFAULT_YIELD_SYMBOLS, ['US02Y', 'US10Y', 'US20Y', 'US30Y']);
   for (const typed of ['US10Y', 'us10y', '10y', ' 10Y ']) {
@@ -130,38 +131,30 @@ test('the six yields are named the way the owner names them', () => {
     assert.equal(normalizeYieldSymbol(broken), '', String(broken));
   }
   assert.equal(symbolOf(YIELD_SOURCE, null, '10y'), 'US10Y');
+  // Only the three-month one drops a character: US03M is CNBC's US3M.
+  assert.deepEqual(YIELD_INSTRUMENTS.map(entry => entry.cnbc), ['US3M', 'US2Y', 'US5Y', 'US10Y', 'US20Y', 'US30Y']);
+  assert.equal(cnbcSymbolOf('US03M'), 'US3M');
+  assert.equal(cnbcSymbolOf('us02y'), 'US2Y');
+  assert.equal(cnbcSymbolOf('US20Y'), 'US20Y');
+  for (const broken of ['', null, 'US07Y', 'btc']) assert.equal(cnbcSymbolOf(broken), '', String(broken));
 });
 
-test('only the 2 and the 20 year are daily-only (FRED has no intraday series for them)', () => {
-  assert.deepEqual(YIELD_SYMBOLS.filter(isDailyOnlyYield), ['US02Y', 'US20Y']);
-  assert.equal(isDailyOnlyYield('US10Y'), false);
-});
+// --- CNBC chart ranges ------------------------------------------------------------------------------------------
 
-// --- Interval mapping ----------------------------------------------------------------------------------------------
-
-test('a yield panel asks for the series it can be built from', () => {
-  // Straight through for the five the upstream has.
-  for (const tf of ['1m', '5m', '15m', '30m', '1h', '1D']) {
-    assert.deepEqual(yieldRequest('US10Y', tf), { interval: tf, aggregate: 1, dailyOnly: false, timeframe: tf });
+test('every panel asks CNBC for the range it can be built from', () => {
+  // 1m / 3m come from the session's one-minute series, the rest of the intraday panels from the 5-minute series of
+  // the last ten days, and 1D from the daily series of the last three years.
+  assert.deepEqual(yieldRequest('1m'), { range: '1D', base: 1, aggregate: 1, timeframe: '1m' });
+  assert.deepEqual(yieldRequest('3m'), { range: '1D', base: 1, aggregate: 3, timeframe: '3m' });
+  assert.deepEqual(yieldRequest('5m'), { range: '5D', base: 5, aggregate: 1, timeframe: '5m' });
+  for (const [tf, minutes] of [['15m', 15], ['30m', 30], ['1h', 60], ['4h', 240]]) {
+    assert.deepEqual(yieldRequest(tf), { range: '5D', base: 5, aggregate: minutes, timeframe: tf }, tf);
   }
-  // 3m and 4h exist only as aggregations; Yahoo has no bond data for those intervals.
-  assert.equal(yieldRequest('US10Y', '3m').interval, '1m');
-  assert.equal(yieldRequest('US10Y', '3m').aggregate, 3);
-  assert.equal(yieldRequest('US10Y', '4h').interval, '1h');
-  assert.equal(yieldRequest('US10Y', '4h').aggregate, 4);
-  // A daily-only instrument is asked for its daily series whatever the panel shows: the panel says so instead.
-  for (const tf of ['1m', '5m', '4h']) {
-    assert.deepEqual(yieldRequest('US02Y', tf), { interval: '1D', aggregate: 1, dailyOnly: true, timeframe: tf });
-  }
-  assert.equal(yieldRequest('US20Y', '1D').interval, '1D');
-});
-
-test('the 60-second poll only asks for the newest bars', () => {
-  assert.deepEqual(['1m', '5m', '15m', '30m', '1h', '1D'].map(tf => pollRangeOf(tf, 'US10Y')),
-    ['1d', '5d', '5d', '5d', '1mo', '1mo']);
-  assert.equal(pollRangeOf('3m', 'US10Y'), '1d', 'an aggregated panel polls like its source series (1m)');
-  assert.equal(pollRangeOf('4h', 'US10Y'), '1mo', '4h asks Yahoo for 1h, whose shortest range is 1mo');
-  assert.equal(pollRangeOf('5m', 'US02Y'), '1mo', 'a FRED symbol asks for 1D on every panel');
+  assert.deepEqual(yieldRequest('1D'), { range: '6M', base: 1440, aggregate: 1, timeframe: '1D' });
+  // An unknown timeframe falls back to the 1m series instead of asking CNBC for a range it does not serve.
+  assert.equal(yieldRequest('7m').range, '1D');
+  // The 15-second poll always reads the current session's one-minute bars.
+  assert.equal(YIELD_POLL_RANGE, '1D');
 });
 
 // --- Aggregation --------------------------------------------------------------------------------------------------
@@ -239,33 +232,132 @@ test('a Deepcoin answer carries the bar the venue is still building separately',
   assert.equal(parseMarketCandles({}).forming, null);
 });
 
+// --- CNBC's answers ------------------------------------------------------------------------------------------------
+
+// CNBC's bar: every number a string, the time in milliseconds, oldest first (measured 2026-11-16: US2Y `1D`).
+const cnbcBar = (ms, [o, h, l, c], volume = 0) => ({ open: String(o), high: String(h), low: String(l),
+  close: String(c), volume, tradeTimeinMills: ms, tradeTime: '20261116160700' });
+
+test('CNBC priceBars become candles: strings to numbers, milliseconds to seconds, bad rows dropped', () => {
+  const parsed = parseCnbcBars({ barData: { priceBars: [
+    cnbcBar(1794845220000, [4.846, 4.851, 4.846, 4.851]),
+    cnbcBar(1794845280000, [4.851, 4.851, 4.848, 4.848], 3),
+    // Half a bar is no bar: an empty close, text, a zero stamp, a duplicate of the first one (which loses to it).
+    { open: '4.8', high: '4.8', low: '4.8', close: '', volume: 0, tradeTimeinMills: 1794845340000 },
+    { open: '4.8', high: 'x', low: '4.8', close: '4.8', volume: 0, tradeTimeinMills: 1794845400000 },
+    { open: '4.8', high: '4.8', low: '4.8', close: '4.8', volume: 0, tradeTimeinMills: 0 },
+    null,
+  ] } });
+  assert.deepEqual(parsed, [
+    { time: 1794845220, open: 4.846, high: 4.851, low: 4.846, close: 4.851, volume: 0 },
+    { time: 1794845280, open: 4.851, high: 4.851, low: 4.848, close: 4.848, volume: 3 },
+  ]);
+  // A symbol CNBC does not know answers 200 with {status:'ERROR'} and no bars at all.
+  for (const broken of [null, {}, { barData: null }, { barData: { priceBars: [] } },
+    { status: 'ERROR', statusMessage: 'Security Master not found' }]) {
+    assert.deepEqual(parseCnbcBars(broken), [], JSON.stringify(broken));
+  }
+});
+
+test('CNBC quotes become the watchlist values, the change in percentage points', () => {
+  const payload = { FormattedQuoteResult: { FormattedQuote: [
+    { symbol: 'US2Y', last: '4.848%', change: '-0.026', last_time: '2026-11-16T11:11:36.000-0500' },
+    { symbol: 'US10Y', last: '5.133%', change: '+0.012', last_time: '2026-11-16T11:11:52.000-0500' },
+    // A closed instrument has no change; a code the page does not know, and a missing value, are dropped.
+    { symbol: 'US30Y', last: '5.4%', change: '', last_time: '2026-11-16T11:11:52.000-0500' },
+    { symbol: 'DE10Y', last: '2.5%', change: '+0.01' },
+    { symbol: 'US05Y', last: '--', change: '+0.01' },
+  ] } };
+  assert.deepEqual(parseCnbcQuote(payload), [
+    { symbol: 'US02Y', price: 4.848, change: -0.026 },
+    { symbol: 'US10Y', price: 5.133, change: 0.012 },
+    { symbol: 'US30Y', price: 5.4, change: null },
+  ]);
+  // One symbol comes back as a single object, not an array.
+  assert.deepEqual(parseCnbcQuote({ FormattedQuoteResult: { FormattedQuote:
+    { symbol: 'US20Y', last: '5.31%', change: '0.02' } } }),
+  [{ symbol: 'US20Y', price: 5.31, change: 0.02 }]);
+  for (const broken of [null, {}, { FormattedQuoteResult: null }, { FormattedQuoteResult: { FormattedQuote: [] } }]) {
+    assert.deepEqual(parseCnbcQuote(broken), [], JSON.stringify(broken));
+  }
+});
+
+// --- The poll merging into a panel ---------------------------------------------------------------------------------
+
+test('the poll merges its one-minute bars into a 1m panel by open time', () => {
+  const loaded = [candle(600, [4.1, 4.1, 4.1, 4.1, 0]), candle(660, [4.1, 4.1, 4.1, 4.1, 0]),
+    candle(720, [4.1, 4.1, 4.1, 4.1, 0])];
+  const polled = [candle(720, [4.12, 4.15, 4.1, 4.14, 0]), candle(780, [4.14, 4.16, 4.13, 4.15, 0])];
+  // The minute the range already had is the one that keeps moving; the new minute lands last.
+  assert.deepEqual(mergeYieldBars(loaded, 1, polled).map(bar => [bar.time, bar.close]),
+    [[600, 4.1], [660, 4.1], [720, 4.14], [780, 4.15]]);
+  // Nothing polled: the series stays exactly as it was.
+  assert.deepEqual(mergeYieldBars(loaded, 1, []), loaded);
+  assert.deepEqual(mergeYieldBars(loaded, 1, [null, { time: 'x' }]), loaded);
+});
+
+test("a 5-minute panel re-buckets the polled minutes on CNBC's own grid", () => {
+  // CNBC's 5D bars start at :01 (1793981460 % 300 === 60), so a UTC-aligned bucket would draw the same minutes twice.
+  const start = 1793981460;
+  const series = [candle(start, [4.1, 4.12, 4.09, 4.11, 0]), candle(start + 300, [4.11, 4.13, 4.1, 4.12, 0]),
+    candle(start + 600, [4.12, 4.12, 4.1, 4.11, 0])];
+  const polled = [[300, 4.11, 4.14, 4.1, 4.13], [360, 4.13, 4.16, 4.12, 4.15], [420, 4.15, 4.15, 4.11, 4.12],
+    [480, 4.12, 4.18, 4.11, 4.17], [540, 4.17, 4.19, 4.16, 4.18], [600, 4.18, 4.2, 4.17, 4.19]]
+    .map(([offset, o, h, l, c]) => candle(start + offset, [o, h, l, c, 0]));
+  const merged = mergeYieldBars(series, 5, polled);
+  // The bar before the polled window stays; the two it covers are rebuilt from the minutes (the newest holds one).
+  assert.deepEqual(merged.map(bar => bar.time), [start, start + 300, start + 600]);
+  assert.deepEqual(merged[1], { time: start + 300, open: 4.11, high: 4.19, low: 4.1, close: 4.18, volume: 0 });
+  assert.deepEqual(merged[2], { time: start + 600, open: 4.18, high: 4.2, low: 4.17, close: 4.19, volume: 0 });
+});
+
+test('a 5-minute series becomes the 15m / 1h / 4h panels', () => {
+  // 48 five-minute bars are exactly one 4h window (1763193600 is a 4h boundary).
+  const start = 1763193600;
+  const five = [...Array(48)].map((_, i) => candle(start + i * 300, [4 + i / 2, 4.5 + i / 2, 3.5 + i / 2, 4 + i / 2, 0]));
+  const buckets = tf => aggregateCandles(five, yieldRequest(tf).aggregate);
+  const fifteen = buckets('15m'), hourly = buckets('1h'), four = buckets('4h');
+  assert.equal(fifteen.length, 16);
+  assert.deepEqual(fifteen[0], { time: start, open: 4, high: 5.5, low: 3.5, close: 5, volume: 0 });
+  assert.equal(hourly.length, 4);
+  assert.deepEqual(hourly[0], { time: start, open: 4, high: 10, low: 3.5, close: 9.5, volume: 0 });
+  assert.equal(four.length, 1);
+  assert.deepEqual(four[0], { time: start, open: 4, high: 28, low: 3.5, close: 27.5, volume: 0 });
+});
+
+test("the daily panel takes the newest minute as today's close", () => {
+  // CNBC stamps its daily bars at 05:00 UTC (1794546000 = 2026-11-13 05:00), and publishes them a session late.
+  const daily = [candle(1794546000, [4.867, 4.893, 4.827, 4.874, 0])];
+  // A minute of the same session moves the close, and the high / low when it goes past them.
+  const same = mergeYieldDailyClose(daily, candle(1794549600, [4.9, 4.9, 4.9, 4.9, 0]));
+  assert.deepEqual(same, [{ time: 1794546000, open: 4.867, high: 4.9, low: 4.827, close: 4.9, volume: 0 }]);
+  // A minute of a later session (2026-11-16 16:09 UTC) starts that session's bar, stamped on CNBC's own 05:00 grid.
+  const next = mergeYieldDailyClose(daily, candle(1794845340, [4.846, 4.846, 4.846, 4.848, 0]));
+  assert.deepEqual(next, [...daily,
+    { time: 1794805200, open: 4.846, high: 4.848, low: 4.848, close: 4.848, volume: 0 }]);
+  // Nothing polled, nothing changed.
+  assert.deepEqual(mergeYieldDailyClose(daily, null), daily);
+});
+
 // --- Watchlist values ----------------------------------------------------------------------------------------------
 
-test('a yield quote is the newest value and its change in percentage points', () => {
-  const daily = [candle(1794441600, [4.11, 4.11, 4.11, 4.11, 0]), candle(1794528000, [4.14, 4.14, 4.14, 4.14, 0])];
-  const quote = yieldQuote(daily);
-  assert.deepEqual(quote, { price: 4.14, change: quote.change, time: 1794528000 });
-  assert.ok(Math.abs(quote.change - 0.03) < 1e-9, '3 basis points, in percentage points');
-  // One bar is a value without a change (no yesterday to compare with).
-  assert.deepEqual(yieldQuote([daily[0]]), { price: 4.11, change: null, time: 1794441600 });
-  assert.equal(yieldQuote([]), null);
-  assert.equal(yieldQuote(null), null);
-  // The page writes the change as +0.03: a yield is a percentage already, 0.03% of it would read wrong.
+test('a change is written in percentage points, never as a percentage of a percentage', () => {
   assert.equal(signedPoints(0.03), '+0.03');
   assert.equal(signedPoints(0.02999999999999936), '+0.03');
   assert.equal(signedPoints(-0.125), '-0.13');
+  assert.equal(signedPoints(-0.026), '-0.03');
   assert.equal(signedPoints(0), '+0.00');
   assert.equal(signedPoints(null), '');
 });
 
-test('the 60-second poll merges into the loaded history instead of replacing it', () => {
+test('a refreshed page merges into the loaded history instead of replacing it', () => {
   const loaded = [candle(600, [4.1, 4.1, 4.1, 4.1, 0]), candle(660, [4.1, 4.1, 4.1, 4.1, 0]),
     candle(720, [4.1, 4.1, 4.1, 4.1, 0])];
-  const polled = parseMarketCandles({ provider: 'Yahoo', candles: [
+  const refreshed = parseMarketCandles({ candles: [
     { time: 720, open: 4.1, high: 4.2, low: 4.1, close: 4.19, volume: 0 },
     { time: 780, open: 4.19, high: 4.21, low: 4.18, close: 4.2, volume: 0 },
   ] }).closed;
-  const merged = mergeCandles(loaded, polled);
+  const merged = mergeCandles(loaded, refreshed);
   // The refreshed bar wins, the history before it stays, the new bar lands last.
   assert.deepEqual(merged.map(bar => [bar.time, bar.close]), [[600, 4.1], [660, 4.1], [720, 4.19], [780, 4.2]]);
   // Nothing new (the upstream had no fresh bar): the chart keeps exactly what it had.
