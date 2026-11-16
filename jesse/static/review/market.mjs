@@ -7,33 +7,33 @@
 // yields have no push at all: CNBC's one-minute series and its quote are polled every 15 seconds.
 // The chart behaviour (range linking, price zoom, snapshots) and the overlays (the review page's display settings)
 // are reused from the review/finder modules instead of being reimplemented.
-import { t as createChart } from './lightweight-charts.mjs?v=20261116o';
-import { linkTimeRanges } from './data.mjs?v=20261116o';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261116o';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116o';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116o';
+import { t as createChart } from './lightweight-charts.mjs?v=20261116p';
+import { linkTimeRanges } from './data.mjs?v=20261116p';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261116p';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116p';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116p';
 import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages, okxCandleChannels, openOkxKlines,
-  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261116o';
-import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116o';
-import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116o';
+  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261116p';
+import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116p';
+import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116p';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, MARKETS, MARKET_SOURCES, OKX_SOURCE, YIELD_SOURCE, YIELD_INSTRUMENTS,
   DEFAULT_YIELD_SYMBOL, YIELD_POLL_RANGE, aggregateCandles, candleRequest, cnbcSymbolOf, exchangeOf, instrumentName,
   isYieldSource, marketLabel, marketsOf, mergeYieldBars, mergeYieldDailyClose, normalizeMarket, normalizeYieldSymbol,
   parseCnbcBars, parseCnbcQuote, parseMarketCandles, restoreSource, sessionIndicator, sessionTail, signedPoints,
-  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261116o';
+  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261116p';
 import { MARKET_KEYS, MARKET_TIMEFRAMES, MAX_BARS, MAX_WATCHLIST, PRODUCT_PAGE, PROXY_CANDLES,
   PROXY_TICKERS, aggregateAnswer, addToWatchlist, cnbcChartUrl, cnbcQuoteUrl, defaultSymbolFor, endTimeBefore,
   filterProducts, klinesUrlFor, mergeCandles, miniTickerStreamUrl, pageSizeOf, parseKlines, parseMiniTicker,
   parseOkxCandles, proxyTickerRows, removeFromWatchlist, moveWatchItem, orderTimeframes, restoreAsideTab,
   restoreListMarket, restoreSelection, restoreTimeframes, restoreWatchlist, sameWatchItem, shiftLogical,
-  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261116o';
+  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261116p';
 // Candle notes (double-click a bar): the same box, key, 「注」 markers and stored file as the factor finder; the shared
 // module is why a note written on one page shows up on the other.
 import { barLabel, barsFor, createBarNoteBox, createBookPicker, barNoteBody, barNoteKey, barNoteOf, filterNoteRows,
   noteDigest, noteIdentity, noteMarkers, noteRowsFrom, noteSummary, noteTimeText, noteWhere, rememberNote, snapshotOf
-  } from './bar-notes.mjs?v=20261116o';
+  } from './bar-notes.mjs?v=20261116p';
 // The open 备注本 (`storage/labels/<book>.jsonl`): the same notebook as the factor finder, kept in one localStorage key.
-import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261116o';
+import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261116p';
 
 const $ = id => document.getElementById(id);
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
@@ -43,6 +43,23 @@ const LIVE_PRICE = '#f19aa4';
 // linking needs: 4h and 5m cannot share one clock window (a 4h window of 200 bars is 33 days, which 5m cannot cover
 // inside the 5000-bar cap).
 const VIEW_BARS = 180, RIGHT_PAD = 4;
+// How many bars each timeframe shows (the owner's own zoom), kept per browser so switching symbol or source rebuilds
+// the charts at the same width instead of the default (2026-11-16). Keyed by timeframe: 4h and 5m zoom differently.
+const VIEW_KEY = 'jesse.market.viewBars';
+const MIN_VIEW_BARS = 10, MAX_VIEW_BARS = 5000;
+let viewBars = {};
+try { viewBars = JSON.parse(localStorage.getItem(VIEW_KEY) ?? '{}') ?? {}; } catch { viewBars = {}; }
+const viewBarsOf = tf => {
+  const bars = Number(viewBars?.[tf]);
+  return Number.isFinite(bars) && bars >= MIN_VIEW_BARS && bars <= MAX_VIEW_BARS ? bars : VIEW_BARS + RIGHT_PAD;
+};
+let viewSaveTimer = null;
+function rememberViewBars(tf, bars) {
+  if (!Number.isFinite(bars) || bars < MIN_VIEW_BARS || bars > MAX_VIEW_BARS) return;
+  viewBars = { ...viewBars, [tf]: Math.round(bars * 10) / 10 };
+  clearTimeout(viewSaveTimer);
+  viewSaveTimer = setTimeout(() => { try { localStorage.setItem(VIEW_KEY, JSON.stringify(viewBars)); } catch { /* this tab only */ } }, 400);
+}
 // Left of this logical position the chart is close enough to its oldest bar to pull the page before it.
 const EARLIER_TRIGGER = 50;
 // The forming bar's indicator tail: kline pushes arrive several times a second, and redrawing every overlay line that
@@ -266,7 +283,8 @@ const visibleLogical = panel => {
 function showNewest(panel) {
   const count = panel.candles.length;
   if (!count) return;
-  panel.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, count - VIEW_BARS), to: count + RIGHT_PAD });
+  const to = count + RIGHT_PAD;
+  panel.chart.timeScale().setVisibleLogicalRange({ from: to - viewBarsOf(panel.tf), to });
 }
 
 function makePanel(tf, answer) {
@@ -330,7 +348,10 @@ function makePanel(tf, answer) {
   // Dragged to the left edge: pull the page of bars before the oldest one. `sized` guards the first, unsized layout,
   // which reports a range from bar 0 and would fetch history nobody asked for.
   panel.chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-    if (!panel.sized || !range || range.from >= EARLIER_TRIGGER) return;
+    if (!panel.sized || !range) return;
+    // The window's width in bars is the zoom to keep for this timeframe (scrolling alone leaves it unchanged).
+    rememberViewBars(panel.tf, range.to - range.from);
+    if (range.from >= EARLIER_TRIGGER) return;
     loadEarlier(panel);
   });
   // A chart given its window before it had a size shows the wrong span: apply it once it is sized.
@@ -1533,8 +1554,8 @@ function showNoteBar(panel, time) {
   const position = index >= 0 ? index : panel.forming?.time === time ? panel.candles.length : -1;
   if (position < 0) return false;
   chosenNote = { tf: panel.tf, time };
-  const half = Math.round(VIEW_BARS / 2);
-  panel.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, position - half), to: position + half + RIGHT_PAD });
+  const half = viewBarsOf(panel.tf) / 2;
+  panel.chart.timeScale().setVisibleLogicalRange({ from: position - half, to: position + half });
   paintMarkers(panel);
   const candle = panel.byTime.get(time) ?? panel.forming;
   if (candle) { try { panel.chart.setCrosshairPosition(candle.close, time, panel.series); } catch { /* not sized yet */ } }
