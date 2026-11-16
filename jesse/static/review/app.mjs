@@ -1,15 +1,15 @@
 // Reuse the dependency already shipped with this Jesse dashboard. No CDN or
 // third-party requests are needed; the adapter is isolated for future rebuilds.
-import { t as createChart } from './lightweight-charts.mjs?v=20261114b';
-import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261114b';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261114b';
-import { calculateIndicator } from './indicators.mjs?v=20261114b';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261114b';
-import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261114b';
-import { mountControls } from './controls.mjs?v=20261114b';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261114b';
-import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261114b';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261114b';
+import { t as createChart } from './lightweight-charts.mjs?v=20261115a';
+import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261115a';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261115a';
+import { calculateIndicator } from './indicators.mjs?v=20261115a';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261115a';
+import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261115a';
+import { mountControls } from './controls.mjs?v=20261115a';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261115a';
+import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261115a';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261115a';
 
 const $ = id => document.getElementById(id);
 const money = value => Number.isFinite(value) ? value.toFixed(2) : '—';
@@ -91,7 +91,9 @@ function makeView(panel, chart, host, kind, series, lookup) {
   for (const event of ['pointerdown', 'wheel']) host.addEventListener(event,
     () => rangeLink?.activate(view), { capture: true, passive: true });
   chart.subscribeCrosshairMove(event => {
-    syncCrosshair(view, typeof event.time === 'number' ? event.time : null);
+    // The price under the pointer, but only on a price chart: an indicator pane's value is not a price.
+    const price = event.point && kind === 'main' ? series.coordinateToPrice(event.point.y) : null;
+    syncCrosshair(view, typeof event.time === 'number' ? event.time : null, price);
   });
   view.observer = new ResizeObserver(() => {
     // A chart told its window before it had a size shows the wrong span, so
@@ -290,7 +292,9 @@ function paintSignalBar(t) {
   $('signal-advice').textContent = state.advice;
 }
 
-function syncCrosshair(source, time) {
+// `price` (pointer on a price chart) puts every other price chart's horizontal line at that same price; indicator
+// panes, and every chart when the pointer is on an indicator pane, keep their own bar's value.
+function syncCrosshair(source, time, price = null) {
   if (syncing) return;
   syncing = true;
   try {
@@ -300,8 +304,9 @@ function syncCrosshair(source, time) {
       if (view === source) continue;
       const step = view.panel.interval * 60;
       const t = time === null ? null : Math.floor(time / step) * step;
-      const value = t === null ? undefined : view.lookup.get(t);
-      if (Number.isFinite(value)) view.chart.setCrosshairPosition(value, t, view.series);
+      const own = t === null ? undefined : view.lookup.get(t);
+      const value = Number.isFinite(price) && view.kind === 'main' ? price : own;
+      if (Number.isFinite(own) && Number.isFinite(value)) view.chart.setCrosshairPosition(value, t, view.series);
       else view.chart.clearCrosshairPosition();
     }
     for (const panel of panels) {

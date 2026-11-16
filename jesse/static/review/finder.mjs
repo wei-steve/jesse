@@ -1,17 +1,17 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261114b';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261114b';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261114b';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261114b';
-import { calculateIndicator } from './indicators.mjs?v=20261114b';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261114b';
-import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261114b';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone, barSnapshot } from './finder-data.mjs?v=20261114b';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261114b';
+import { t as createChart } from './lightweight-charts.mjs?v=20261115a';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261115a';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261115a';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261115a';
+import { calculateIndicator } from './indicators.mjs?v=20261115a';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261115a';
+import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261115a';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone, barSnapshot } from './finder-data.mjs?v=20261115a';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261115a';
 import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS,
-  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261114b';
+  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261115a';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -469,7 +469,8 @@ function makePanel(tf, item, preferences) {
   addSnapshotButton(card, () => snapshotPanel(panel));
   addMaximizeButton(card);
   for (const event of ['pointerdown', 'wheel']) host.addEventListener(event, () => rangeLink?.activate(panel), { capture: true, passive: true });
-  panel.chart.subscribeCrosshairMove(event => syncCrosshair(panel, typeof event.time === 'number' ? event.time : null));
+  panel.chart.subscribeCrosshairMove(event => syncCrosshair(panel, typeof event.time === 'number' ? event.time : null,
+    event.point ? panel.series.coordinateToPrice(event.point.y) : null));
   // Double-clicking a candle opens the note box of this card; a click on the scales or past the last candle has no
   // candle, so nothing opens there. A single click is left alone (no handler).
   panel.chart.subscribeDblClick(param => {
@@ -492,7 +493,9 @@ function destroyPanels() {
   panels = []; $('charts').replaceChildren();
 }
 
-function syncCrosshair(source, time) {
+// `price` is the price under the pointer: every other chart puts its horizontal line at that same price (2026-11-15,
+// the user wanted the level comparable across timeframes), and falls back to its own bar's close when unknown.
+function syncCrosshair(source, time, price = null) {
   if (syncing) return;
   syncing = true;
   try {
@@ -504,8 +507,9 @@ function syncCrosshair(source, time) {
       if (panel === source || panel.empty) continue;
       const step = panel.interval * 60;
       const t = time === null ? null : Math.floor(time / step) * step;
-      const value = t === null ? undefined : panel.closes.get(t);
-      if (Number.isFinite(value)) panel.chart.setCrosshairPosition(value, t, panel.series);
+      const close = t === null ? undefined : panel.closes.get(t);
+      const value = Number.isFinite(price) ? price : close;
+      if (Number.isFinite(close) && Number.isFinite(value)) panel.chart.setCrosshairPosition(value, t, panel.series);
       else panel.chart.clearCrosshairPosition();
     }
   } finally { syncing = false; }
