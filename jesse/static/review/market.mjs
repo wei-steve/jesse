@@ -7,31 +7,33 @@
 // yields have no push at all: CNBC's one-minute series and its quote are polled every 15 seconds.
 // The chart behaviour (range linking, price zoom, snapshots) and the overlays (the review page's display settings)
 // are reused from the review/finder modules instead of being reimplemented.
-import { t as createChart } from './lightweight-charts.mjs?v=20261116n';
-import { linkTimeRanges } from './data.mjs?v=20261116n';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261116n';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116n';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116n';
+import { t as createChart } from './lightweight-charts.mjs?v=20261116o';
+import { linkTimeRanges } from './data.mjs?v=20261116o';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261116o';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116o';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116o';
 import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages, okxCandleChannels, openOkxKlines,
-  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261116n';
-import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116n';
-import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116n';
+  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261116o';
+import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116o';
+import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116o';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, MARKETS, MARKET_SOURCES, OKX_SOURCE, YIELD_SOURCE, YIELD_INSTRUMENTS,
   DEFAULT_YIELD_SYMBOL, YIELD_POLL_RANGE, aggregateCandles, candleRequest, cnbcSymbolOf, exchangeOf, instrumentName,
   isYieldSource, marketLabel, marketsOf, mergeYieldBars, mergeYieldDailyClose, normalizeMarket, normalizeYieldSymbol,
   parseCnbcBars, parseCnbcQuote, parseMarketCandles, restoreSource, sessionIndicator, sessionTail, signedPoints,
-  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261116n';
+  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261116o';
 import { MARKET_KEYS, MARKET_TIMEFRAMES, MAX_BARS, MAX_WATCHLIST, PRODUCT_PAGE, PROXY_CANDLES,
   PROXY_TICKERS, aggregateAnswer, addToWatchlist, cnbcChartUrl, cnbcQuoteUrl, defaultSymbolFor, endTimeBefore,
   filterProducts, klinesUrlFor, mergeCandles, miniTickerStreamUrl, pageSizeOf, parseKlines, parseMiniTicker,
   parseOkxCandles, proxyTickerRows, removeFromWatchlist, moveWatchItem, orderTimeframes, restoreAsideTab,
   restoreListMarket, restoreSelection, restoreTimeframes, restoreWatchlist, sameWatchItem, shiftLogical,
-  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261116n';
+  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261116o';
 // Candle notes (double-click a bar): the same box, key, 「注」 markers and stored file as the factor finder; the shared
 // module is why a note written on one page shows up on the other.
-import { barLabel, barsFor, createBarNoteBox, barNoteBody, barNoteKey, barNoteOf, filterNoteRows, noteDigest,
-  noteIdentity, noteMarkers, noteRowsFrom, noteSummary, noteTimeText, noteWhere, rememberNote, snapshotOf
-  } from './bar-notes.mjs?v=20261116n';
+import { barLabel, barsFor, createBarNoteBox, createBookPicker, barNoteBody, barNoteKey, barNoteOf, filterNoteRows,
+  noteDigest, noteIdentity, noteMarkers, noteRowsFrom, noteSummary, noteTimeText, noteWhere, rememberNote, snapshotOf
+  } from './bar-notes.mjs?v=20261116o';
+// The open 备注本 (`storage/labels/<book>.jsonl`): the same notebook as the factor finder, kept in one localStorage key.
+import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261116o';
 
 const $ = id => document.getElementById(id);
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
@@ -109,6 +111,9 @@ let productRows = [], productShown = PRODUCT_PAGE, productQuery = '', productErr
 // (kept so its marker stays amber across the next 3 / 15-second update), and why the last read failed (the tab says
 // it instead of pretending there are no notes).
 let allBars = {}, noteSearch = '', chosenNote = null, noteError = '';
+// The open 备注本 (`storage/labels/<book>.jsonl`, the factor finder's book too), the server's list for its dropdown,
+// and the picker control itself (built once in start()).
+let book = readBook(localStorage), books = [], bookPicker = null;
 
 function status(message, error = false) {
   const box = $('status');
@@ -143,7 +148,7 @@ function saveSelection() {
 // The header shows both clocks, so a screenshot from another continent still says what 「现在」 was.
 function paintClock() {
   const now = new Date();
-  $('m-clock').textContent = `${now.toISOString().slice(11, 19)} UTC · 本地 ${now.toLocaleTimeString('zh-CN', { hour12: false })}`;
+  $('m-clock').textContent = `${now.toISOString().slice(11, 19)} UTC · 本地 ${now.toLocaleTimeString('zh-CN', { hour12: false })} · 备注本 ${book}`;
 }
 
 // ---- Charts ----------------------------------------------------------------
@@ -1344,7 +1349,7 @@ const noteErrorText = error => (tokenOf() ? error.message
 // Every candle note of the label file: the charts draw their own instrument's, the 备注 tab lists them all.
 async function loadNotes() {
   try {
-    const data = await post('/review/labels', {});
+    const data = await post('/review/labels', withBook({}, book));
     allBars = data.bars ?? {};
     noteError = '';
   } catch (error) {
@@ -1354,6 +1359,63 @@ async function loadNotes() {
   }
   for (const panel of panels) paintMarkers(panel);
   if (asideTab === 'notes') paintNoteList();
+}
+
+// ---- Label books -----------------------------------------------------------
+// The notes live in `storage/labels/<book>.jsonl`; the picker at the top of the 备注 tab switches which notebook this
+// page reads and writes (2026-11-16, the user: "我有不同的备注文件，怎么切换可以继续工作？"). The factor finder keeps its
+// book in the same localStorage key, so the two pages always work in one notebook; a book the server no longer has
+// falls back to the default with a line saying so.
+function buildBookPicker() {
+  bookPicker = createBookPicker({ change: name => switchBook(name), create: name => createBook(name) });
+  $('note-book').append(bookPicker.row);
+}
+
+// The server's list (name, rows, last written) and the book this page may use. A failed list leaves `books` empty and
+// does NOT touch `noteError`: the notes themselves are a separate request, and a page that cannot list books still has
+// its notes (the picker then shows the open book alone).
+async function loadBooks() {
+  try {
+    const data = await post('/review/label-books', {});
+    books = data.books ?? [];
+  } catch {
+    books = []; // an old server without books: the default one keeps working (the picker shows it alone)
+  }
+  const wanted = book;
+  const resolved = resolveBook(books, wanted);
+  book = resolved.name;
+  if (book !== wanted) writeBook(localStorage, book);
+  bookPicker?.setBooks(books, book);
+  bookPicker?.note(resolved.missing ? `备注本「${resolved.missing}」在服务器上不在了，已回到「${book}」` : '');
+  paintClock();
+  return book;
+}
+
+// Switch to another book: remember it, re-read that book's notes (charts and 备注 list) and say which one is open.
+async function switchBook(name) {
+  const next = bookName(name);
+  if (next === book) return;
+  book = next;
+  writeBook(localStorage, book);
+  bookPicker?.setBooks(books, book);
+  await loadBooks();
+  // The highlighted note belonged to the book that was open.
+  chosenNote = null;
+  await loadNotes();
+  for (const panel of panels) paintMarkers(panel);
+  status(`已切换到备注本「${book}」`);
+}
+
+// 新建: the picker has already checked the name (plain file name, not taken). An existing name is the server's 409.
+async function createBook(name) {
+  try { await post('/review/label-books/create', { name }); }
+  catch (error) { bookPicker?.say(noteErrorText(error)); return; }
+  bookPicker?.hideForm();
+  book = name;
+  writeBook(localStorage, book);
+  status(`已新建并切换到备注本「${name}」`);
+  await loadBooks();
+  await loadNotes();
 }
 
 // The 备注 tab: `品种 · 来源 · 周期 · K 线时间 UTC` and the first 40 characters of the text, newest candle first; a row
@@ -1424,7 +1486,7 @@ async function submitBarNote(panel) {
   // A session market (the yields) counts its indicator windows over consecutive bars, the way a trading app does.
   const snapshot = snapshotOf(candles, time, panel.interval, isYieldSource(source));
   try {
-    await post('/review/label', barNoteBody({ form, tf: panel.tf, time, text,
+    await post('/review/label', barNoteBody({ form, tf: panel.tf, time, text, book,
       bar: snapshot ? { ...snapshot, ...(forming ? { forming: true } : {}) } : null }));
   } catch (error) { panel.noteBox.say(noteErrorText(error)); return; }
   allBars = rememberNote(allBars, key, text, panel.tf, time);
@@ -1541,6 +1603,8 @@ function start() {
   paintClock();
   setInterval(paintClock, 1000);
   paintSource(); paintTimeframes(); paintHeight(); paintWatchlist(); paintAside();
+  buildBookPicker();
+  loadBooks();
   for (const button of document.querySelectorAll('.aside-tab')) {
     button.onclick = () => setAsideTab(button.dataset.tab);
   }

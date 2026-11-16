@@ -169,3 +169,19 @@ main[hidden]{display:none}
 /* The note of the candle under the pointer, in the purple of the finder's status bar. */
 .bar-note-text{color:#5b3fb0}
 .watch-drag{display:flex;align-items:center;padding:0 2px 0 5px;color:#b0bcce;cursor:grab;touch-action:none;user-select:none;font-size:13px}.watch-drag:hover{color:#315cd0}.watch-row.dragging{opacity:.6;border-color:#91b0ef}
+
+/* 备注本 (T-57): the book picker above the finder's label counts and above the market page's 备注 search, plus the
+   inline 新建 row (one input inside the page — never window.prompt) and the two lines beside it (an error, and the
+   notice that a book is gone). */
+.book-slot{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:0 12px 7px}
+.book-picker{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:11px;color:#4d5f7a}
+.book-title{font-weight:600;color:#2b3a52}
+.book-picker select{max-width:190px;padding:3px 6px;font-size:11px}
+.book-picker button{padding:3px 8px;font-size:11px;white-space:nowrap}
+.book-picker .book-input{width:132px;border:1px solid #b89af0;border-radius:7px;padding:3px 6px;font:inherit;font-size:11px}
+.book-picker .book-input[hidden]{display:none}
+.book-hint{color:#c73f58;font-size:11px;line-height:1.4}
+.book-hint:empty{display:none}
+.book-note{color:#9a7a20;font-size:11px;line-height:1.4}
+.book-note:empty{display:none}
+#notes .book-slot{padding:0}

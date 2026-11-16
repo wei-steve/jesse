@@ -1,7 +1,7 @@
 // Signal labels of the factor finder: two marks per signal (trend judgement and limit order) plus one note, the
 // effective state per key and the counts / filters shown above the list. Pure functions, no DOM
-// (tests/review-labels.test.mjs). The rows themselves live in the project file
-// storage/labels/finder-labels.jsonl and are written / read by POST /review/label and POST /review/labels.
+// (tests/review-labels.test.mjs). The rows themselves live in the project's `storage/labels/<本名>.jsonl` and are
+// written / read by POST /review/label and POST /review/labels; `finder-labels` (DEFAULT_BOOK) is the default book.
 
 export const MARK_KINDS = ['trend', 'order'];
 export const MARKS = new Set(['good', 'bad', 'clear']);
@@ -49,6 +49,60 @@ export function entryOf(labels, key) {
 // The two marks are reviewed independently: the note box and the list only care whether a signal has any mark.
 export const isUnmarked = entry => !entry.trend && !entry.order;
 export const bothMarked = entry => !!entry.trend && !!entry.order;
+
+// ---- Label books ------------------------------------------------------------
+// The marks of one notebook: `storage/labels/<book>.jsonl` on the server. Several notebooks in the project mean a new
+// question starts clean instead of piling up next to last week's marks. `finder-labels` is the default and the file
+// every page wrote before books existed, so old marks keep working. Both pages keep the open book in one localStorage
+// key, so switching on one page switches the other; the row itself is written by POST /review/label with `book`.
+export const DEFAULT_BOOK = 'finder-labels';
+export const BOOK_STORAGE_KEY = 'jesse.labels.book';
+export const BOOK_MAX = 40;
+// A plain file name: letters, digits, `_`, `-` and CJK (the server allows a Chinese name too). No `/`, `.` or space, so
+// a name can never climb out of storage/labels/; the length is the server's 1–40 characters.
+export const BOOK_NAME_RE = /^[A-Za-z0-9_\-\u4e00-\u9fff]{1,40}$/;
+
+export const validBookName = name => typeof name === 'string' && BOOK_NAME_RE.test(name);
+
+// The book a stored / typed value names. A hand-edited localStorage entry (or an old build's junk) must not break the
+// page: anything the server would refuse falls back to the default book.
+export const bookName = value => (validBookName(value) ? value : DEFAULT_BOOK);
+
+/**
+ * The book the page may use. `books` is the server's answer (POST /review/label-books); a stored book that is no
+ * longer on the server falls back to the default — `missing` names it, so the page can say so instead of quietly
+ * showing another notebook's marks.
+ */
+export function resolveBook(books, stored) {
+  const names = (books ?? []).map(book => book?.name).filter(validBookName);
+  const wanted = bookName(stored);
+  if (!names.length || names.includes(wanted)) return { name: wanted, missing: '' };
+  const name = names.includes(DEFAULT_BOOK) ? DEFAULT_BOOK : names[0];
+  // Only a real book name the server lost is worth reporting; a junk stored value simply is the default book.
+  return { name, missing: validBookName(stored) ? wanted : '' };
+}
+
+/** The open book of this browser. A browser that refuses localStorage (or no storage at all) uses the default. */
+export function readBook(store) {
+  try {
+    return bookName(store?.getItem?.(BOOK_STORAGE_KEY) ?? '');
+  } catch { return DEFAULT_BOOK; }
+}
+
+/** Remember the open book; returns false when the browser refused (the page still uses it for this session). */
+export function writeBook(store, name) {
+  try {
+    if (typeof store?.setItem !== 'function') return false;
+    store.setItem(BOOK_STORAGE_KEY, bookName(name));
+    return true;
+  } catch { return false; }
+}
+
+/** `{ ...body, book }` for POST /review/label and POST /review/labels. */
+export const withBook = (body, name) => ({ ...(body ?? {}), book: bookName(name) });
+
+/** `趋势本（12 条）`: one row of the 备注本 dropdown. */
+export const bookOptionText = book => `${book?.name ?? ''}（${Number(book?.rows ?? 0)} 条）`;
 
 // Rows of the label file (oldest first) → Map of key → { trend, order, note }, the same answer POST
 // /review/labels gives. The last row of a kind wins, a `clear` row removes that kind, and a row without a kind

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>看行情 · Jesse</title>
   <link rel="icon" href="/favicon.ico">
-  <link rel="stylesheet" href="./review.css?v=20261116n">
+  <link rel="stylesheet" href="./review.css?v=20261116o">
 </head>
 <body class="market">
   <header>
@@ -45,23 +45,25 @@
         <div id="product-list"></div>
         <button id="product-more" class="product-more" type="button" hidden>显示更多</button>
       </div>
-      <!-- 备注: every candle note of the label file (all sources and instruments, newest candle first). A row jumps to
-           the chart that holds that candle; the box under the search field filters by the note's text or the instrument. -->
+      <!-- 备注: every candle note of the open 备注本 (all sources and instruments, newest candle first). A row jumps to
+           the chart that holds that candle; the box under the picker filters by the note's text or the instrument. -->
       <div id="notes" aria-label="K 线备注" hidden>
+        <!-- 备注本 (T-57): which notebook these notes come from; the picker (bar-notes.mjs) is the finder's control too. -->
+        <div id="note-book" class="book-slot" aria-label="备注本"></div>
         <input id="note-search" class="product-search" type="search" autocomplete="off" spellcheck="false" aria-label="搜索备注" placeholder="搜索备注文字或品种">
         <div id="note-count" class="product-count"></div>
         <div id="note-list"></div>
       </div>
     </aside>
     <section class="review">
-      <div class="notice">顶部「数据源」可切换：<b>Binance</b>、<b>OKX</b>、<b>Deepcoin</b>「合约 / 现货」、<b>美债收益率</b>（US03M / US02Y / US05Y / US10Y / US20Y / US30Y，按 TradingView 习惯命名，数值就是收益率本身，例如 4.02 表示 4.02%）。左栏两个标签：「自选」和当前数据源的名字，后者列出该数据源全部 USDT 产品（按 24 小时成交额排序、可搜索、每行 ☆ 一键加入自选、每 10 秒刷新一次报价），点一行切换图表。Binance / OKX 由浏览器直连交易所（不经过 Jesse、不导入数据库），浅红虚线是最近成交价，最右边随成交跳动的那根是正在形成的 K 线；Deepcoin 不开放跨域，K 线和产品列表经 Jesse 代理，图表每 3 秒轮询一次（价格走它的公开推送），产品列表每 10 秒一次；<b>美债收益率</b>六种期限全部由浏览器直连 CNBC（Tradeweb），1 分钟级、约 10 天盘中历史（1D 图是约 3 年的日线），每 15 秒轮询一次，浅红虚线是「实时」值，自选和产品列表的美债报价也是一次拉齐。时间统一为 UTC；上方同时显示本地时间。主图上的均线、布林带等沿用复盘页「周期与指标」里的显示设置（副图指标不画）。Binance / OKX / Deepcoin 来源往左拖到最早一根附近会自动往前加载，每个周期最多 5000 根；美债由 CNBC 一次给出一整段，没有更早的盘中数据，不翻页。<b>双击任意 K 线可以写备注</b>（紫色「注」标记，悬停看全文，回车保存、空着回车删除、Esc 取消），左栏第三个标签「备注」列出全部来源和品种的备注（最新的在上，可搜索，点一行跳到那根 K 线并高亮）；备注和因子查找器共用同一份 <code>storage/labels/finder-labels.jsonl</code>，Claude 可以直接读这个文件。</div>
+      <div class="notice">顶部「数据源」可切换：<b>Binance</b>、<b>OKX</b>、<b>Deepcoin</b>「合约 / 现货」、<b>美债收益率</b>（US03M / US02Y / US05Y / US10Y / US20Y / US30Y，按 TradingView 习惯命名，数值就是收益率本身，例如 4.02 表示 4.02%）。左栏两个标签：「自选」和当前数据源的名字，后者列出该数据源全部 USDT 产品（按 24 小时成交额排序、可搜索、每行 ☆ 一键加入自选、每 10 秒刷新一次报价），点一行切换图表。Binance / OKX 由浏览器直连交易所（不经过 Jesse、不导入数据库），浅红虚线是最近成交价，最右边随成交跳动的那根是正在形成的 K 线；Deepcoin 不开放跨域，K 线和产品列表经 Jesse 代理，图表每 3 秒轮询一次（价格走它的公开推送），产品列表每 10 秒一次；<b>美债收益率</b>六种期限全部由浏览器直连 CNBC（Tradeweb），1 分钟级、约 10 天盘中历史（1D 图是约 3 年的日线），每 15 秒轮询一次，浅红虚线是「实时」值，自选和产品列表的美债报价也是一次拉齐。时间统一为 UTC；上方同时显示本地时间。主图上的均线、布林带等沿用复盘页「周期与指标」里的显示设置（副图指标不画）。Binance / OKX / Deepcoin 来源往左拖到最早一根附近会自动往前加载，每个周期最多 5000 根；美债由 CNBC 一次给出一整段，没有更早的盘中数据，不翻页。<b>双击任意 K 线可以写备注</b>（紫色「注」标记，悬停看全文，回车保存、空着回车删除、Esc 取消），左栏第三个标签「备注」列出全部来源和品种的备注（最新的在上，可搜索，点一行跳到那根 K 线并高亮）；备注和因子查找器共用同一本「备注本」（左栏「备注」标签顶部下拉切换，顶部时钟旁也写着当前本名，默认 <code>storage/labels/finder-labels.jsonl</code>），Claude 可以直接读 <code>storage/labels/</code> 下的文件。</div>
       <div id="charts" class="chart-grid"></div>
     </section>
   </main>
   <script type="module">
     // REVIEW_VERSION: change it (and every "?v=" in the .mjs imports and the stylesheet link) whenever
     // any file in this folder changes. tests/review-version.test.mjs checks that they all match.
-    const REVIEW_VERSION = '20261116n';
+    const REVIEW_VERSION = '20261116o';
     import(`./market.mjs?v=${REVIEW_VERSION}`).catch(error => {
       const status = document.getElementById('status');
       status.hidden = false; status.classList.add('error'); status.textContent = `看行情页脚本加载失败：${error.message}`;

@@ -154,7 +154,7 @@ def compute(candles_by_tf: dict, params: dict) -> dict:
 
 - **四个数据源**（顶部「数据源」下拉，存 localStorage `jesse.market.source.v1`）：**Binance**（默认）、**OKX**、**Deepcoin**、**美债收益率**。T-54 起「合约 / 现货」不再是数据源，而是左栏产品列表里的子标签；旧值 `binance-perp` / `binance-spot` 自动迁移成 Binance + 合约 / 现货。切换时先用一个很轻的请求探一下新品种，失败就报中文错误并保留当前图表（不会白屏，也不会让下拉和图表对不上）。
 - **左栏三个标签**：「自选」、「<当前数据源名>」（如「Binance」「美债收益率」）和「备注」（T-56），点哪个显示哪个，记在 localStorage `jesse.market.asidetab.v1`；切换数据源时第二个标签名跟着变。第二个标签下是「合约 | 现货」子标签（美债没有，只有六行 US03M…US30Y）、一个搜索框（输 `sol` 在全量里过滤）和该数据源的全部 USDT 产品：按 24 小时成交额从大到小排（Binance 用 `quoteVolume`，OKX / Deepcoin 用 `volCcy24h`），每行显示名称、最新价、24 小时涨跌幅，右边的 ☆ / ★ 一键加入 / 移出自选，点行切换图表。可能上千行，所以先画 200 行 + 「显示更多」（`PRODUCT_PAGE`），搜索在全量里搜。列表报价每 10 秒刷新一次（打开该标签时才刷新），不按产品开 socket；子标签的选择存在 `jesse.market.listmarket.v1`。
-- **K 线备注（T-56，与因子查找器同一套）**：双击任意 K 线（含最右边那根正在形成的）→ 该卡片顶部弹出输入框，标题如「10-27 08:36 UTC · 3m 这根 K 线的看法」，已有备注就预填；回车 / Ctrl+Enter 保存，空着回车删除，Esc 取消。备注框、key、紫色「注」标记和快照都来自共用模块 `bar-notes.mjs`，所以两页行为完全一致（因子查找器也改用它）。存进同一份 `storage/labels/finder-labels.jsonl`（一行 `kind=bar`，`key` = `bar|exchange|symbol|tf|time`），exchange / symbol 用因子查找器的写法：`Binance Perpetual Futures` / `Binance Spot`、`OKX Perpetual` / `OKX Spot`、`Deepcoin Perpetual` / `Deepcoin Spot`、`US Treasury Yields`（symbol 都是 `BTC-USDT`，美债是 `US02Y` 等），所以同一根 K 线在两个页面共享同一条备注。`bar` 快照同查找器（o/h/l/c、MA5、MA10、ATR、BOLL），美债的指标按「交易时段连续」口径算（`sessionSnapshot`）；正在形成的那根也能备注，快照带 `forming: true`。有备注的 K 线画紫色「注」方块（`#7c3aed`），悬停时图下方显示全文；3 秒 / 15 秒刷新（`setData`）后标记不丢。
+- **K 线备注（T-56，与因子查找器同一套）**：双击任意 K 线（含最右边那根正在形成的）→ 该卡片顶部弹出输入框，标题如「10-27 08:36 UTC · 3m 这根 K 线的看法」，已有备注就预填；回车 / Ctrl+Enter 保存，空着回车删除，Esc 取消。备注框、key、紫色「注」标记和快照都来自共用模块 `bar-notes.mjs`，所以两页行为完全一致（因子查找器也改用它）。存进当前备注本（默认 `storage/labels/finder-labels.jsonl`，一行 `kind=bar`，`key` = `bar|exchange|symbol|tf|time`），exchange / symbol 用因子查找器的写法：`Binance Perpetual Futures` / `Binance Spot`、`OKX Perpetual` / `OKX Spot`、`Deepcoin Perpetual` / `Deepcoin Spot`、`US Treasury Yields`（symbol 都是 `BTC-USDT`，美债是 `US02Y` 等），所以同一根 K 线在两个页面共享同一条备注。`bar` 快照同查找器（o/h/l/c、MA5、MA10、ATR、BOLL），美债的指标按「交易时段连续」口径算（`sessionSnapshot`）；正在形成的那根也能备注，快照带 `forming: true`。有备注的 K 线画紫色「注」方块（`#7c3aed`），悬停时图下方显示全文；3 秒 / 15 秒刷新（`setData`）后标记不丢。
 - **「备注」标签**：列出全部来源、全部品种的 `kind=bar` 备注（按 K 线时间新的在上），每行「品种 · 来源 · 周期 · K 线时间 UTC」+ 备注前 40 字，可搜索（备注文字 / 品种 / 周期 / 来源），先画最新的 200 行。点一行 → 切到那个来源 / 品种、勾上它的周期、图滚到那根 K 线并把「注」标成琥珀色（`#f59e0b`）；切换品种 / 来源时重新读这个品种的备注。
 - **Binance（合约 / 现货）直接从交易所拿**：历史 K 线永续走 `https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=4h&limit=1000`，现货走同样的参数在 `https://api.binance.com/api/v3/klines`（两者都允许跨域，`access-control-allow-origin: *`），浏览器直连交易所，不经过后端、不导入数据库，所以任何 USDT 交易对都能看，不必先导入。返回 `[[开盘毫秒, "o","h","l","c","v", 收盘毫秒, …], …]`；最后一条是正在形成的那根（收盘时间在未来），页面把它当 forming，不当已收盘。产品列表取 `/fapi/v1/ticker/24hr`、`/api/v3/ticker/24hr`（全量，只留 `…USDT`）。
 - **OKX 也直接拿**（CORS 回显 origin）：K 线 `https://www.okx.com/api/v5/market/candles?instId=BTC-USDT-SWAP&bar=15m&limit=300`（最新 1440 根以内），更早的分页用 `/api/v5/market/history-candles?…&after=<最早一根毫秒>`（最多 100 根）；返回新→旧，`[ts,o,h,l,c,vol,volCcy,volCcyQuote,confirm]`，只有第一行可能 `confirm=0`（形成中）。周期写法 `1m 3m 5m 15m 30m 1H 4H 1Dutc`（大写 H；`1Dutc` 才是 UTC 日线，`1D` 是交易所的 UTC+8 日线）。产品列表 `/api/v5/market/tickers?instType=SWAP|SPOT`（`last`、`open24h`、`volCcy24h`），合约 instId 形如 `BTC-USDT-SWAP`，现货 `BTC-USDT`。
@@ -183,7 +183,7 @@ def compute(candles_by_tf: dict, params: dict) -> dict:
 
 ## 标注（因子查找器里分开标「趋势判断」和「挂单」）
 
-因子查找器里发现信号或挂单不对时，不再一张张截图：翻到那个信号，按一下键标“好 / 坏”，可加一句备注。每个信号有**两项独立标注**——「趋势判断」（这个信号该不该出现）和「挂单」（挂单价 / 成交 / 离场合不合理），所以一个“坏”能说清楚错在哪儿。标注写进**项目目录**（`jesse run` 的 cwd）下的 `storage/labels/finder-labels.jsonl`，调度/Claude 直接读这个文件分析，不需要截图。
+因子查找器里发现信号或挂单不对时，不再一张张截图：翻到那个信号，按一下键标“好 / 坏”，可加一句备注。每个信号有**两项独立标注**——「趋势判断」（这个信号该不该出现）和「挂单」（挂单价 / 成交 / 离场合不合理），所以一个“坏”能说清楚错在哪儿。标注写进**项目目录**（`jesse run` 的 cwd）下的当前「备注本」，默认就是 `storage/labels/finder-labels.jsonl`（见下面的「备注本」一节），调度/Claude 直接读这个文件分析，不需要截图。
 
 **快捷键**（焦点在输入框、下拉框里时不响应）
 
@@ -196,19 +196,32 @@ def compute(candles_by_tf: dict, params: dict) -> dict:
 
 **文件格式**：一行一条 JSON，只追加、不改旧行。字段：`key`（`factor|exchange|symbol|tf|start|dir`，前端在 `labels.mjs` 拼）、`kind`（`trend` / `order` / `note` / `bar`；缺省 = `trend`，所以旧行就是趋势标注）、`label`（`good` / `bad` / `clear`；`kind=note` 的行没有这个字段）、`note`、`factor`、`version`、`params`（这次实际用的因子参数）、`exchange`、`symbol`、`tf`、`start`（区间开始，UTC 秒）、`dir`（1 / -1）、`order`（当时页面上的挂单：算法 `rule`、挂单价 `price`、状态 `status`（`filled` / `open` / `unfilled` / `waiting`）、等了几根 `waitBars`、成交价 `fillPrice`、止损 `stop`、止盈 `target`、结果 `R`）、`saved_at`（UTC ISO）。
 
-读法：同一个 `key`、同一个 `kind` 取**最后一条**，`clear` 表示取消这一项标注（这项变成空）；备注取该 key 最后一条带备注的行、或最后一条 `kind=note` 的行（`kind=note` 且备注为空 = 删掉备注）。三项全空的 key 不返回。页面用 `POST /review/labels {factor, exchange, symbol}` 拿回 `{ labels: { key: { trend, order, note } }, bars: { key: { note, tf, time } } }`（`bars` 见下面的 K 线备注），接口做的就是这件事；也可以直接读文件。`key` 上限 200 字符，一条记录序列化后超过 8 KB 返回 413，备注超过 500 字符会截断（不丢标注）。
+读法：同一个 `key`、同一个 `kind` 取**最后一条**，`clear` 表示取消这一项标注（这项变成空）；备注取该 key 最后一条带备注的行、或最后一条 `kind=note` 的行（`kind=note` 且备注为空 = 删掉备注）。三项全空的 key 不返回。页面用 `POST /review/labels {factor, exchange, symbol, book?}` 拿回 `{ labels: { key: { trend, order, note } }, bars: { key: { note, tf, time } } }`（`bars` 见下面的 K 线备注），接口做的就是这件事；也可以直接读文件。`book` 缺省 = 默认本（见下面「备注本」）。`key` 上限 200 字符，一条记录序列化后超过 8 KB 返回 413，备注超过 500 字符会截断（不丢标注）。
 
-**接口**：`POST /review/label`（写一条，`{ok: true}`；`kind` 不是 trend/order/note 返回 400，trend/order 的 `label` 不是 good/bad/clear 也返回 400，`kind=note` 可以不带 `label`）和 `POST /review/labels`（读当前两项标注和备注，文件不存在返回空），都在 `jesse/controllers/review_controller.py`，与截图接口同一个 router、同样需要登录。
+**接口**：`POST /review/label`（写一条，`{ok: true}`；`kind` 不是 trend/order/note 返回 400，trend/order 的 `label` 不是 good/bad/clear 也返回 400，`kind=note` 可以不带 `label`；`book` 可选，见下）和 `POST /review/labels`（读当前两项标注和备注，文件不存在返回空；`book` 可选），都在 `jesse/controllers/review_controller.py`，与截图接口同一个 router、同样需要登录。
 
 **K 线备注**（任意周期图上的任意一根 K 线，不只信号）
 
 - **双击**任意周期图的 K 线（不要双击价格轴 / 时间轴或最后一根之后的空白，那里没有 K 线，什么也不弹）→ 在该卡片顶部弹出输入框，标题如「10-27 08:36 UTC · 3m 这根 K 线的看法」，这根 K 线已有备注就预填。回车保存，`Esc` 取消，清空后回车 = 删除这条备注。单击行为保持不变；输入框打开时快捷键都不响应。
 - 保存时页面把当时屏幕上的数据一起写进同一行：`bar`（`open` / `high` / `low` / `close` / `ma5` / `ma10` / `atr`（ATR(14)，Wilder 平滑）/ `bollUpper` / `bollMid` / `bollLower`（BOLL 20/2，总体标准差），都只用这根及之前的 K 线算）、`factor` / `version` / `params`（当前因子）、`tf`、`time`（这根 K 线的开盘时间，UTC 秒）、`signal`（当时选中的信号 `key`，没选就没有这个字段），所以以后看图也能知道当时在说什么。
-- 存储：同一份 `storage/labels/finder-labels.jsonl`，一行 `kind=bar`，`key` 为 `bar|exchange|symbol|tf|time`（前端 `labels.mjs` 的 `barKey`；周期在 key 里，所以 3m 的备注不会跑到同一时刻的 15m K 线上），只有 `note` 文字（与 `kind=note` 一样不需要 `label`）；空 `note` 的一行就是删除。读法和其他行一样：每个 key 取最后一条，空 `note` 不返回。
+- 存储：当前备注本（默认 `storage/labels/finder-labels.jsonl`），一行 `kind=bar`，`key` 为 `bar|exchange|symbol|tf|time`（前端 `labels.mjs` 的 `barKey`；周期在 key 里，所以 3m 的备注不会跑到同一时刻的 15m K 线上），只有 `note` 文字（与 `kind=note` 一样不需要 `label`）；空 `note` 的一行就是删除。读法和其他行一样：每个 key 取最后一条，空 `note` 不返回。
 - `POST /review/labels` 的答案变成 `{labels: {...}, bars: {key: {note, tf, time}}}`：`bars` 只按 `exchange` / `symbol` 过滤（K 线备注与因子无关，切因子照样显示），`labels` 里不会混入 `bar` 行，旧字段和行为不变。
 - 有备注的 K 线在**它自己的周期图**上画一个紫色方块「注」（`#7c3aed`，`aboveBar`）：和信号标记一起交给 `setMarkers`，选中信号的高亮 / 入场平仓标记都不受影响；鼠标悬停到那根 K 线时，状态条下面显示完整备注。列表上方多一行小字提示「双击图上任意 K 线可写看法」。
 
-**测试**：`tests/review-labels.test.mjs`（`labels.mjs` 的 `labelKey` / `labelCounts` / `countsText` / `latestLabels` / `filterByLabel` / `barKey` / `latestBars` / `barNoteOf` / `barLabel` / `barMarkers`）、`tests/review-bar-notes.test.mjs`（`bar-notes.mjs`：两页的 exchange / symbol 命名、同一根 K 线的 key、备注列表的解析 / 排序 / 搜索、会话市场快照），`tests/test_review_labels.py`（写入、kind 缺省为 trend、order 与 trend 互不覆盖、备注单独存 / 清、clear、非法 kind 和 label、旧行兼容、超长 413、按 factor/symbol 过滤；K 线备注的存 / 改 / 删、不混入 labels、按品种和周期过滤、手写行从 key 读回 tf / time）。
+**测试**：`tests/review-labels.test.mjs`（`labels.mjs` 的 `labelKey` / `labelCounts` / `countsText` / `latestLabels` / `filterByLabel` / `barKey` / `latestBars` / `barNoteOf` / `barLabel` / `barMarkers`）、`tests/review-bar-notes.test.mjs`（`bar-notes.mjs`：两页的 exchange / symbol 命名、同一根 K 线的 key、备注列表的解析 / 排序 / 搜索、会话市场快照）、`tests/review-label-books.test.mjs`（备注本：名字校验、localStorage 读写容错、存的本不在了的回退、请求体带 `book`）、`tests/test_review_labels.py`（写入、kind 缺省为 trend、order 与 trend 互不覆盖、备注单独存 / 清、clear、非法 kind 和 label、旧行兼容、超长 413、按 factor/symbol 过滤；K 线备注的存 / 改 / 删、不混入 labels、按品种和周期过滤、手写行从 key 读回 tf / time；备注本的默认本兼容、本与本隔离、名字校验、不存在的本写入 404 / 读取为空、列本与新建、重名 409）。
+
+## 备注本（多本笔记）
+
+**一个备注本 = `storage/labels/` 下的一个 `<名字>.jsonl`**（还是 `jesse run` 的 cwd 下的项目目录）。信号标注（`trend` / `order`）、信号备注（`kind=note`）和 K 线备注（`kind=bar`）都属于当前打开的那一本，换一本就是换一个干净的工作面，旧本原样保留。**默认本叫 `finder-labels`**，就是 T-57 之前唯一那个文件，所以旧数据和没换过本的页面照旧工作，不需要迁移。
+
+- **在哪、怎么切**：因子查找器左栏「趋势 好 x / 坏 y · …」统计下面一行「备注本：[下拉] [新建]」；看行情页左栏「备注」标签里、搜索框上方同一个控件（顶部时钟那行也写着当前本名）。下拉每项是「名字（N 条）」，按最近写过排序。切换后立刻重新读那一本的标注和 K 线备注，重画紫色「注」和列表；保存一律写当前本。
+- **两个页面同一本**：选择存在 localStorage `jesse.labels.book`（一个共用 key），在一个页面切换，另一个页面刷新后跟着换。**存的本在服务器上不在了**（被删 / 改名 / 换了项目目录）就回退默认本，并在控件旁边提示是哪一个本不在了，不会闷声显示另一本的内容。
+- **新建**：点「新建」在同一行出现输入框（不用 `window.prompt`），回车新建并切过去，`Esc` 取消；名字不合法或重名就在旁边写中文错误。
+- **名字规则**：`^[A-Za-z0-9_\-一-鿿]{1,40}$`——中英文、数字、`_`、`-`，1–40 字；不许 `/`、`.`、空格（名字直接当文件名，所以不能跳出 `storage/labels/`）。不合法返回 400。
+- **没有删除和改名**，防误删：要删 / 改名就让主人手动处理 `storage/labels/*.jsonl`。`storage/labels/` 下别的文件（名字不合法的、非 `.jsonl` 的）不会出现在下拉里。
+- **追加写不变**：还是只往当前本追加一行，不改写旧行；一行里不重复记 `book`（文件名就是本名）。
+- **Claude 怎么读**：直接读 `storage/labels/*.jsonl`——默认 `finder-labels.jsonl`，其余按文件名就是本名。也可以用 `POST /review/labels`（加 `book`，缺省默认本）；不存在的本读取返回空（不会报错），写入返回 404「备注本不存在，先新建」。
+- **接口**：`POST /review/label-books`（无参数）→ `{books: [{name, rows, updated}], default: 'finder-labels'}`，`rows` = 行数，`updated` = 最后写入的秒级时间戳，按最近修改倒序；默认本即使还没写过也会列出来（`rows: 0, updated: 0`，第一次写入就建文件）。`POST /review/label-books/create {name}` → 新建空文件 `{ok: true, name}`；已存在返回 409。两个接口都需要登录。
 
 ## 截图与标注
 

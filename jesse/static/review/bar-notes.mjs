@@ -1,6 +1,6 @@
 // Candle notes, shared by the factor finder (finder.mjs) and the market page (market.mjs): double-click a candle,
 // write one line of your own thoughts, and it is stored as a `kind=bar` row of the same project file as the signal
-// marks (`storage/labels/finder-labels.jsonl`, written / read by POST /review/label and POST /review/labels). Claude
+// marks (`storage/labels/<备注本>.jsonl`, written / read by POST /review/label and POST /review/labels). Claude
 // reads that file directly, so the page only has to write it.
 //
 // One candle is one note across both pages: the key is `bar|exchange|symbol|tf|time` (labels.mjs), and both pages
@@ -9,11 +9,12 @@
 //
 // Pure functions (naming, keys, the 备注 list, the candle snapshot) plus the one-line box every chart uses, so the two
 // pages cannot drift apart; tests/review-bar-notes.test.mjs runs all of it with node.
-import { barKey, barLabel, barMarkers, barNoteOf, BAR_NOTE_COLOR, BAR_NOTE_TEXT } from './labels.mjs?v=20261116n';
-import { barSnapshot } from './finder-data.mjs?v=20261116n';
-import { atr14 } from './limit-rules.mjs?v=20261116n';
+import { barKey, barLabel, barMarkers, barNoteOf, BAR_NOTE_COLOR, BAR_NOTE_TEXT, BOOK_MAX, bookName, bookOptionText,
+  validBookName } from './labels.mjs?v=20261116o';
+import { barSnapshot } from './finder-data.mjs?v=20261116o';
+import { atr14 } from './limit-rules.mjs?v=20261116o';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, OKX_SOURCE, YIELD_SOURCE, marketLabel, normalizeYieldSymbol,
-  sourceLabel } from './market-sources.mjs?v=20261116n';
+  sourceLabel } from './market-sources.mjs?v=20261116o';
 
 // The single-candle readers of labels.mjs, re-exported so a page imports the note helpers from one place.
 export { barLabel, barNoteOf, BAR_NOTE_COLOR, BAR_NOTE_TEXT };
@@ -89,10 +90,11 @@ export function splitBarKey(key) {
   return { exchange: parts[1], symbol: parts[2], tf: parts[3], time };
 }
 
-/** The body of POST /review/label for one candle note. An empty `text` is the explicit "delete this note" row. */
-export function barNoteBody({ form, tf, time, text, bar = null, extra = {} }) {
+/** The body of POST /review/label for one candle note. An empty `text` is the explicit "delete this note" row.
+ *  `book` is the 备注本 the note goes into (labels.mjs's DEFAULT_BOOK when the page has none). */
+export function barNoteBody({ form, tf, time, text, bar = null, book = null, extra = {} }) {
   return { key: barKey(form, tf, time), kind: 'bar', note: text, exchange: form?.exchange, symbol: form?.symbol,
-    tf, time, ...(bar ? { bar } : {}), ...extra };
+    tf, time, ...(book ? { book: bookName(book) } : {}), ...(bar ? { bar } : {}), ...extra };
 }
 
 /** The local state after saving one note: the note box shows it at once, without a second read of the file. */
@@ -242,5 +244,81 @@ export function createBarNoteBox({ submit, close } = {}) {
     /** What the box holds: trimmed and capped, so a pasted essay cannot exceed what the server keeps. */
     value: () => input.value.trim().slice(0, BAR_NOTE_MAX),
     say: message => { hint.textContent = message; },
+  };
+}
+
+// ---- The 备注本 picker -------------------------------------------------------
+/**
+ * 「备注本：[下拉] [新建]」, the same control above the finder's label counts and above the market page's 备注 search.
+ * The page owns the data: it hands the server's list (POST /review/label-books) and the open book to `setBooks`, and
+ * gets `change(name)` when another book is picked and `create(name)` when a new name is typed and Enter is pressed.
+ * 新建 opens a row inside the page (never window.prompt) — Enter creates and switches, Esc closes it, and a bad or
+ * taken name is refused here with a Chinese line beside the box. There is no delete / rename, on purpose.
+ */
+export function createBookPicker({ change, create } = {}) {
+  const row = document.createElement('div');
+  row.className = 'book-picker';
+  row.innerHTML = '<span class="book-title">备注本</span>'
+    + '<select class="book-select" aria-label="备注本"></select>'
+    + '<button type="button" class="book-new">新建</button>'
+    + `<input class="book-input" maxlength="${BOOK_MAX}" aria-label="新备注本的名字" placeholder="名字，回车新建" hidden>`
+    + '<span class="book-hint" role="status"></span>'
+    + '<span class="book-note"></span>';
+  const select = row.querySelector('.book-select');
+  const newButton = row.querySelector('.book-new');
+  const input = row.querySelector('.book-input');
+  const hint = row.querySelector('.book-hint');
+  const notice = row.querySelector('.book-note');
+  let books = [], current = '';
+
+  const say = message => { hint.textContent = message ?? ''; };
+  const hideForm = () => { input.hidden = true; input.value = ''; say(''); };
+
+  select.onchange = () => {
+    hideForm();
+    const next = bookName(select.value);
+    const before = current;
+    current = next;
+    if (next !== before) change?.(next);
+  };
+  newButton.onclick = () => { input.hidden = false; input.value = ''; say(''); input.focus(); };
+  input.onkeydown = event => {
+    if (event.key === 'Escape') { event.preventDefault(); hideForm(); return; }
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    const name = input.value.trim().slice(0, BOOK_MAX);
+    if (!name) { say('名字不能为空'); return; }
+    if (!validBookName(name)) { say('名字只能用中英文、数字、_ 和 -（1–40 字，不能有 / . 空格）'); return; }
+    if (books.some(book => book.name === name)) { say(`备注本「${name}」已存在`); return; }
+    say('');
+    create?.(name);
+  };
+
+  return {
+    row, select, input,
+    say,
+    /** The line under the picker that stays until it changes: e.g. "那个本不在了，已回到默认本". */
+    note: message => { notice.textContent = message ?? ''; },
+    hideForm,
+    value: () => select.value,
+    /** Draw the server's books, one row per book (`名字（N 条）`), with `open` selected. */
+    setBooks(next, open = current) {
+      books = (next ?? []).filter(book => validBookName(book?.name));
+      current = bookName(open);
+      const options = books.map(book => {
+        const option = document.createElement('option');
+        option.value = book.name; option.textContent = bookOptionText(book);
+        return option;
+      });
+      // A book the server did not list (an empty answer, a read that failed) still has to be selectable: the page must
+      // never show book A while saving into book B.
+      if (!books.some(book => book.name === current)) {
+        const option = document.createElement('option');
+        option.value = current; option.textContent = bookOptionText({ name: current, rows: 0 });
+        options.unshift(option);
+      }
+      select.replaceChildren(...options);
+      select.value = current;
+    },
   };
 }
