@@ -1,20 +1,24 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261116k';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261116k';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261116k';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116k';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116k';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261116k';
-import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261116k';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone, barSnapshot,
+import { t as createChart } from './lightweight-charts.mjs?v=20261116l';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261116l';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261116l';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116l';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116l';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261116l';
+import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261116l';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone,
   nextTickDelay, newKeys, atRightEdge, importId, CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT,
-  FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116k';
-import { streamUrl, openTicker, klineStreamUrl, openKlines } from './live-price.mjs?v=20261116k';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116k';
-import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS,
-  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261116k';
+  FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116l';
+import { streamUrl, openTicker, klineStreamUrl, openKlines } from './live-price.mjs?v=20261116l';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116l';
+import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS
+  } from './labels.mjs?v=20261116l';
+// The candle notes (double-click a bar) are the market page's too: bar-notes.mjs owns the key, the box, the 「注」
+// markers and the numbers a note carries.
+import { barLabel, barNoteBody, barNoteKey, barNoteOf, createBarNoteBox, noteMarkers, rememberNote, snapshotOf
+  } from './bar-notes.mjs?v=20261116l';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -297,7 +301,7 @@ function newChart(host) {
 // ride, so selecting a signal never recolours a note.
 function paintMarkers(panel) {
   if (!panel.markers || !panel.series) return;
-  const marks = [...panel.markers, ...barMarkers(barNotes, panel.tf, time => panel.closes.has(time))]
+  const marks = [...panel.markers, ...noteMarkers(barNotes, panel.tf, time => panel.closes.has(time))]
     .sort((a, b) => a.time - b.time);
   panel.series.setMarkers(marks.map(({ ride, bar, ...marker }) =>
     ride && ride === selectedRide ? { ...marker, color: CHOSEN, size: 2, text: `▶ ${marker.text}` } : marker));
@@ -450,24 +454,15 @@ function makePanel(tf, item, preferences) {
   card.querySelector('h3').textContent = timeframeLabel(interval);
   if (item.label) { const tag = document.createElement('span'); tag.textContent = item.label; card.querySelector('h3').append(tag); }
   // The double-click box at the top of this card (a note on one candle of this timeframe). Built with the card and
-  // kept hidden until a candle is double-clicked; the title / input are filled then.
-  const noteRow = document.createElement('div');
-  noteRow.className = 'bar-note-row'; noteRow.hidden = true;
-  noteRow.innerHTML = '<strong class="bar-note-title"></strong>'
-    + '<input class="bar-note-input" maxlength="500" placeholder="对这根 K 线的看法：回车保存，空着回车删除，Esc 取消" aria-label="对这根 K 线的看法">'
-    + '<span class="bar-note-hint"></span>';
-  card.insertBefore(noteRow, card.querySelector('.chart-host'));
+  // kept hidden until a candle is double-clicked; bar-notes.mjs owns the box, so 看行情's box is the same one.
+  const noteBox = createBarNoteBox({ submit: () => submitBarNote(panel), close: () => closeBarNote(panel) });
+  card.insertBefore(noteBox.row, card.querySelector('.chart-host'));
   $('charts').append(card);
-  const panel = { tf, interval, card, noteRow, noteTime: null, preferences,
+  const panel = { tf, interval, card, noteBox, noteTime: null, preferences,
     candles: item.candles, closes: new Map(item.candles.map(c => [c.time, c.close])),
     rideSeries: [], overlaySeries: [], overlayGroups: [], chosenSeries: [],
     // 实时's forming bar (display only) and the bars the stream saw close after the database's last candle.
     forming: null, streamBars: [], tailTimer: null };
-  const input = noteRow.querySelector('.bar-note-input');
-  input.onkeydown = event => {
-    if (event.key === 'Enter') { event.preventDefault(); submitBarNote(panel); }
-    else if (event.key === 'Escape') { event.preventDefault(); closeBarNote(panel); }
-  };
   const meta = card.querySelector('.chart-meta');
   if (!item.candles.length) {
     card.classList.add('empty');
@@ -863,8 +858,7 @@ async function loadLabels(version, repaint = true) {
 // project file as the signal marks, so the scheduler reads both from one file. The key (`bar|exchange|symbol|tf|time`)
 // carries the timeframe, so a 3m note is a different row than a 15m note on the same clock time.
 
-const barInput = panel => panel.noteRow.querySelector('.bar-note-input');
-const openBarPanel = () => panels.find(panel => panel.noteRow && !panel.noteRow.hidden) ?? null;
+const openBarPanel = () => panels.find(panel => panel.noteBox?.open) ?? null;
 
 // The candle a double-click landed on. The library reports the candle under the pointer; `logical` covers a click a
 // few pixels outside it. A click on the price / time scale, or in the empty space after the last candle, has no bar
@@ -879,25 +873,20 @@ function barTimeAt(panel, param) {
 }
 
 // The candle's own numbers, so the note still explains itself after the chart has moved on: OHLC, MA5, MA10, ATR(14)
-// and BOLL(20, 2) of the clicked bar, all computed up to that bar only (the math and its tests are in finder-data.mjs).
-const barPayload = (panel, time) => barSnapshot(panel.candles, time, panel.interval);
+// and BOLL(20, 2) of the clicked bar, all computed up to that bar only (bar-notes.mjs / finder-data.mjs).
+const barPayload = (panel, time) => snapshotOf(panel.candles, time, panel.interval);
 
 function openBarNote(panel, time) {
   // One box at a time: the box belongs to the candle it was opened on.
   for (const other of panels) if (other !== panel) closeBarNote(other);
   panel.noteTime = time;
-  panel.noteRow.querySelector('.bar-note-title').textContent = `${barLabel(time, panel.tf)} 这根 K 线的看法`;
-  panel.noteRow.querySelector('.bar-note-hint').textContent = '';
-  const input = barInput(panel);
-  input.value = barNoteOf(barNotes, barKey(runIdentity(), panel.tf, time));
-  panel.noteRow.hidden = false;
-  input.focus(); input.select();
+  panel.noteBox.show(`${barLabel(time, panel.tf)} 这根 K 线的看法`,
+    barNoteOf(barNotes, barNoteKey(runIdentity(), panel.tf, time)));
 }
 
 function closeBarNote(panel) {
-  if (!panel?.noteRow) return;
-  panel.noteRow.hidden = true; panel.noteTime = null;
-  barInput(panel).value = '';
+  if (!panel?.noteBox) return;
+  panel.noteBox.hide(); panel.noteTime = null;
   flushLive();
 }
 
@@ -907,16 +896,14 @@ function closeBarNote(panel) {
 async function submitBarNote(panel) {
   const time = panel.noteTime;
   if (time === null) return;
-  const text = barInput(panel).value.trim().slice(0, 500);
+  const text = panel.noteBox.value();
   const identity = runIdentity();
-  const key = barKey(identity, panel.tf, time);
+  const key = barNoteKey(identity, panel.tf, time);
   try {
-    await post('/review/label', { key, kind: 'bar', note: text, ...identity, version: result?.version ?? null,
-      params: result?.params ?? {}, tf: panel.tf, time, bar: barPayload(panel, time),
-      signal: selectedRide?.key ?? undefined });
-  } catch (error) { panel.noteRow.querySelector('.bar-note-hint').textContent = error.message; return; }
-  if (text) barNotes[key] = { note: text, tf: panel.tf, time };
-  else delete barNotes[key];
+    await post('/review/label', barNoteBody({ form: identity, tf: panel.tf, time, text, bar: barPayload(panel, time),
+      extra: { version: result?.version ?? null, params: result?.params ?? {}, signal: selectedRide?.key ?? undefined } }));
+  } catch (error) { panel.noteBox.say(error.message); return; }
+  barNotes = rememberNote(barNotes, key, text, panel.tf, time);
   closeBarNote(panel);
   paintMarkers(panel);
   status(text ? `已保存 ${barLabel(time, panel.tf)} 的备注` : `已删除 ${barLabel(time, panel.tf)} 的备注`);
@@ -930,7 +917,7 @@ function paintBarNote(note) {
 }
 
 const barNoteAt = (panel, time) =>
-  (time === null || !panel ? '' : barNoteOf(barNotes, barKey(runIdentity(), panel.tf, time)));
+  (time === null || !panel ? '' : barNoteOf(barNotes, barNoteKey(runIdentity(), panel.tf, time)));
 
 // Keys are ignored while a text field or a select has the focus: typing a param must not mark a signal or jump.
 const typing = () => {

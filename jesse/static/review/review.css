@@ -118,7 +118,7 @@ main[hidden]{display:none}
 .market-timeframes{display:flex;flex-wrap:wrap;gap:4px}
 .market-timeframes label{display:flex;align-items:center;gap:4px;border:1px solid #dce3ee;border-radius:7px;padding:4px 7px;cursor:pointer;font-size:12px}
 .market-timeframes input{accent-color:#315cd0}
-.aside-tabs{display:flex;gap:6px;width:100%}
+.aside-tabs{display:flex;flex-wrap:wrap;gap:6px;width:100%}
 .aside-tab{border:1px solid #dce3ee;background:#fff;padding:5px 9px;font-size:12px;font-weight:600;color:#6c7b91;border-radius:7px;max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .aside-tab[aria-pressed=true]{background:#edf3ff;border-color:#315cd0;color:#315cd0}
 #watchlist{padding:6px;display:flex;flex-direction:column;gap:5px;max-height:calc(100vh - 200px);overflow:auto}
@@ -153,8 +153,19 @@ main[hidden]{display:none}
 .watch-del:hover{color:#c73f58;background:transparent}
 .market .chart-meta{font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media(max-width:950px){.market main{grid-template-columns:165px minmax(0,1fr)}}
-@media(max-width:700px){.market main{grid-template-columns:1fr}#watchlist{flex-direction:row;overflow-x:auto;max-height:none}.watch-row{min-width:126px}#products{max-height:none}}
+@media(max-width:700px){.market main{grid-template-columns:1fr}#watchlist{flex-direction:row;overflow-x:auto;max-height:none}.watch-row{min-width:126px}#products{max-height:none}#notes{max-height:none}}
 /* The market page lists (自选 / product list) set display:flex, which would override the hidden attribute and leave
    both lists stacked (2026-11-16): hidden always wins there. */
 .market aside [hidden],aside [hidden]{display:none !important}
+/* 备注 tab (T-56): every candle note of the label file, newest candle first; a row jumps to the chart that holds it. */
+#notes{padding:6px;display:flex;flex-direction:column;gap:6px;max-height:calc(100vh - 200px);overflow:auto}
+#notes[hidden]{display:none}
+#note-list{display:flex;flex-direction:column;gap:4px}
+.note-row{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;text-align:left;border:1px solid #ece5fb;background:#faf8ff;border-radius:8px;padding:6px 7px}
+.note-row:hover{background:#f5f0ff;border-color:#c9b4f5}
+.note-row strong{font-size:11px;font-weight:600;color:#5b3fb0;overflow-wrap:anywhere}
+.note-row small{font-size:11px;color:#4d5f7a;overflow-wrap:anywhere}
+.notes-empty{font-size:11px;line-height:1.5;color:#8996aa;margin:0;padding:2px}
+/* The note of the candle under the pointer, in the purple of the finder's status bar. */
+.bar-note-text{color:#5b3fb0}
 .watch-drag{display:flex;align-items:center;padding:0 2px 0 5px;color:#b0bcce;cursor:grab;touch-action:none;user-select:none;font-size:13px}.watch-drag:hover{color:#315cd0}.watch-row.dragging{opacity:.6;border-color:#91b0ef}
