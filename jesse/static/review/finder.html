@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>因子查找器 · Jesse</title>
   <link rel="icon" href="/favicon.ico">
-  <link rel="stylesheet" href="./review.css?v=20261115i">
+  <link rel="stylesheet" href="./review.css?v=20261115j">
 </head>
 <body class="signal-mode finder">
   <header>
@@ -82,14 +82,14 @@
         <div id="condition" class="finder-condition"><strong id="condition-params"></strong><span id="condition-text"></span></div>
         <div id="limit-summary" class="finder-limit-summary"></div>
       </section>
-      <div class="notice">时间统一为 UTC。数据直接来自数据库的 1m K 线（可含今天），只用已收盘的完整 K 线；最后一根未收盘的高周期 K 线不显示。区间从所选范围的起点开始算，范围之前已经开始的区间会被截断。默认只画 K 线和所骑的均线；均线周期大于范围内已有 K 线根数时，起点附近画不出线。</div>
+      <div class="notice">时间统一为 UTC。数据直接来自数据库的 1m K 线（可含今天），信号、挂单、标注和统计只用已收盘的完整 K 线；打开“实时”时，每张图最右边多一根正在形成的 K 线（随成交实时跳动，叠加的均线/布林等指标线的最后一点也跟着变），它只用于显示，不产生信号、不参与挂单和统计；关掉“实时”后它消失，未收盘的高周期 K 线不显示。区间从所选范围的起点开始算，范围之前已经开始的区间会被截断。默认只画 K 线和所骑的均线；均线周期大于范围内已有 K 线根数时，起点附近画不出线。</div>
       <div id="charts" class="chart-grid hide-values"></div>
     </section>
   </main>
   <script type="module">
     // REVIEW_VERSION: change it (and every "?v=" in the .mjs imports and the stylesheet link) whenever
     // any file in this folder changes. tests/review-version.test.mjs checks that they all match.
-    const REVIEW_VERSION = '20261115i';
+    const REVIEW_VERSION = '20261115j';
     import(`./finder.mjs?v=${REVIEW_VERSION}`).catch(error => {
       const status = document.getElementById('status');
       status.hidden = false; status.classList.add('error'); status.textContent = `查找器脚本加载失败：${error.message}`;

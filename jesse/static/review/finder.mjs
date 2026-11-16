@@ -1,19 +1,19 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261115i';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261115i';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261115i';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261115i';
-import { calculateIndicator } from './indicators.mjs?v=20261115i';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261115i';
-import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261115i';
+import { t as createChart } from './lightweight-charts.mjs?v=20261115j';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261115j';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261115j';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261115j';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261115j';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261115j';
+import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261115j';
 import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone, barSnapshot,
-  nextTickDelay, newKeys, atRightEdge, shiftRange } from './finder-data.mjs?v=20261115i';
-import { streamUrl, openTicker } from './live-price.mjs?v=20261115i';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261115i';
+  nextTickDelay, newKeys, atRightEdge, shiftRange } from './finder-data.mjs?v=20261115j';
+import { streamUrl, openTicker, klineStreamUrl, openKlines } from './live-price.mjs?v=20261115j';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261115j';
 import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS,
-  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261115i';
+  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261115j';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -119,7 +119,7 @@ function paintTimeframes() {
     const box2 = document.createElement('input'); box2.type = 'checkbox'; box2.checked = chosen.includes(tf); box2.value = tf;
     box2.setAttribute('aria-label', `查找 ${tf} 周期`);
     box2.onchange = () => {
-      form.timeframes[factor.name] = [...box.querySelectorAll('input:checked')].map(i => i.value); saveForm();
+      form.timeframes[factor.name] = [...box.querySelectorAll('input:checked')].map(i => i.value); saveForm(); syncKlines();
     };
     label.append(box2, document.createTextNode(tf));
     if (factor.timeframes.includes(tf)) { const small = document.createElement('small'); small.textContent = '默认'; label.append(small); }
@@ -401,23 +401,28 @@ function clearRideSeries(panel) {
   panel.rideSeries = [];
 }
 
-// Optional: the review page's own main-chart indicators (MA group, SMA, EMA, BOLL) on top.
+// Optional: the review page's own main-chart indicators (MA group, SMA, EMA, BOLL) on top. The series of one config
+// are kept together with it (`overlayGroups`), so 实时 can update just their last point from the forming candle.
 function addOverlay(panel, preferences) {
   clearOverlay(panel);
   for (const config of preferences.indicators) {
     if (INDICATORS[config.type].pane !== 'main') continue;
+    const series = [];
     for (const line of calculateIndicator(panel.candles, config, panel.interval).series) {
-      const series = panel.chart.addLineSeries({ color: line.color, lineWidth: 1.5, lineStyle: line.dashed ? 2 : 0,
+      const created = panel.chart.addLineSeries({ color: line.color, lineWidth: 1.5, lineStyle: line.dashed ? 2 : 0,
         lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
-      series.setData(line.data);
-      panel.overlaySeries.push(series);
+      created.setData(line.data);
+      panel.overlaySeries.push(created);
+      series.push(created);
     }
+    panel.overlayGroups.push({ config, series });
   }
 }
 
 function clearOverlay(panel) {
   for (const series of panel.overlaySeries ?? []) { try { panel.chart.removeSeries(series); } catch { /* chart rebuilt */ } }
   panel.overlaySeries = [];
+  panel.overlayGroups = [];
 }
 
 // ---- Snapshots -------------------------------------------------------------
@@ -459,9 +464,11 @@ function makePanel(tf, item, preferences) {
     + '<span class="bar-note-hint"></span>';
   card.insertBefore(noteRow, card.querySelector('.chart-host'));
   $('charts').append(card);
-  const panel = { tf, interval, card, noteRow, noteTime: null,
+  const panel = { tf, interval, card, noteRow, noteTime: null, preferences,
     candles: item.candles, closes: new Map(item.candles.map(c => [c.time, c.close])),
-    rideSeries: [], overlaySeries: [], chosenSeries: [] };
+    rideSeries: [], overlaySeries: [], overlayGroups: [], chosenSeries: [],
+    // 实时's forming bar (display only) and the bars the stream saw close after the database's last candle.
+    forming: null, streamBars: [], tailTimer: null, formingShift: 0 };
   const input = noteRow.querySelector('.bar-note-input');
   input.onkeydown = event => {
     if (event.key === 'Enter') { event.preventDefault(); submitBarNote(panel); }
@@ -515,7 +522,7 @@ function makePanel(tf, item, preferences) {
 }
 
 function destroyPanels() {
-  for (const panel of panels) { panel.observer?.disconnect(); panel.chart?.remove(); }
+  for (const panel of panels) { clearTimeout(panel.tailTimer); panel.observer?.disconnect(); panel.chart?.remove(); }
   panels = []; $('charts').replaceChildren();
 }
 
@@ -1077,7 +1084,7 @@ function render(data) {
 
 async function run() {
   readForm();
-  if (form.live) syncTicker();
+  if (form.live) { syncTicker(); syncKlines(); }
   const factor = currentFactor();
   if (!factor) return;
   const version = ++runVersion;
@@ -1176,13 +1183,139 @@ function syncTicker() {
 }
 
 const TICKER_TEXT = { connected: '', reconnecting: ' · 实时价格重连中', unsupported: ' · 这个交易所没有实时价格' };
+const KLINE_TEXT = { connected: '', reconnecting: ' · 形成中的 K 线重连中', unsupported: ' · 这个交易所或所选周期没有形成中的 K 线' };
 
 function paintLiveNote(message) {
   const note = $('live-note');
   if (!form.live) { note.hidden = true; note.textContent = ''; return; }
   note.hidden = false;
   note.textContent = (message ?? (liveUpdatedAt ? `实时 · 最后更新 ${liveClock(liveUpdatedAt)} UTC` : '实时 · 等待第一次更新'))
-    + (TICKER_TEXT[tickerState] ?? '');
+    + (TICKER_TEXT[tickerState] ?? '') + (KLINE_TEXT[klineState] ?? '');
+}
+
+// ---- The forming bar (websocket klines) -------------------------------------
+// 实时 also subscribes to the exchange's public kline stream: the bar that is still open is drawn as the rightmost
+// candle of its own chart and moves with the trades (2026-11-15, the owner wanted what a trading app shows). It is
+// display only — it never enters `panel.candles`, so signals, limit orders, marks and the status bar keep reading
+// closed bars — and its last point is fed to the overlaid main-chart indicators so their lines move too.
+let stopKlines = null, klineUrl = null, klineState = '';
+// Klines arrive a few times a second; recalculating every indicator line on every tick costs more than it shows.
+const TAIL_MS = 500;
+
+const klineTimeframes = () => {
+  const factor = currentFactor();
+  return factor ? [...(form.timeframes[factor.name] ?? factor.timeframes)] : [];
+};
+
+// Opens, switches or closes the kline stream to match 实时 / exchange / symbol / the checked timeframes.
+function syncKlines() {
+  const url = form.live ? klineStreamUrl(form.exchange, form.symbol, klineTimeframes()) : null;
+  if (url === klineUrl) return;
+  stopKlines?.(); stopKlines = null; klineUrl = url; klineState = '';
+  clearForming();
+  if (url) stopKlines = openKlines(url, {
+    onKline: candle => paintForming(panels.find(panel => !panel.empty && panel.interval === timeframeMinutes(candle.tf)), candle),
+    onState: state => { klineState = state; paintLiveNote(); },
+  });
+  else if (form.live) klineState = 'unsupported';
+  paintLiveNote();
+}
+
+// The closed bars the indicator tail reads: the database's candles plus the ones the stream saw close before the next
+// minute's import lands (the import replaces `panel.candles` and drops whatever it now contains itself).
+const tailCandles = panel => panel.streamBars.length ? [...panel.candles, ...panel.streamBars] : panel.candles;
+const formingCandle = ({ time, open, high, low, close }) => ({ time, open, high, low, close });
+
+// Draws or moves the forming bar of one chart. The library wants increasing candle times, so a tick of a bar that is
+// already closed is dropped (the closed data has it); when a new bar opens, the one that just closed keeps its last
+// indicator point and joins `streamBars` until the next import replaces the data.
+function paintForming(panel, candle) {
+  if (!panel || !candle) return;
+  const lastClosed = panel.candles.at(-1)?.time ?? -Infinity;
+  if (!(candle.time > lastClosed)) return;
+  const previous = panel.forming;
+  if (previous && candle.time < previous.time) return;
+  if (previous && candle.time > previous.time) {
+    paintTail(panel, previous);
+    panel.streamBars.push(formingCandle(previous));
+  }
+  panel.forming = candle;
+  try { panel.series.update(formingCandle(candle)); } catch { return; /* chart rebuilt */ }
+  followForming(panel);
+  scheduleTail(panel);
+}
+
+// The last point of every overlaid indicator line, computed from the last N closed bars plus the forming bar.
+function paintTail(panel, forming) {
+  for (const group of panel.overlayGroups) {
+    let tail;
+    try { tail = formingTail(tailCandles(panel), forming, group.config, panel.interval); } catch { continue; }
+    tail.forEach(({ point }, i) => {
+      if (!point) return;
+      try { group.series[i]?.update(point); } catch { /* chart rebuilt */ }
+    });
+  }
+}
+
+function scheduleTail(panel) {
+  if (panel.tailTimer) return;
+  panel.tailTimer = setTimeout(() => {
+    panel.tailTimer = null;
+    if (panel.forming) paintTail(panel, panel.forming);
+  }, TAIL_MS);
+}
+
+// A chart glued to its newest bar follows the forming bar: when the new candle would fall outside the window, the
+// window moves by the same width (the zoom the owner chose), and back again when 实时 is switched off.
+function followForming(panel) {
+  const range = panelRange(panel);
+  const lastClosed = panel.candles.at(-1)?.time;
+  if (!range || !Number.isFinite(lastClosed) || !panel.forming || !atRightEdge(range, lastClosed)) return;
+  const span = range.to - range.from;
+  const target = panel.forming.time + span * 0.05;
+  if (target <= range.to || span <= 0) return;
+  const delta = target - range.to;
+  rangeLink?.activate(null);
+  panel.chart.timeScale().setVisibleRange({ from: range.from + delta, to: range.to + delta });
+  panel.formingShift += delta;
+}
+
+function unfollowForming(panel) {
+  const delta = panel.formingShift;
+  panel.formingShift = 0;
+  const range = panelRange(panel);
+  if (!delta || !range) return;
+  rangeLink?.activate(null);
+  panel.chart.timeScale().setVisibleRange({ from: range.from - delta, to: range.to - delta });
+}
+
+// Drops the forming bar of every chart and puts the closed data (and its indicator lines) back.
+function clearForming() {
+  for (const panel of panels) {
+    if (!panel.forming && !panel.streamBars.length) { clearTimeout(panel.tailTimer); panel.tailTimer = null; continue; }
+    resetPanel(panel);
+  }
+}
+
+function resetPanel(panel) {
+  clearTimeout(panel.tailTimer); panel.tailTimer = null;
+  unfollowForming(panel);
+  panel.forming = null; panel.streamBars = [];
+  panel.series.setData(panel.candles);
+  if (form.overlay) addOverlay(panel, panel.preferences); else clearOverlay(panel);
+}
+
+// After a live round replaced this panel's candles: the forming bar (and any bar the stream closed before the import)
+// goes back on top of the new data. A bar the database now holds wins over the stream's copy.
+function reinstateForming(panel) {
+  clearTimeout(panel.tailTimer); panel.tailTimer = null;
+  const lastClosed = panel.candles.at(-1)?.time ?? -Infinity;
+  panel.streamBars = panel.streamBars.filter(bar => bar.time > lastClosed);
+  if (panel.forming && panel.forming.time <= lastClosed) panel.forming = null;
+  for (const bar of panel.streamBars) { try { panel.series.update(bar); } catch { /* chart rebuilt */ } }
+  if (!panel.forming) return;
+  try { panel.series.update(formingCandle(panel.forming)); } catch { return; /* chart rebuilt */ }
+  paintTail(panel, panel.forming);
 }
 
 // One timer, always re-armed from the clock: a slow round cannot drift the schedule the way a 60s setInterval does.
@@ -1204,12 +1337,13 @@ function setLive(on) {
     freshKeys = new Set(); clearTimeout(freshTimer);
     for (const button of rideButtons.values()) button.classList.remove('fresh');
     syncTicker();
-    paintLiveNote();
-    return;
+    syncKlines();
+  } else {
+    syncTicker();
+    syncKlines();
+    scheduleLive(0);
   }
-  syncTicker();
   paintLiveNote();
-  scheduleLive(0);
 }
 
 // While the owner is writing (a note box is open, or the cursor sits in an input), a round only refreshes the data;
@@ -1237,6 +1371,7 @@ function clearSelection(panel) {
 // Replaces one panel's candles and drawings without touching the chart object, so the time scale (and what the
 // owner is looking at) survives. `range` / `last` are what the chart showed before the update.
 function updatePanel(panel, item, preferences, range, last) {
+  panel.preferences = preferences;
   panel.candles = item.candles;
   panel.closes = new Map(item.candles.map(candle => [candle.time, candle.close]));
   panel.series.setData(panel.candles);
@@ -1244,11 +1379,15 @@ function updatePanel(panel, item, preferences, range, last) {
   addRides(panel);
   const count = rides.filter(ride => ride.minutes === panel.interval).length;
   panel.card.querySelector('.chart-meta').textContent = `${panel.candles.length.toLocaleString()} 根完整 K 线 · ${count} 个区间`;
+  // The forming bar was wiped by setData: put it (and the bars the stream closed meanwhile) back on the new data.
+  reinstateForming(panel);
   if (!range) return;
   // A chart whose right edge was at the newest bar follows the newest bar (same zoom); one dragged into history
   // gets exactly the range it had.
   const newest = panel.candles.at(-1).time;
+  panel.formingShift = 0;
   panel.chart.timeScale().setVisibleRange(atRightEdge(range, last) ? shiftRange(range, newest - last) : range);
+  followForming(panel);
 }
 
 // A new signal from this round: the row blinks for 3s and the status bar names it. Nothing else marks the event.
@@ -1434,7 +1573,7 @@ async function start() {
     readForm(); $('f-custom').hidden = form.rangeMode !== 'custom';
     checkLiveConflict();
   };
-  for (const id of ['f-exchange', 'f-symbol', 'f-start', 'f-finish']) $(id).onchange = () => { readForm(); checkLiveConflict(); };
+  for (const id of ['f-exchange', 'f-symbol', 'f-start', 'f-finish']) $(id).onchange = () => { readForm(); checkLiveConflict(); syncKlines(); };
   // "实时（每分钟）": turning it on runs a round right away, then one per UTC minute (finder-data.mjs nextTickDelay).
   $('f-live').onchange = () => {
     readForm();
@@ -1457,7 +1596,7 @@ async function start() {
     readForm();
     if (selectedRide) showRange(centeredRange(selectedRide.start, form.window)); else gotoLatest(false);
   };
-  $('f-factor').onchange = () => { form.factor = $('f-factor').value; saveForm(); paintParams(); paintTimeframes(); $('f-run').disabled = !!currentFactor()?.error; };
+  $('f-factor').onchange = () => { form.factor = $('f-factor').value; saveForm(); paintParams(); paintTimeframes(); syncKlines(); $('f-run').disabled = !!currentFactor()?.error; };
   for (const [id, step] of [['previous', -1], ['next', 1]]) $(id).onclick = () => {
     navStep = step;
     const ride = neighbour(shownRides(), selectedRide, step); if (ride) selectRide(ride);
@@ -1475,7 +1614,7 @@ async function start() {
   paintDataNote();
   if (!currentFactor()?.error) await run();
   // The saved form may have 实时 on: keep waiting for the next minute, the page already ran a fresh search.
-  if (form.live) { if (liveConflict()) setLive(false); else { syncTicker(); paintLiveNote(); } scheduleLive(); }
+  if (form.live) { if (liveConflict()) setLive(false); else { syncTicker(); syncKlines(); paintLiveNote(); } scheduleLive(); }
 }
 
 // Filling in an end date while 实时 is on would make every round stale: say why and switch it off.
