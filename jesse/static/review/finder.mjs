@@ -1,19 +1,19 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261116a';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261116a';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261116a';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116a';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116a';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261116a';
-import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261116a';
+import { t as createChart } from './lightweight-charts.mjs?v=20261116b';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261116b';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261116b';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116b';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116b';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261116b';
+import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261116b';
 import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone, barSnapshot,
-  nextTickDelay, newKeys, atRightEdge } from './finder-data.mjs?v=20261116a';
-import { streamUrl, openTicker, klineStreamUrl, openKlines } from './live-price.mjs?v=20261116a';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116a';
+  nextTickDelay, newKeys, atRightEdge, importId } from './finder-data.mjs?v=20261116b';
+import { streamUrl, openTicker, klineStreamUrl, openKlines } from './live-price.mjs?v=20261116b';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116b';
 import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS,
-  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261116a';
+  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261116b';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -1117,7 +1117,7 @@ async function importLatest() {
   manualBusy = true;
   $('f-import').disabled = true;
   try {
-    const id = crypto.randomUUID();
+    const id = importId();
     await post('/candles/import', { id, exchange: form.exchange, symbol: form.symbol, start_date: importStartDate(Date.now(), result?.last_candle_time) });
     for (;;) {
       status('正在更新 K 线数据…');
@@ -1450,7 +1450,7 @@ async function applyLive({ data, factor, params, version }) {
 // The import half of a live round: start one and wait for it. Bounded, unlike 「更新到最新」: a stuck import must not
 // swallow every later minute. Each round uses its own id, so the running one is cancelled on timeout.
 async function importRound() {
-  const id = crypto.randomUUID();
+  const id = importId();
   await post('/candles/import', { id, exchange: form.exchange, symbol: form.symbol, start_date: importStartDate(Date.now(), result?.last_candle_time) });
   // Catching up a database that is hours or days behind is a long import, not a stuck one: give it 30 minutes.
   const behind = Date.now() / 1000 - (result?.last_candle_time ?? 0) > 7200;

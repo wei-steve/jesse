@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { defaultForm, restoreForm, localToIso, isoToLocal, clampParam, runBody, importStartDate, rideExtra,
-  barSnapshot, nextTickDelay, newKeys, atRightEdge, shiftRange } from '../jesse/static/review/finder-data.mjs';
+  barSnapshot, nextTickDelay, newKeys, atRightEdge, shiftRange, importId } from '../jesse/static/review/finder-data.mjs';
 import { buildRides, rideSeries, signalStatus } from '../jesse/static/review/rides.mjs';
 
 test('restoreForm falls back to defaults field by field', () => {
@@ -169,4 +169,10 @@ test('live price: stream url, trade price, reconnect delay', async () => {
   assert.equal(tradePrice({ e: 'trade', p: '1' }), null);
   assert.equal(tradePrice({ e: 'aggTrade', p: 'x' }), null);
   assert.deepEqual([0, 1, 2, 10].map(reconnectDelay), [1000, 2000, 4000, 30000]);
+});
+
+test('importId works on a plain-http page without crypto.randomUUID', () => {
+  const id = importId({ getRandomValues: a => a.fill(0xab) });
+  assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.equal(importId({ randomUUID: () => 'x' }), 'x');
 });

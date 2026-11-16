@@ -1,9 +1,9 @@
 // Pure helpers of the factor finder page (finder.mjs): request building, saved form, and turning the
 // `/factors/run` answer into the same step series the signal mode of the review page uses (rides.mjs).
 // Nothing here knows what a factor does; the page only draws the numbers the factor file returns.
-import { timeframeMinutes } from './settings.mjs?v=20261116a';
-import { LIMIT_RULES, LIMIT_DEFAULTS, atr14 } from './limit-rules.mjs?v=20261116a';
-import { sma } from './data.mjs?v=20261116a';
+import { timeframeMinutes } from './settings.mjs?v=20261116b';
+import { LIMIT_RULES, LIMIT_DEFAULTS, atr14 } from './limit-rules.mjs?v=20261116b';
+import { sma } from './data.mjs?v=20261116b';
 
 export const FORM_KEY = 'jesse.finder.form.v1';
 // 「实时」fires a few seconds after every UTC minute: by then the minute that just closed is in the database, and a
@@ -91,6 +91,17 @@ export function runBody(form, factor, params, timeframes, nowMs) {
 // The day the import starts from: yesterday, or the day of the newest candle already in the database when that is
 // older — otherwise a database that is days behind would be left with a hole between its newest candle and yesterday
 // (2026-11-15: the data stopped on 10-27 and 「更新到最新」/实时 only fetched the last day). `lastSeconds` optional.
+// A random UUID v4 for an import job. crypto.randomUUID() exists only on secure pages (https or localhost): opened
+// from another computer as http://<lan-ip>:9100 it is undefined, every live round threw before importing and the
+// charts stopped at the last stored candle (2026-11-16). getRandomValues works on any page.
+export function importId(random = crypto) {
+  if (typeof random.randomUUID === 'function') return random.randomUUID();
+  const b = random.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+  const hex = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export function importStartDate(nowMs, lastSeconds = null) {
   const yesterday = nowMs - 86400000;
   const from = Number.isFinite(lastSeconds) ? Math.min(yesterday, lastSeconds * 1000) : yesterday;
