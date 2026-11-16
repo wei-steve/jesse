@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from jesse.services import market_sources
 from jesse.services.auth import require_auth
 
 router = APIRouter(prefix="/review", tags=["Review"], dependencies=[Depends(require_auth)])
@@ -217,6 +218,31 @@ def save_label(request_json: LabelRequestJson) -> JSONResponse:
     with open(path, 'a', encoding='utf-8') as file:
         file.write(line + '\n')
     return JSONResponse({'ok': True})
+
+
+class MarketCandlesRequestJson(BaseModel):
+    """One series of a source the browser cannot read itself. Only US treasury yields need Jesse: Binance is
+    CORS-open and read directly by the page."""
+    source: str
+    symbol: str
+    interval: str
+    range: Optional[str] = None
+
+
+@router.post('/market/candles')
+def market_candles(request_json: MarketCandlesRequestJson) -> JSONResponse:
+    """Candles of one whitelisted market source for the 看行情 page.
+
+    Yahoo and FRED send no CORS headers, so the page cannot read them from the browser. The whitelist, the upstream
+    request (10-second timeout, generic browser User-Agent) and the 30-second cache live in
+    jesse/services/market_sources.py; here we only turn its two failure kinds into HTTP statuses.
+    """
+    try:
+        answer = market_sources.read_candles(request_json.source, request_json.symbol, request_json.interval,
+                                            request_json.range)
+    except market_sources.MarketSourceError as error:
+        return JSONResponse({'error': str(error)}, status_code=error.status_code)
+    return JSONResponse(answer)
 
 
 def bar_entry(row: dict) -> dict:

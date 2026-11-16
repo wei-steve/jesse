@@ -1,12 +1,20 @@
 // Pure helpers of the market page (market.mjs): the Binance request URLs, REST rows -> candles, the merge that keeps
 // loaded history while refreshing, the `@miniTicker` quotes of the watchlist, and what localStorage holds.
 // No DOM, no fetch, no websocket: tests/review-market-data.test.mjs runs every function in this file with node.
+import { DEFAULT_SOURCE, SPOT_SOURCE, YIELD_SOURCE, DEFAULT_YIELD_SYMBOLS, DEFAULT_YIELD_SYMBOL, MARKET_SOURCES,
+  normalizeYieldSymbol, isYieldSource } from './market-sources.mjs?v=20261116e';
 
 // Binance USDTⓈ-M futures, public and CORS-open (`access-control-allow-origin: *`), so the browser talks to the
 // exchange directly: any USDT perpetual can be watched, nothing has to be imported into Jesse's database and no
-// Jesse endpoint is involved.
+// Jesse endpoint is involved. Spot is the same API on the other host (api.binance.com, `v3` instead of `fapi/v1`).
 const KLINE_API = 'https://fapi.binance.com/fapi/v1/klines';
-const QUOTE_STREAM = 'wss://fstream.binance.com/market/stream?streams=';
+const SPOT_KLINE_API = 'https://api.binance.com/api/v3/klines';
+// `@miniTicker` exists on both markets, on different hosts: the rows of each source come from its own venue.
+const QUOTE_STREAMS = {
+  'Binance Perpetual Futures': 'wss://fstream.binance.com/market/stream?streams=',
+  'Binance Spot': 'wss://stream.binance.com:9443/stream?streams=',
+};
+const DEFAULT_QUOTE_EXCHANGE = 'Binance Perpetual Futures';
 
 // One REST page is the exchange's maximum of 1000 bars ("limit"). 5000 bars per timeframe is the most this page
 // keeps: earlier pages are only requested while a chart is under it, and a live catch-up keeps the newest bars.
@@ -15,12 +23,18 @@ export const MAX_BARS = 5000;
 
 export const MARKET_TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1D'];
 export const DEFAULT_TIMEFRAMES = ['4h', '1h', '15m', '5m'];
-export const DEFAULT_WATCHLIST = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT'];
+// One entry per watchlist row, with the source it belongs to; the yields are seeded once by the page (the four the
+// owner had on screen), after that the list is only what he saved.
+export const DEFAULT_WATCHLIST = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT']
+  .map(symbol => ({ source: DEFAULT_SOURCE, symbol }));
 export const MAX_WATCHLIST = 20;
 export const DEFAULT_SYMBOL = 'BTCUSDT';
 // One key per saved choice; the market page has its own namespace so it never collides with the finder's form.
-export const MARKET_KEYS = { symbol: 'jesse.market.symbol.v1', watchlist: 'jesse.market.watchlist.v1',
-  timeframes: 'jesse.market.timeframes.v1' };
+// `symbol` holds the whole selection (`{source, symbol}`), `source` the dropdown on its own, `yields` remembers that
+// the four default yields were added once (so deleting them keeps them deleted).
+export const MARKET_KEYS = { symbol: 'jesse.market.symbol.v1', source: 'jesse.market.source.v1',
+  watchlist: 'jesse.market.watchlist.v1', timeframes: 'jesse.market.timeframes.v1',
+  yieldSeed: 'jesse.market.yields.v1' };
 
 // Binance spells the daily interval in lower case; every other timeframe of this page is the same in both.
 const INTERVALS = { '1D': '1d' };
@@ -49,10 +63,28 @@ export function normalizeSymbol(input) {
  * earlier history is pulled; without it the newest bars come back.
  */
 export function klinesUrl(symbol, timeframe, { limit = KLINE_LIMIT, endTime = null } = {}) {
-  const params = new URLSearchParams({ symbol: normalizeSymbol(symbol), interval: INTERVALS[timeframe] ?? String(timeframe ?? ''),
-    limit: String(limit) });
+  return `${KLINE_API}?${klineParams(symbol, timeframe, limit, endTime)}`;
+}
+
+/** The same page on `api.binance.com` (spot). Same rows, same interval spelling, other host. */
+export function spotKlinesUrl(symbol, timeframe, { limit = KLINE_LIMIT, endTime = null } = {}) {
+  return `${SPOT_KLINE_API}?${klineParams(symbol, timeframe, limit, endTime)}`;
+}
+
+function klineParams(symbol, timeframe, limit, endTime) {
+  const params = new URLSearchParams({ symbol: normalizeSymbol(symbol),
+    interval: INTERVALS[timeframe] ?? String(timeframe ?? ''), limit: String(limit) });
   if (Number.isFinite(endTime)) params.set('endTime', String(Math.trunc(endTime)));
-  return `${KLINE_API}?${params}`;
+  return params;
+}
+
+/**
+ * The REST URL of one source's klines page, or null for a source the browser cannot read (the yields go through
+ * `POST /review/market/candles`). Everything else about the two Binance sources is identical.
+ */
+export function klinesUrlFor(source, symbol, timeframe, options = {}) {
+  if (isYieldSource(source)) return null;
+  return source === SPOT_SOURCE ? spotKlinesUrl(symbol, timeframe, options) : klinesUrl(symbol, timeframe, options);
 }
 
 /** `endTime` of the page before the oldest loaded bar: the REST filter is inclusive, so one millisecond earlier. */
@@ -113,40 +145,97 @@ export function parseMiniTicker(message) {
   return { symbol, price: close, change: Number.isFinite(open) && open > 0 ? (close - open) / open : null };
 }
 
-/** One combined miniTicker stream for the whole watchlist (the exchange allows several streams per socket). */
-export function miniTickerStreamUrl(symbols) {
+/** One combined miniTicker stream for a watchlist of one venue (the exchange allows several streams per socket). */
+export function miniTickerStreamUrl(symbols, exchange = DEFAULT_QUOTE_EXCHANGE) {
+  const base = QUOTE_STREAMS[exchange];
   const pairs = [...new Set((Array.isArray(symbols) ? symbols : []).map(normalizeSymbol).filter(Boolean))];
-  return pairs.length ? `${QUOTE_STREAM}${pairs.map(pair => `${pair.toLowerCase()}@miniTicker`).join('/')}` : null;
+  return base && pairs.length ? `${base}${pairs.map(pair => `${pair.toLowerCase()}@miniTicker`).join('/')}` : null;
 }
 
 /**
+ * A watchlist row: `{source, symbol}`. A bare string is the pre-T-53 format (there was only one source then), so a
+ * saved list keeps working; `symbol` is normalized per source (a pair for Binance, US03M…US30Y for the yields).
+ */
+export function watchItem(value) {
+  // Only strings and objects: a number in a hand-edited file is junk, not a pair. `normalizeSymbol` would turn
+  // `42` into `42USDT` (a real base name looks like that).
+  if (typeof value === 'string') {
+    const symbol = normalizeSymbol(value);
+    return symbol ? { source: DEFAULT_SOURCE, symbol } : null;
+  }
+  if (!value || typeof value !== 'object') return null;
+  const known = MARKET_SOURCES.some(source => source.id === value.source);
+  if (!known) return null;
+  if (isYieldSource(value.source)) {
+    const symbol = normalizeYieldSymbol(value.symbol);
+    return symbol ? { source: value.source, symbol } : null;
+  }
+  const symbol = normalizeSymbol(value.symbol);
+  return symbol ? { source: value.source, symbol } : null;
+}
+
+/** One row's identity (`binance-perp|BTCUSDT`): the same pair on another source is another row. */
+export const watchKey = item => `${item.source}|${item.symbol}`;
+
+export const sameWatchItem = (a, b) => !!a && !!b && a.source === b.source && a.symbol === b.symbol;
+
+/**
  * The saved watchlist. A broken or empty value falls back to the default list (an empty sidebar would look like the
- * page failed); entries are normalized and de-duplicated, so a hand-edited value still lands on real pairs.
+ * page failed); entries are normalized and de-duplicated, so a hand-edited value still lands on real instruments.
  */
 export function restoreWatchlist(serialized) {
-  const fallback = [...DEFAULT_WATCHLIST];
+  const fallback = DEFAULT_WATCHLIST.map(item => ({ ...item }));
   let value;
   try { value = JSON.parse(serialized); } catch { return fallback; }
   if (!Array.isArray(value)) return fallback;
-  const list = [];
-  for (const item of value) {
-    const pair = normalizeSymbol(item);
-    if (pair && !list.includes(pair)) list.push(pair);
+  const list = [], seen = new Set();
+  for (const raw of value) {
+    const item = watchItem(raw);
+    if (!item || seen.has(watchKey(item))) continue;
+    seen.add(watchKey(item));
+    list.push(item);
   }
   return list.length ? list.slice(0, MAX_WATCHLIST) : fallback;
 }
 
+/** The four default yields, appended to a list that does not have them yet (the page does this once). */
+export function withDefaultYields(list) {
+  let next = Array.isArray(list) ? [...list] : [];
+  for (const symbol of DEFAULT_YIELD_SYMBOLS) {
+    const item = { source: YIELD_SOURCE, symbol };
+    if (next.some(existing => sameWatchItem(existing, item))) continue;
+    next.push(item);
+  }
+  return next.slice(0, MAX_WATCHLIST);
+}
+
 export function addToWatchlist(list, input) {
   const current = Array.isArray(list) ? [...list] : [];
-  const pair = normalizeSymbol(input);
-  if (!pair || current.includes(pair)) return current;
-  return [...current, pair].slice(0, MAX_WATCHLIST);
+  const item = watchItem(input);
+  if (!item || current.some(existing => sameWatchItem(existing, item))) return current;
+  return [...current, item].slice(0, MAX_WATCHLIST);
 }
 
 export function removeFromWatchlist(list, input) {
-  const pair = normalizeSymbol(input);
-  return (Array.isArray(list) ? list : []).filter(item => item !== pair);
+  const item = watchItem(input);
+  return (Array.isArray(list) ? list : []).filter(existing => !sameWatchItem(existing, item));
 }
+
+/**
+ * The last chart on screen (`{source, symbol}`). Before T-53 the value was a bare pair string and there was one
+ * source; that still restores, as a Binance perpetual.
+ */
+export function restoreSelection(serialized) {
+  let value;
+  try { value = JSON.parse(serialized); } catch { value = serialized; }
+  const item = watchItem(value);
+  if (item) return item;
+  return { source: DEFAULT_SOURCE, symbol: DEFAULT_SYMBOL };
+}
+
+/** A source's default instrument (the page switches to it when the dropdown changes the source). */
+export const defaultSymbolFor = source => (isYieldSource(source) ? DEFAULT_YIELD_SYMBOL
+  : MARKET_SOURCES.find(entry => entry.id === source)?.defaultSymbol ?? DEFAULT_SYMBOL);
 
 /** Only the timeframes this page can draw, smallest first (the same order the checkbox row uses). */
 export function orderTimeframes(list) {

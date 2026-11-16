@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeSymbol, klinesUrl, endTimeBefore, parseKlines, mergeCandles, parseMiniTicker,
   miniTickerStreamUrl, restoreWatchlist, addToWatchlist, removeFromWatchlist, restoreTimeframes,
-  orderTimeframes, shiftLogical, DEFAULT_WATCHLIST, DEFAULT_TIMEFRAMES, KLINE_LIMIT, MAX_BARS,
+  orderTimeframes, shiftLogical, spotKlinesUrl, klinesUrlFor, watchItem, watchKey, withDefaultYields,
+  restoreSelection, defaultSymbolFor, DEFAULT_WATCHLIST, DEFAULT_TIMEFRAMES, KLINE_LIMIT, MAX_BARS,
   MAX_WATCHLIST } from '../jesse/static/review/market-data.mjs';
+import { DEFAULT_YIELD_SYMBOLS } from '../jesse/static/review/market-sources.mjs';
 import { chartHeightOf, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, CHART_HEIGHT_KEY } from '../jesse/static/review/finder-data.mjs';
 
 // --- Symbol normalization -----------------------------------------------------------------------------------------
@@ -33,6 +35,17 @@ test('the klines URL carries the pair, the Binance interval and the page size', 
   // Binance writes the daily interval in lower case; the finder / review label is 1D.
   assert.equal(klinesUrl('BTC-USDT', '1D'), 'https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1d&limit=1000');
   assert.equal(KLINE_LIMIT, 1000);
+});
+
+test('the spot source asks the spot host, and the yields have no exchange URL at all', () => {
+  assert.equal(spotKlinesUrl('BTCUSDT', '15m'),
+    'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=1000');
+  assert.equal(klinesUrlFor('binance-spot', 'eth-usdt', '1h', { limit: 500 }),
+    'https://api.binance.com/api/v3/klines?symbol=ETHUSDT&interval=1h&limit=500');
+  assert.equal(klinesUrlFor('binance-perp', 'BTCUSDT', '4h'), klinesUrl('BTCUSDT', '4h'));
+  // The rest of a page request is the same on both venues, `endTime` included.
+  assert.ok(klinesUrlFor('binance-spot', 'BTCUSDT', '1h', { endTime: 1763199959999 }).endsWith('&endTime=1763199959999'));
+  assert.equal(klinesUrlFor('us-yields', 'US10Y', '1h'), null);
 });
 
 test('the page before the oldest bar ends one millisecond before it', () => {
@@ -119,29 +132,80 @@ test('one combined stream for the whole watchlist', () => {
   assert.equal(miniTickerStreamUrl([]), null);
   assert.equal(miniTickerStreamUrl(['---']), null);
 });
-
 // --- Saved choices ------------------------------------------------------------------------------------------------
 
 test('the watchlist survives a reload, and a broken value falls back to the default list', () => {
-  assert.deepEqual(restoreWatchlist(JSON.stringify(['btc', 'ETH-USDT'])), ['BTCUSDT', 'ETHUSDT']);
+  // Strings are the pre-T-53 format (one source existed then): they migrate to Binance perpetual futures.
+  assert.deepEqual(restoreWatchlist(JSON.stringify(['btc', 'ETH-USDT'])),
+    [{ source: 'binance-perp', symbol: 'BTCUSDT' }, { source: 'binance-perp', symbol: 'ETHUSDT' }]);
   for (const broken of [null, undefined, '', 'not json', '{}', '[]', '["", null]']) {
     assert.deepEqual(restoreWatchlist(broken), DEFAULT_WATCHLIST, String(broken));
   }
-  assert.deepEqual(DEFAULT_WATCHLIST.slice(0, 3), ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']);
-  // Duplicates and junk collapse, and the list stays bounded.
-  assert.deepEqual(restoreWatchlist(JSON.stringify(['BTCUSDT', 'BTCUSDT', 'x!', 'SOLUSDT'])), ['BTCUSDT', 'SOLUSDT']);
+  assert.deepEqual(DEFAULT_WATCHLIST.slice(0, 3), [{ source: 'binance-perp', symbol: 'BTCUSDT' },
+    { source: 'binance-perp', symbol: 'ETHUSDT' }, { source: 'binance-perp', symbol: 'SOLUSDT' }]);
+  // Duplicates and junk collapse, and the list stays bounded. The same pair on two sources is two rows.
+  assert.deepEqual(restoreWatchlist(JSON.stringify(['BTCUSDT', 'BTCUSDT', 'x!', 'SOLUSDT'])),
+    [{ source: 'binance-perp', symbol: 'BTCUSDT' }, { source: 'binance-perp', symbol: 'SOLUSDT' }]);
+  assert.deepEqual(restoreWatchlist(JSON.stringify([
+    { source: 'binance-perp', symbol: 'btc' }, { source: 'binance-spot', symbol: 'BTCUSDT' },
+    { source: 'us-yields', symbol: 'us10y' }, { source: 'nonsense', symbol: 'BTCUSDT' },
+    { source: 'us-yields', symbol: 'US07Y' }, null, 42])),
+  [{ source: 'binance-perp', symbol: 'BTCUSDT' }, { source: 'binance-spot', symbol: 'BTCUSDT' },
+    { source: 'us-yields', symbol: 'US10Y' }]);
   const many = Array.from({ length: MAX_WATCHLIST + 5 }, (_, i) => `C${String(i).padStart(2, '0')}`);
   assert.equal(restoreWatchlist(JSON.stringify(many)).length, MAX_WATCHLIST);
 });
 
-test('adding and removing coins keeps the list clean', () => {
-  const list = ['BTCUSDT'];
-  assert.deepEqual(addToWatchlist(list, 'eth-usdt'), ['BTCUSDT', 'ETHUSDT']);
-  assert.deepEqual(addToWatchlist(list, 'BTCUSDT'), ['BTCUSDT'], 'no duplicates');
-  assert.deepEqual(addToWatchlist(list, '???'), ['BTCUSDT'], 'nothing to add');
-  assert.deepEqual(removeFromWatchlist(['BTCUSDT', 'ETHUSDT'], 'btc'), ['ETHUSDT']);
-  assert.deepEqual(removeFromWatchlist(['BTCUSDT'], 'ETHUSDT'), ['BTCUSDT']);
-  assert.deepEqual(addToWatchlist([], 'sol'), ['SOLUSDT']);
+test('adding and removing rows keeps the list clean and each row keeps its source', () => {
+  const list = [{ source: 'binance-perp', symbol: 'BTCUSDT' }];
+  assert.deepEqual(addToWatchlist(list, 'eth-usdt'),
+    [{ source: 'binance-perp', symbol: 'BTCUSDT' }, { source: 'binance-perp', symbol: 'ETHUSDT' }]);
+  assert.deepEqual(addToWatchlist(list, 'BTCUSDT'), list, 'no duplicates');
+  assert.deepEqual(addToWatchlist(list, '???'), list, 'nothing to add');
+  // The same pair on spot is another row, and clicking it must not touch the perpetual one.
+  assert.deepEqual(addToWatchlist(list, { source: 'binance-spot', symbol: 'btc' }),
+    [...list, { source: 'binance-spot', symbol: 'BTCUSDT' }]);
+  assert.deepEqual(removeFromWatchlist([{ source: 'binance-perp', symbol: 'BTCUSDT' },
+    { source: 'binance-spot', symbol: 'BTCUSDT' }], { source: 'binance-spot', symbol: 'BTCUSDT' }),
+  [{ source: 'binance-perp', symbol: 'BTCUSDT' }]);
+  assert.deepEqual(removeFromWatchlist([{ source: 'binance-perp', symbol: 'BTCUSDT' }], 'ETHUSDT'),
+    [{ source: 'binance-perp', symbol: 'BTCUSDT' }]);
+  assert.deepEqual(addToWatchlist([], 'sol'), [{ source: 'binance-perp', symbol: 'SOLUSDT' }]);
+  // A yield row is added from the yields source.
+  assert.deepEqual(addToWatchlist([], { source: 'us-yields', symbol: '10y' }),
+    [{ source: 'us-yields', symbol: 'US10Y' }]);
+});
+
+test('the four default yields are seeded once and never resurrected', () => {
+  const list = withDefaultYields(DEFAULT_WATCHLIST);
+  assert.deepEqual(list.slice(-4), DEFAULT_YIELD_SYMBOLS.map(symbol => ({ source: 'us-yields', symbol })));
+  assert.equal(list.length, DEFAULT_WATCHLIST.length + 4);
+  // Already there: the list is unchanged (so the page can call this on every load without duplicating rows).
+  assert.deepEqual(withDefaultYields(list), list);
+  // Deleted by the owner: only the flag keeps them deleted, the list itself stays as it is.
+  assert.deepEqual(withDefaultYields(removeFromWatchlist(list, { source: 'us-yields', symbol: 'US10Y' }))
+    .filter(item => item.symbol === 'US10Y'), [{ source: 'us-yields', symbol: 'US10Y' }]);
+});
+
+test('the last chart restores as source plus symbol, and an old bare pair stays a perpetual', () => {
+  assert.deepEqual(restoreSelection(JSON.stringify({ source: 'us-yields', symbol: 'US10Y' })),
+    { source: 'us-yields', symbol: 'US10Y' });
+  // The pre-T-53 value was the plain pair string.
+  assert.deepEqual(restoreSelection('BTCUSDT'), { source: 'binance-perp', symbol: 'BTCUSDT' });
+  assert.deepEqual(restoreSelection(JSON.stringify('eth-usdt')), { source: 'binance-perp', symbol: 'ETHUSDT' });
+  for (const broken of [null, '', '-', '{}', JSON.stringify({ source: 'nope', symbol: 'BTCUSDT' })]) {
+    assert.deepEqual(restoreSelection(broken), { source: 'binance-perp', symbol: 'BTCUSDT' }, String(broken));
+  }
+  assert.equal(defaultSymbolFor('us-yields'), 'US10Y');
+  assert.equal(defaultSymbolFor('binance-spot'), 'BTCUSDT');
+});
+
+test('a quote stream is asked of the venue the row belongs to', () => {
+  assert.equal(miniTickerStreamUrl(['BTCUSDT'], 'Binance Spot'),
+    'wss://stream.binance.com:9443/stream?streams=btcusdt@miniTicker');
+  assert.equal(miniTickerStreamUrl(['BTCUSDT'], 'Binance Perpetual Futures'),
+    'wss://fstream.binance.com/market/stream?streams=btcusdt@miniTicker');
+  assert.equal(miniTickerStreamUrl(['BTCUSDT'], 'Bybit'), null);
 });
 
 test('the checked timeframes survive a reload, in ascending order', () => {
