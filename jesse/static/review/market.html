@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>看行情 · Jesse</title>
   <link rel="icon" href="/favicon.ico">
-  <link rel="stylesheet" href="./review.css?v=20261116d">
+  <link rel="stylesheet" href="./review.css?v=20261116e">
 </head>
 <body class="market">
   <header>
@@ -14,7 +14,10 @@
   </header>
   <!-- novalidate: the symbol box takes btc / BTCUSDT / BTC-USDT and the page normalizes it itself. -->
   <form id="m-form" class="toolbar market-controls" aria-label="行情设置" autocomplete="off" novalidate>
+    <!-- 数据源 switches the whole page; the symbol box becomes the six yield codes for the treasury source. -->
+    <label>数据源 <select id="m-source" aria-label="数据源"></select></label>
     <label>币种 <input id="m-symbol" size="12" placeholder="btc / BTCUSDT / BTC-USDT" aria-label="币种" spellcheck="false"></label>
+    <label id="m-yield-label">品种 <select id="m-yield" aria-label="美债品种" hidden></select></label>
     <button id="m-open" type="submit">查看</button>
     <button id="m-add" type="button">加入自选</button>
     <span id="m-last" class="market-last"></span>
@@ -29,14 +32,14 @@
       <div id="watchlist" aria-label="自选列表"></div>
     </aside>
     <section class="review">
-      <div class="notice">K 线直接来自币安的 USDT 永续合约（浏览器直连交易所，不经过 Jesse、不导入数据库），任何 USDT 永续都能看。时间统一为 UTC；上方同时显示本地时间。浅红虚线是最近成交价；最右边随成交跳动的那根是正在形成的 K 线，把它当作未收盘处理。主图上的均线、布林带等沿用复盘页「周期与指标」里的显示设置（副图指标不画）。往左拖到最早一根附近会自动往前加载，每个周期最多 5000 根。</div>
+      <div class="notice">顶部「数据源」可切换：<b>币安永续</b>（自带 USDT 永续合约）、<b>币安现货</b>、<b>美债收益率</b>（US03M / US02Y / US05Y / US10Y / US20Y / US30Y，按 TradingView 习惯命名，数值就是收益率本身，例如 4.02 表示 4.02%）。币安两种来源由浏览器直连交易所（不经过 Jesse、不导入数据库），浅红虚线是最近成交价，最右边随成交跳动的那根是正在形成的 K 线；美债没有实时推送，经 Jesse 代理向 Yahoo / FRED 取数据（需先登录 Jesse），每 60 秒轮询一次，浅红虚线是「最新」收盘值，Yahoo 约延迟 0~10 分钟、只有美股时段更新，US02Y / US20Y 只有 FRED 官方日线（T+1），看小周期时只有提示、1D 图正常画。时间统一为 UTC；上方同时显示本地时间。主图上的均线、布林带等沿用复盘页「周期与指标」里的显示设置（副图指标不画）。币安来源往左拖到最早一根附近会自动往前加载，每个周期最多 5000 根；美债每个周期按上游最大范围一次拉完。</div>
       <div id="charts" class="chart-grid"></div>
     </section>
   </main>
   <script type="module">
     // REVIEW_VERSION: change it (and every "?v=" in the .mjs imports and the stylesheet link) whenever
     // any file in this folder changes. tests/review-version.test.mjs checks that they all match.
-    const REVIEW_VERSION = '20261116d';
+    const REVIEW_VERSION = '20261116e';
     import(`./market.mjs?v=${REVIEW_VERSION}`).catch(error => {
       const status = document.getElementById('status');
       status.hidden = false; status.classList.add('error'); status.textContent = `看行情页脚本加载失败：${error.message}`;
