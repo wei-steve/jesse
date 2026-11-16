@@ -116,6 +116,26 @@ export function linkTimeRanges(panels, onChange = () => {}, groupOf = panel => p
     const anchor = range.from + width * at;
     panel.chart.timeScale().setVisibleRange({ from: anchor - span * at, to: anchor - span * at + span });
   }
+  // Dragging one chart moves the others by bars, not by seconds: each peer keeps exactly the number of bars it
+  // shows (so its candle width never changes) and only scrolls until the dragged chart's centre moment is in its own
+  // centre. A time range would be clipped at the newest bar and stretch or squeeze the candles (2026-11-15, the
+  // owner saw the other charts' candles change width while dragging the 5m chart). Needs the peer's candles
+  // (`panel.candles` + `panel.interval` minutes, or the same on `panel.panel`); without them, place() as before.
+  function follow(peer, anchor) {
+    const scale = peer.chart.timeScale();
+    const owner = peer.candles ? peer : peer.panel;
+    const candles = owner?.candles, step = (owner?.interval ?? 0) * 60;
+    const current = scale.getVisibleLogicalRange?.();
+    if (!candles?.length || !step || !current) return false;
+    let lo = 0, hi = candles.length - 1;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (candles[mid].time <= anchor) lo = mid; else hi = mid - 1; }
+    // Between bars (or past either end) the position is interpolated, so the empty space after the newest bar
+    // scrolls like everywhere else.
+    const index = lo + (anchor - candles[lo].time) / step;
+    const width = current.to - current.from;
+    scale.setVisibleLogicalRange({ from: index - width / 2, to: index + width / 2 });
+    return true;
+  }
   for (const panel of panels) panel.chart.timeScale().subscribeVisibleTimeRangeChange(range => {
     // The second argument is the range only when a user gesture on this panel caused it.
     onChange(panel, panel === active ? range : null);
@@ -128,7 +148,7 @@ export function linkTimeRanges(panels, onChange = () => {}, groupOf = panel => p
     for (const peer of panels) {
       if (peer === panel) continue;
       if (groupOf(peer) === group) peer.chart.timeScale().setVisibleRange(range);
-      else place(peer, range, 0.5);
+      else if (!follow(peer, (range.from + range.to) / 2)) place(peer, range, 0.5);
     }
   });
   return {

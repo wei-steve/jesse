@@ -158,3 +158,24 @@ test('the first placement records each chart span even with keepSpan', () => {
   linked.activate(panels[1]); panels[1].emit({ from: 0, to: 5000 });
   assert.deepEqual(panels[0].writes.at(-1), { from: 2000, to: 3000 });
 });
+
+test('dragging one chart scrolls the other timeframes by bars and keeps their candle width', () => {
+  const make = (name, interval, count, logical) => {
+    let listener; const writes = [], logicalWrites = [];
+    const scale = { subscribeVisibleTimeRangeChange: f => { listener = f; }, setVisibleRange: r => writes.push(r),
+      getVisibleLogicalRange: () => logical, setVisibleLogicalRange: r => logicalWrites.push(r) };
+    const candles = Array.from({ length: count }, (_, i) => ({ time: i * interval * 60 }));
+    return { name, interval, candles, writes, logicalWrites, chart: { timeScale: () => scale }, emit: r => listener(r) };
+  };
+  const m5 = make('5m', 5, 1000, { from: 900, to: 1000 });
+  const h1 = make('1h', 60, 100, { from: 60, to: 100 });
+  const linked = linkTimeRanges([m5, h1]);
+  linked.activate(m5);
+  // The 5m chart now centres on 300 * 5m = 25h = bar 25 of the 1h chart; the 1h chart keeps its 40 bars.
+  m5.emit({ from: 250 * 300, to: 350 * 300 });
+  assert.deepEqual(h1.logicalWrites.at(-1), { from: 5, to: 45 });
+  assert.equal(h1.writes.length, 0);
+  // Past the newest 1h bar (99) the position keeps going into the empty space, same width.
+  m5.emit({ from: 6100 * 300, to: 6200 * 300 });
+  assert.deepEqual(h1.logicalWrites.at(-1), { from: 512.5 - 20, to: 512.5 + 20 });
+});
