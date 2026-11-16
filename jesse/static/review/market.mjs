@@ -4,17 +4,17 @@
 // public websockets keep them live: the forming bar, the last price, and the watchlist's 24h quotes.
 // The chart behaviour (range linking, price zoom, snapshots) and the overlays (the review page's display settings)
 // are reused from the review/finder modules instead of being reimplemented.
-import { t as createChart } from './lightweight-charts.mjs?v=20261116c';
-import { linkTimeRanges } from './data.mjs?v=20261116c';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261116c';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116c';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116c';
-import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages } from './live-price.mjs?v=20261116c';
-import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116c';
-import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116c';
+import { t as createChart } from './lightweight-charts.mjs?v=20261116d';
+import { linkTimeRanges } from './data.mjs?v=20261116d';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261116d';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116d';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116d';
+import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages } from './live-price.mjs?v=20261116d';
+import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116d';
+import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116d';
 import { MARKET_KEYS, MARKET_TIMEFRAMES, DEFAULT_SYMBOL, KLINE_LIMIT, MAX_BARS, MAX_WATCHLIST, normalizeSymbol,
   klinesUrl, endTimeBefore, parseKlines, mergeCandles, parseMiniTicker, miniTickerStreamUrl, restoreWatchlist,
-  addToWatchlist, removeFromWatchlist, restoreTimeframes, shiftLogical } from './market-data.mjs?v=20261116c';
+  addToWatchlist, removeFromWatchlist, restoreTimeframes, shiftLogical } from './market-data.mjs?v=20261116d';
 
 const $ = id => document.getElementById(id);
 // The candles in the database come from Binance, so the live streams must be the same venue.
@@ -550,7 +550,7 @@ function syncStreams() {
     paintLivePrice(); paintLastPrice();
     if (price) {
       stopPriceStream = openTicker(price, {
-        onPrice: next => { livePrice = next; paintLivePrice(); paintLastPrice(); },
+        onPrice: next => { const first = livePrice === null; livePrice = next; paintLivePrice(); paintLastPrice(); if (first) paintLiveNote(); },
         onState: state => { priceState = state; paintLiveNote(); },
       });
     }
