@@ -1,3 +1,4 @@
+import { calculateIndicator, formingTail, tailBars } from './indicators.mjs?v=20261116g';
 // The 看行情 page's sources (market.mjs): which venue the candles come from, the US treasury yield instruments and
 // the interval mapping of the Jesse proxy that serves them. No DOM, no fetch: tests/review-market-sources.test.mjs
 // runs every function here with node.
@@ -72,9 +73,11 @@ export function yieldRequest(symbol, timeframe) {
   return { interval, aggregate: dailyOnly ? 1 : aggregates, dailyOnly, timeframe };
 }
 
-/** The range asked for by the 60-second poll: only the newest bars, the loaded history stays where it is. */
+/** The range asked for by the 60-second poll: only the newest bars, the loaded history stays where it is. Keyed by
+ * the interval actually requested (yieldRequest), not the panel's timeframe: a 4h panel asks Yahoo for 1h, whose
+ * shortest range is 1mo, and a FRED symbol asks for 1D on every panel (2026-11-16, '5d' for 4h was refused). */
 export const POLL_RANGES = { '1m': '1d', '5m': '5d', '15m': '5d', '30m': '5d', '1h': '1mo', '1D': '1mo' };
-export const pollRangeOf = timeframe => POLL_RANGES[timeframe] ?? '5d';
+export const pollRangeOf = (timeframe, symbol = '') => POLL_RANGES[yieldRequest(symbol, timeframe).interval] ?? '1mo';
 
 /**
  * Candles of `minutes`-minute buckets, aligned to UTC, from a 1m or 1h series. A bond session is not 24 hours, so a
@@ -143,3 +146,27 @@ export function yieldQuote(candles) {
 /** A change in percentage points: `+0.03` / `-0.12` / '' — never `+3.00%` (see yieldQuote). */
 export const signedPoints = change => Number.isFinite(change)
   ? `${change >= 0 ? '+' : '-'}${Math.abs(change).toFixed(2)}` : '';
+
+/**
+ * Indicators of a market that is not open around the clock (the treasury yields close every night and weekend).
+ * calculateIndicator starts afresh at every gap — right for crypto, where a gap is missing data — which left the MA /
+ * BOLL lines of 1h and 4h yields as short broken pieces (2026-11-16). Here the bars are numbered as if consecutive,
+ * the way trading apps treat a session market, and each point gets its real bar's time back.
+ */
+export function sessionIndicator(candles, config, interval) {
+  const step = interval * 60;
+  const bars = Array.isArray(candles) ? candles : [];
+  const result = calculateIndicator(bars.map((c, i) => ({ ...c, time: i * step })), config, interval);
+  return { ...result, series: result.series.map(line => ({ ...line,
+    data: line.data.map(point => ({ ...point, time: bars[point.time / step].time })) })) };
+}
+
+/** formingTail for a session market: the bar after the last closed one, wherever the clock gap between them. */
+export function sessionTail(candles, forming, config, interval) {
+  const step = interval * 60;
+  const bars = Array.isArray(candles) ? candles : [];
+  const window = bars.slice(Math.max(0, bars.length - tailBars(config)));
+  const renumbered = window.map((c, i) => ({ ...c, time: i * step }));
+  return formingTail(renumbered, { ...forming, time: window.length * step }, config, interval)
+    .map(({ line, point }) => ({ line, point: point ? { ...point, time: forming.time } : null }));
+}

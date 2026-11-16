@@ -2,7 +2,7 @@
 // loaded history while refreshing, the `@miniTicker` quotes of the watchlist, and what localStorage holds.
 // No DOM, no fetch, no websocket: tests/review-market-data.test.mjs runs every function in this file with node.
 import { DEFAULT_SOURCE, SPOT_SOURCE, YIELD_SOURCE, DEFAULT_YIELD_SYMBOLS, DEFAULT_YIELD_SYMBOL, MARKET_SOURCES,
-  normalizeYieldSymbol, isYieldSource } from './market-sources.mjs?v=20261116e';
+  normalizeYieldSymbol, isYieldSource } from './market-sources.mjs?v=20261116g';
 
 // Binance USDTⓈ-M futures, public and CORS-open (`access-control-allow-origin: *`), so the browser talks to the
 // exchange directly: any USDT perpetual can be watched, nothing has to be imported into Jesse's database and no

@@ -6,21 +6,21 @@
 // polled every minute instead of pushed.
 // The chart behaviour (range linking, price zoom, snapshots) and the overlays (the review page's display settings)
 // are reused from the review/finder modules instead of being reimplemented.
-import { t as createChart } from './lightweight-charts.mjs?v=20261116e';
-import { linkTimeRanges } from './data.mjs?v=20261116e';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261116e';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116e';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116e';
-import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages } from './live-price.mjs?v=20261116e';
-import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116e';
-import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116e';
+import { t as createChart } from './lightweight-charts.mjs?v=20261116g';
+import { linkTimeRanges } from './data.mjs?v=20261116g';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261116g';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116g';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116g';
+import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages } from './live-price.mjs?v=20261116g';
+import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116g';
+import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116g';
 import { MARKET_SOURCES, PERP_SOURCE, SPOT_SOURCE, YIELD_SOURCE, sourceLabel, exchangeOf, restoreSource,
-  YIELD_INSTRUMENTS, DEFAULT_YIELD_SYMBOL, normalizeYieldSymbol, yieldRequest, pollRangeOf, aggregateCandles,
-  parseMarketCandles, yieldQuote, signedPoints } from './market-sources.mjs?v=20261116e';
+  YIELD_INSTRUMENTS, DEFAULT_YIELD_SYMBOL, normalizeYieldSymbol, yieldRequest, pollRangeOf, aggregateCandles, sessionIndicator, sessionTail,
+  parseMarketCandles, yieldQuote, signedPoints } from './market-sources.mjs?v=20261116g';
 import { MARKET_KEYS, MARKET_TIMEFRAMES, KLINE_LIMIT, MAX_BARS, MAX_WATCHLIST, normalizeSymbol, klinesUrlFor,
   endTimeBefore, parseKlines, mergeCandles, parseMiniTicker, miniTickerStreamUrl, restoreWatchlist, addToWatchlist,
   removeFromWatchlist, restoreTimeframes, shiftLogical, restoreSelection, defaultSymbolFor, watchItem, watchKey,
-  sameWatchItem, withDefaultYields } from './market-data.mjs?v=20261116e';
+  sameWatchItem, withDefaultYields } from './market-data.mjs?v=20261116g';
 
 const $ = id => document.getElementById(id);
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
@@ -158,7 +158,7 @@ function drawOverlay(panel) {
   for (const config of preferences.indicators) {
     if (INDICATORS[config.type].pane !== 'main') continue;
     const series = [];
-    for (const line of calculateIndicator(panel.candles, config, panel.interval).series) {
+    for (const line of (source === YIELD_SOURCE ? sessionIndicator : calculateIndicator)(panel.candles, config, panel.interval).series) {
       const created = panel.chart.addLineSeries({ color: line.color, lineWidth: 1.5, lineStyle: line.dashed ? 2 : 0,
         lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
       created.setData(line.data);
@@ -182,7 +182,7 @@ function paintIndicatorTail(panel, bar) {
   const before = closed.at(-1)?.time === bar.time ? closed.slice(0, -1) : closed;
   for (const group of panel.overlayGroups) {
     let tail;
-    try { tail = formingTail(before, bar, group.config, panel.interval); } catch { continue; }
+    try { tail = (source === YIELD_SOURCE ? sessionTail : formingTail)(before, bar, group.config, panel.interval); } catch { continue; }
     tail.forEach(({ point }, i) => {
       if (!point) return;
       try { group.series[i]?.update(point); } catch { /* chart rebuilt */ }
@@ -375,7 +375,9 @@ async function fetchCandles(sourceId, symbolName, tf, options = {}) {
     const answer = await postMarket({ source: YIELD_SOURCE, symbol: symbolName, interval: request.interval,
       ...(options.range ? { range: options.range } : {}) });
     const parsed = parseMarketCandles(answer);
-    const closed = request.aggregate > 1 ? aggregateCandles(parsed.closed, request.aggregate) : parsed.closed;
+    // aggregateCandles takes the bucket width in minutes, not the bar count (passing 4 made 4-minute buckets, so the
+    // 4h chart was the 1h series again, 2026-11-16).
+    const closed = request.aggregate > 1 ? aggregateCandles(parsed.closed, timeframeMinutes(tf)) : parsed.closed;
     return { closed, forming: null, note: parsed.note, dailyOnly: request.dailyOnly || parsed.dailyOnly };
   }
   const response = await fetch(klinesUrlFor(sourceId, symbolName, tf, options));
@@ -448,7 +450,7 @@ async function loadEarlier(panel) {
 async function refreshPanel(panel, version, { poll = false } = {}) {
   if (panel.empty) return;
   try {
-    const query = poll ? { range: pollRangeOf(panel.tf) } : { limit: KLINE_LIMIT };
+    const query = poll ? { range: pollRangeOf(panel.tf, symbol) } : { limit: KLINE_LIMIT };
     const { closed, forming } = await fetchCandles(source, symbol, panel.tf, query);
     if (version !== loadVersion || !closed.length) return;
     setBars(panel, mergeCandles(panel.candles, closed));
@@ -502,7 +504,7 @@ async function openSymbol(input) {
   const version = ++loadVersion;
   try {
     await fetchCandles(source, next, timeframes[0],
-      source === YIELD_SOURCE ? { range: pollRangeOf(timeframes[0]) } : { limit: 5 });
+      source === YIELD_SOURCE ? { range: pollRangeOf(timeframes[0], next) } : { limit: 5 });
   } catch (error) { if (version === loadVersion) status(error.message, true); return false; }
   if (version !== loadVersion) return false;
   if (next === symbol) { paintSymbolBox(); await render(); return true; }
@@ -525,7 +527,7 @@ async function switchSource(next) {
   const version = ++loadVersion;
   try {
     await fetchCandles(next, nextSymbol, timeframes[0],
-      next === YIELD_SOURCE ? { range: pollRangeOf(timeframes[0]) } : { limit: 5 });
+      next === YIELD_SOURCE ? { range: pollRangeOf(timeframes[0], nextSymbol) } : { limit: 5 });
   } catch (error) {
     if (version === loadVersion) { status(error.message, true); paintSource(); }
     return;

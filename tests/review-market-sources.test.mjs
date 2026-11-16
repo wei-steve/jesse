@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MARKET_SOURCES, DEFAULT_SOURCE, YIELD_SOURCE, SPOT_SOURCE, restoreSource, sourceLabel, exchangeOf,
   defaultSymbolOf, isYieldSource, YIELD_SYMBOLS, DEFAULT_YIELD_SYMBOLS, normalizeYieldSymbol, isDailyOnlyYield,
-  yieldRequest, pollRangeOf, aggregateCandles, parseMarketCandles, yieldQuote, signedPoints } from
+  yieldRequest, pollRangeOf, aggregateCandles, parseMarketCandles, yieldQuote, signedPoints, sessionIndicator, sessionTail } from
   '../jesse/static/review/market-sources.mjs';
 import { mergeCandles, watchKey } from '../jesse/static/review/market-data.mjs';
 
@@ -72,10 +72,11 @@ test('a yield panel asks for the series it can be built from', () => {
 });
 
 test('the 60-second poll only asks for the newest bars', () => {
-  assert.deepEqual(['1m', '5m', '15m', '30m', '1h', '1D'].map(pollRangeOf),
+  assert.deepEqual(['1m', '5m', '15m', '30m', '1h', '1D'].map(tf => pollRangeOf(tf, 'US10Y')),
     ['1d', '5d', '5d', '5d', '1mo', '1mo']);
-  assert.equal(pollRangeOf('3m'), '5d', 'an aggregated panel polls like its source series');
-  assert.equal(pollRangeOf('4h'), '5d');
+  assert.equal(pollRangeOf('3m', 'US10Y'), '1d', 'an aggregated panel polls like its source series (1m)');
+  assert.equal(pollRangeOf('4h', 'US10Y'), '1mo', '4h asks Yahoo for 1h, whose shortest range is 1mo');
+  assert.equal(pollRangeOf('5m', 'US02Y'), '1mo', 'a FRED symbol asks for 1D on every panel');
 });
 
 // --- Aggregation --------------------------------------------------------------------------------------------------
@@ -181,4 +182,20 @@ test('a watchlist row is identified by source and symbol together', () => {
   // The same pair on spot is a different row: the sidebar keeps both quotes apart.
   assert.notEqual(watchKey({ source: 'binance-perp', symbol: 'BTCUSDT' }),
     watchKey({ source: 'binance-spot', symbol: 'BTCUSDT' }));
+});
+
+test('session indicators bridge the overnight gap and keep real times', () => {
+  const hour = 3600;
+  // Two sessions of 5 bars with a 10-hour gap between them.
+  const bars = [...Array(10)].map((_, i) => {
+    const time = 1700000000 - (1700000000 % hour) + (i < 5 ? i : i + 10) * hour;
+    return { time, open: i + 1, high: i + 1, low: i + 1, close: i + 1, volume: 0 };
+  });
+  const config = { type: 'SMA', period: 3, color: '#000000' };
+  const line = sessionIndicator(bars, config, 60).series[0].data.filter(p => Number.isFinite(p.value));
+  assert.equal(line.length, 8, 'an SMA3 over 10 bars has 8 points, the gap does not restart it');
+  assert.equal(line[3].time, bars[5].time);
+  assert.equal(line[3].value, (4 + 5 + 6) / 3, 'the first bar after the gap averages with the bars before it');
+  const tail = sessionTail(bars.slice(0, 9), bars[9], config, 60);
+  assert.deepEqual(tail[0].point, { time: bars[9].time, value: (8 + 9 + 10) / 3 });
 });
