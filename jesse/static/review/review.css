@@ -107,3 +107,27 @@ main[hidden]{display:none}
 .live-note[hidden]{display:none}
 @keyframes ride-fresh{from{background:#fff5d6;box-shadow:inset 3px 0 0 #e0a800}to{background:#f8fafd;box-shadow:none}}
 .ride.fresh{animation:ride-fresh 3s ease-out}
+
+/* Market page (market.html): the watchlist in a narrow left column, the multi-timeframe chart grid on the right.
+   The charts reuse the finder's card grid, cards and snapshots; only the sidebar rows and the controls are new. */
+.market main{grid-template-columns:190px minmax(0,1fr)}
+.market-controls .market-last{font-weight:600;color:#2b3a52;font-variant-numeric:tabular-nums}
+.market-timeframes{display:flex;flex-wrap:wrap;gap:4px}
+.market-timeframes label{display:flex;align-items:center;gap:4px;border:1px solid #dce3ee;border-radius:7px;padding:4px 7px;cursor:pointer;font-size:12px}
+.market-timeframes input{accent-color:#315cd0}
+#watchlist{padding:6px;display:flex;flex-direction:column;gap:5px;max-height:calc(100vh - 200px);overflow:auto}
+.watch-row{display:flex;align-items:stretch;border:1px solid transparent;border-radius:8px;background:#f8fafd}
+.watch-row[aria-pressed=true]{border-color:#315cd0;background:#edf3ff}
+.watch-main{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:1px;border:0;background:transparent;padding:6px 8px;text-align:left}
+.watch-main:hover{border-color:transparent;background:transparent}
+.watch-main strong{font-size:12px;letter-spacing:.03em}
+.watch-quote{display:flex;flex-direction:column;width:100%;font-variant-numeric:tabular-nums}
+.watch-last{font-size:12px;color:#203047}
+.watch-change{font-size:11px;color:#8996aa}
+.watch-change.up{color:#008268}
+.watch-change.down{color:#c73f58}
+.watch-del{border:0;background:transparent;color:#b0bcce;padding:0 6px;font-size:14px;line-height:1}
+.watch-del:hover{color:#c73f58;background:transparent}
+.market .chart-meta{font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:950px){.market main{grid-template-columns:165px minmax(0,1fr)}}
+@media(max-width:700px){.market main{grid-template-columns:1fr}#watchlist{flex-direction:row;overflow-x:auto;max-height:none}.watch-row{min-width:126px}}

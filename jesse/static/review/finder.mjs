@@ -1,19 +1,20 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261116b';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261116b';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261116b';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116b';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116b';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261116b';
-import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261116b';
+import { t as createChart } from './lightweight-charts.mjs?v=20261116c';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261116c';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261116c';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116c';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116c';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261116c';
+import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261116c';
 import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone, barSnapshot,
-  nextTickDelay, newKeys, atRightEdge, importId } from './finder-data.mjs?v=20261116b';
-import { streamUrl, openTicker, klineStreamUrl, openKlines } from './live-price.mjs?v=20261116b';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116b';
+  nextTickDelay, newKeys, atRightEdge, importId, CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT,
+  FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116c';
+import { streamUrl, openTicker, klineStreamUrl, openKlines } from './live-price.mjs?v=20261116c';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116c';
 import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS,
-  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261116b';
+  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261116c';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -46,28 +47,21 @@ let barNotes = {};
 
 try { form = restoreForm(localStorage.getItem(FORM_KEY)); } catch { form = restoreForm(null); }
 const saveForm = () => { try { localStorage.setItem(FORM_KEY, JSON.stringify(form)); } catch { /* still works for this page */ } };
-// Chart height is a per-browser display choice, kept apart from the finder form. The stylesheet shrinks
-// .chart-host to 185px on short screens (laptops), which is too flat to read a chart; the chosen height
-// overrides that through --chart-h (see review.css :root[data-chart-h]).
-// "适应屏幕" (0) sizes the two chart rows to fill one screen: each card adds ~58px of title and footer
-// around its chart and the rows are 12px apart, so 2 rows need 2h + ~135px; 170px leaves a small margin.
-// v2 key: v1 saved the old 480px default, which hid the second row on laptops.
-const HEIGHT_KEY = 'jesse.finder.chartHeight.v2';
-const HEIGHTS = [[0, '适应屏幕'], [240, '矮'], [360, '中'], [480, '高'], [640, '很高']];
-const DEFAULT_HEIGHT = 0;
-const FIT_HEIGHT = 'max(200px, calc((100vh - 170px) / 2))';
+// Chart height is a per-browser display choice, kept apart from the finder form and shared with the market page
+// (constants in finder-data.mjs). The stylesheet shrinks .chart-host to 185px on short screens (laptops), which is
+// too flat to read a chart; the chosen height overrides that through --chart-h (see review.css :root[data-chart-h]).
 function applyChartHeight(px) {
   document.documentElement.dataset.chartH = String(px);
-  document.documentElement.style.setProperty('--chart-h', px ? `${px}px` : FIT_HEIGHT);
+  document.documentElement.style.setProperty('--chart-h', px ? `${px}px` : FIT_CHART_HEIGHT);
 }
 function paintHeight() {
-  let px = DEFAULT_HEIGHT;
-  try { const raw = localStorage.getItem(HEIGHT_KEY); const saved = Number(raw); if (raw !== null && HEIGHTS.some(([h]) => h === saved)) px = saved; } catch { /* default */ }
+  let px = DEFAULT_CHART_HEIGHT;
+  try { px = chartHeightOf(localStorage.getItem(CHART_HEIGHT_KEY)); } catch { /* default */ }
   const select = $('f-height');
-  select.replaceChildren(...HEIGHTS.map(([h, label]) => { const o = document.createElement('option'); o.value = String(h); o.textContent = label; return o; }));
+  select.replaceChildren(...CHART_HEIGHTS.map(([h, label]) => { const o = document.createElement('option'); o.value = String(h); o.textContent = label; return o; }));
   select.value = String(px); applyChartHeight(px);
   // autoSize charts follow their host's new height on their own.
-  select.onchange = () => { const h = Number(select.value); applyChartHeight(h); try { localStorage.setItem(HEIGHT_KEY, String(h)); } catch { /* this page only */ } };
+  select.onchange = () => { const h = Number(select.value); applyChartHeight(h); try { localStorage.setItem(CHART_HEIGHT_KEY, String(h)); } catch { /* this page only */ } };
 }
 
 async function post(path, body = {}) {
