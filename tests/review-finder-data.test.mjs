@@ -159,3 +159,14 @@ test('the 实时 checkbox is saved with the form', () => {
   assert.equal(restoreForm(JSON.stringify({ live: true })).live, true);
   assert.equal(restoreForm(JSON.stringify({ live: 'yes' })).live, false);
 });
+
+test('live price: stream url, trade price, reconnect delay', async () => {
+  const { streamUrl, tradePrice, reconnectDelay } = await import('../jesse/static/review/live-price.mjs');
+  assert.equal(streamUrl('Binance Perpetual Futures', 'BTC-USDT'), 'wss://fstream.binance.com/market/ws/btcusdt@aggTrade');
+  assert.equal(streamUrl('Binance Spot', 'ETH-USDT'), 'wss://stream.binance.com:9443/ws/ethusdt@aggTrade');
+  assert.equal(streamUrl('Bybit USDT Perpetual', 'BTC-USDT'), null);
+  assert.equal(tradePrice({ e: 'aggTrade', p: '80123.40' }), 80123.4);
+  assert.equal(tradePrice({ e: 'trade', p: '1' }), null);
+  assert.equal(tradePrice({ e: 'aggTrade', p: 'x' }), null);
+  assert.deepEqual([0, 1, 2, 10].map(reconnectDelay), [1000, 2000, 4000, 30000]);
+});
