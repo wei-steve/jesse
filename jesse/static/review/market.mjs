@@ -7,25 +7,25 @@
 // FRED) are the other proxied source and are polled every minute.
 // The chart behaviour (range linking, price zoom, snapshots) and the overlays (the review page's display settings)
 // are reused from the review/finder modules instead of being reimplemented.
-import { t as createChart } from './lightweight-charts.mjs?v=20261116h';
-import { linkTimeRanges } from './data.mjs?v=20261116h';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261116h';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116h';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116h';
+import { t as createChart } from './lightweight-charts.mjs?v=20261116i';
+import { linkTimeRanges } from './data.mjs?v=20261116i';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261116i';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116i';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116i';
 import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages, okxCandleChannels, openOkxKlines,
-  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261116h';
-import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116h';
-import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116h';
+  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261116i';
+import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116i';
+import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116i';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, MARKETS, MARKET_SOURCES, OKX_SOURCE, YIELD_SOURCE, YIELD_INSTRUMENTS,
   DEFAULT_YIELD_SYMBOL, aggregateCandles, candleRequest, exchangeOf, instrumentName, isYieldSource, marketLabel,
   marketsOf, normalizeMarket, normalizeYieldSymbol, pollRangeOf, restoreSource, sourceLabel, symbolOf, yieldRequest,
-  parseMarketCandles, sessionIndicator, sessionTail, signedPoints, yieldQuote } from './market-sources.mjs?v=20261116h';
+  parseMarketCandles, sessionIndicator, sessionTail, signedPoints, yieldQuote } from './market-sources.mjs?v=20261116i';
 import { MARKET_KEYS, MARKET_TIMEFRAMES, MAX_BARS, MAX_WATCHLIST, PRODUCT_PAGE, PROXY_CANDLES,
   PROXY_TICKERS, aggregateAnswer, addToWatchlist, defaultSymbolFor, endTimeBefore, filterProducts, klinesUrlFor,
   mergeCandles, miniTickerStreamUrl, pageSizeOf, parseKlines, parseMiniTicker, parseOkxCandles,
   proxyTickerRows, removeFromWatchlist, restoreAsideTab, restoreListMarket, restoreSelection, restoreTimeframes,
   restoreWatchlist, sameWatchItem, shiftLogical, tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields }
-  from './market-data.mjs?v=20261116h';
+  from './market-data.mjs?v=20261116i';
 
 const $ = id => document.getElementById(id);
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;

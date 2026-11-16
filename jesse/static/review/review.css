@@ -154,3 +154,6 @@ main[hidden]{display:none}
 .market .chart-meta{font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media(max-width:950px){.market main{grid-template-columns:165px minmax(0,1fr)}}
 @media(max-width:700px){.market main{grid-template-columns:1fr}#watchlist{flex-direction:row;overflow-x:auto;max-height:none}.watch-row{min-width:126px}#products{max-height:none}}
+/* The market page lists (自选 / product list) set display:flex, which would override the hidden attribute and leave
+   both lists stacked (2026-11-16): hidden always wins there. */
+.market aside [hidden],aside [hidden]{display:none !important}
