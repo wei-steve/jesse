@@ -1,4 +1,4 @@
-import { validateIndicator, INDICATORS } from './settings.mjs?v=20261115i';
+import { validateIndicator, INDICATORS } from './settings.mjs?v=20261115j';
 
 // EMA starts from the first close, as in the installed Jesse Rust kernel.
 // RSI and ATR use Wilder smoothing; MACD histogram is DIF−DEA, not 2×.
@@ -61,6 +61,35 @@ export function indicatorTitle(input) {
   const config = validateIndicator(input);
   if (config.type === 'MAGROUP') return `${config.mode === 'EMA' ? 'EMA' : 'MA'}(${config.lines.filter(l => l.enabled).map(l => l.period).join(',')})`;
   return config.type === 'VOLUME' ? '成交量' : `${config.type}(${Object.keys(INDICATORS[config.type].defaults).map(k => config[k]).join(',')})`;
+}
+
+// How many closed bars the real-time tail reads: the slowest window of the configuration, times three, plus a margin.
+// The margin keeps the last point of every line identical to a full-history calculation for the windowed indicators
+// (SMA, BOLL); EMA / RSI / ATR seed from the first bar of the window and only converge towards the full-history value.
+const TAIL_MARGIN = 50;
+
+export function tailBars(input) {
+  const config = validateIndicator(input);
+  const periods = config.type === 'MAGROUP' ? config.lines.filter(line => line.enabled).map(line => line.period)
+    : config.type === 'MACD' ? [config.slow, config.signal]
+      : config.type === 'VOLUME' ? [1] : [config.period];
+  return Math.max(1, ...periods) * 3 + TAIL_MARGIN;
+}
+
+// The last point of every line of `input`, computed from the last `bars` closed candles plus the bar still forming:
+// what the finder re-draws while 实时 is on, without recalculating the whole history. `candles` is left untouched and
+// the forming bar is appended to a copy, so a tail is exactly the end of the full calculation when the window covers
+// the indicator's own period. Returns `[{line, point}]` in calculateIndicator's series order; `point` is null when the
+// window is too short to draw one.
+export function formingTail(candles, forming, input, interval, bars = null) {
+  const config = validateIndicator(input);
+  if (!forming || !Number.isFinite(forming.time)) return [];
+  const source = Array.isArray(candles) ? candles : [];
+  const count = bars ?? tailBars(config);
+  const all = [...source.slice(Math.max(0, source.length - count)), forming];
+  // A forming bar that does not follow the last closed bar opens a segment of its own (calculateIndicator flushes on
+  // a gap): its point would then be built from one bar, which is why the caller only passes the current bar.
+  return calculateIndicator(all, config, interval).series.map(line => ({ line, point: line.data.at(-1) ?? null }));
 }
 
 export function calculateIndicator(candles, input, interval) {
