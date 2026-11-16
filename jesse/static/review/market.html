@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>看行情 · Jesse</title>
+  <link rel="icon" href="/favicon.ico">
+  <link rel="stylesheet" href="./review.css?v=20261116c">
+</head>
+<body class="market">
+  <header>
+    <div><span class="brand">J</span><div><h1>看行情</h1><p id="m-clock">正在读取…</p></div></div>
+    <nav class="header-links"><a id="finder-link" href="./finder.html">因子查找器</a><a id="back" href="./index.html">复盘页</a></nav>
+  </header>
+  <!-- novalidate: the symbol box takes btc / BTCUSDT / BTC-USDT and the page normalizes it itself. -->
+  <form id="m-form" class="toolbar market-controls" aria-label="行情设置" autocomplete="off" novalidate>
+    <label>币种 <input id="m-symbol" size="12" placeholder="btc / BTCUSDT / BTC-USDT" aria-label="币种" spellcheck="false"></label>
+    <button id="m-open" type="submit">查看</button>
+    <button id="m-add" type="button">加入自选</button>
+    <span id="m-last" class="market-last"></span>
+    <span id="m-timeframes" class="market-timeframes" aria-label="周期"></span>
+    <label>图高 <select id="m-height" aria-label="K 线图高度"></select></label>
+    <span id="m-live-note" class="live-note" hidden></span>
+  </form>
+  <div id="status" role="status" hidden></div>
+  <main id="market-main">
+    <aside>
+      <div class="aside-head"><h2>自选</h2></div>
+      <div id="watchlist" aria-label="自选列表"></div>
+    </aside>
+    <section class="review">
+      <div class="notice">K 线直接来自币安的 USDT 永续合约（浏览器直连交易所，不经过 Jesse、不导入数据库），任何 USDT 永续都能看。时间统一为 UTC；上方同时显示本地时间。浅红虚线是最近成交价；最右边随成交跳动的那根是正在形成的 K 线，把它当作未收盘处理。主图上的均线、布林带等沿用复盘页「周期与指标」里的显示设置（副图指标不画）。往左拖到最早一根附近会自动往前加载，每个周期最多 5000 根。</div>
+      <div id="charts" class="chart-grid"></div>
+    </section>
+  </main>
+  <script type="module">
+    // REVIEW_VERSION: change it (and every "?v=" in the .mjs imports and the stylesheet link) whenever
+    // any file in this folder changes. tests/review-version.test.mjs checks that they all match.
+    const REVIEW_VERSION = '20261116c';
+    import(`./market.mjs?v=${REVIEW_VERSION}`).catch(error => {
+      const status = document.getElementById('status');
+      status.hidden = false; status.classList.add('error'); status.textContent = `看行情页脚本加载失败：${error.message}`;
+    });
+  </script>
+</body>
+</html>

@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>因子查找器 · Jesse</title>
   <link rel="icon" href="/favicon.ico">
-  <link rel="stylesheet" href="./review.css?v=20261116b">
+  <link rel="stylesheet" href="./review.css?v=20261116c">
 </head>
 <body class="signal-mode finder">
   <header>
     <div><span class="brand">J</span><div><h1>因子查找器</h1><p id="data-note">正在读取因子…</p></div></div>
-    <div class="header-links"><span id="live-note" class="live-note" hidden></span><a id="back" href="./index.html">← 返回复盘页</a></div>
+    <div class="header-links"><span id="live-note" class="live-note" hidden></span><a id="market-link" href="./market.html">看行情</a><a id="back" href="./index.html">← 返回复盘页</a></div>
   </header>
   <!-- novalidate: the 挂单 boxes keep their arrow steps (0.05 / 0.1 / 0.5) but defaults like y 0.382 and k 1 (min 0.01) are off that grid, and the browser then refused to submit "查找"; the page clamps every value itself. -->
   <form id="finder-form" class="finder-form" aria-label="查找条件" autocomplete="off" novalidate>
@@ -89,7 +89,7 @@
   <script type="module">
     // REVIEW_VERSION: change it (and every "?v=" in the .mjs imports and the stylesheet link) whenever
     // any file in this folder changes. tests/review-version.test.mjs checks that they all match.
-    const REVIEW_VERSION = '20261116b';
+    const REVIEW_VERSION = '20261116c';
     import(`./finder.mjs?v=${REVIEW_VERSION}`).catch(error => {
       const status = document.getElementById('status');
       status.hidden = false; status.classList.add('error'); status.textContent = `查找器脚本加载失败：${error.message}`;

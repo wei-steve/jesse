@@ -1,11 +1,24 @@
 // Pure helpers of the factor finder page (finder.mjs): request building, saved form, and turning the
 // `/factors/run` answer into the same step series the signal mode of the review page uses (rides.mjs).
 // Nothing here knows what a factor does; the page only draws the numbers the factor file returns.
-import { timeframeMinutes } from './settings.mjs?v=20261116b';
-import { LIMIT_RULES, LIMIT_DEFAULTS, atr14 } from './limit-rules.mjs?v=20261116b';
-import { sma } from './data.mjs?v=20261116b';
+import { timeframeMinutes } from './settings.mjs?v=20261116c';
+import { LIMIT_RULES, LIMIT_DEFAULTS, atr14 } from './limit-rules.mjs?v=20261116c';
+import { sma } from './data.mjs?v=20261116c';
 
 export const FORM_KEY = 'jesse.finder.form.v1';
+// Chart height is a per-browser display choice, shared by the finder and the market page (one key, one list).
+// "适应屏幕" (0) sizes the two chart rows to fill one screen: each card adds ~58px of title and footer around its
+// chart and the rows are 12px apart, so 2 rows need 2h + ~135px; 170px leaves a small margin.
+// v2 key: v1 saved the old 480px default, which hid the second row on laptops.
+export const CHART_HEIGHT_KEY = 'jesse.finder.chartHeight.v2';
+export const CHART_HEIGHTS = [[0, '适应屏幕'], [240, '矮'], [360, '中'], [480, '高'], [640, '很高']];
+export const DEFAULT_CHART_HEIGHT = 0;
+export const FIT_CHART_HEIGHT = 'max(200px, calc((100vh - 170px) / 2))';
+// The height a saved value stands for; anything that is not one of the offered choices is 适应屏幕.
+export const chartHeightOf = raw => {
+  const value = Number(raw);
+  return raw !== null && raw !== undefined && CHART_HEIGHTS.some(([px]) => px === value) ? value : DEFAULT_CHART_HEIGHT;
+};
 // 「实时」fires a few seconds after every UTC minute: by then the minute that just closed is in the database, and a
 // delay computed from the clock (not a fixed 60s setInterval) never drifts.
 export const LIVE_OFFSET_MS = 5000;

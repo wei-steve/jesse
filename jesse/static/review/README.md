@@ -41,15 +41,15 @@
 
 Jesse 的静态服务没有 `Cache-Control`，浏览器会按启发式缓存 `.mjs` 和 CSS，旧脚本可能一直用到被强制刷新。解决办法是给所有文件加版本号查询参数，版本号一变，浏览器就把它当新地址：
 
-- `index.html` 里的内联加载器用 `const REVIEW_VERSION = '…'` 动态 `import(`./app.mjs?v=${REVIEW_VERSION}`)`，样式表是 `review.css?v=…`。`index.html` 本身是页面请求，普通刷新会重新校验。
+- `index.html` 里的内联加载器用 `const REVIEW_VERSION = '…'` 动态 `import(`./app.mjs?v=${REVIEW_VERSION}`)`，样式表是 `review.css?v=…`。`index.html` 本身是页面请求，普通刷新会重新校验。（`finder.html`、`market.html` 同样。）
 - 每个 `.mjs` 里的相对 import 都写成 `'./xxx.mjs?v=…'`（同一个版本号，包括图表库 `./lightweight-charts.mjs?v=…`）。
 
 **以后改了 `jesse/static/review/` 里任何文件（`.mjs`、`.css`、`index.html`），提交前必须换版本号：**
 
 1. 选一个新版本号，建议日期加字母，如 `20261113i`（同一天再改就 `b`）。
-2. 把 `index.html` 和 `finder.html` 里的 `REVIEW_VERSION`、`review.css?v=` 和所有 `.mjs` 文件里 `?v=` 后面的旧版本号全部替换成新的（可用 `grep -rn "?v=" jesse/static/review/` 找，或全局替换旧版本号字符串）。
+2. 把 `index.html`、`finder.html` 和 `market.html` 里的 `REVIEW_VERSION`、`review.css?v=` 和所有 `.mjs` 文件里 `?v=` 后面的旧版本号全部替换成新的（可用 `grep -rn "?v=" jesse/static/review/` 找，或全局替换旧版本号字符串）。
 3. 新增模块时，import 也要写成带同一个 `?v=` 的形式。
-4. 运行 `node --test tests/review-*.test.mjs`。`tests/review-version.test.mjs` 会检查 `index.html` 和所有 import 的版本号一致，漏改会报错（它不能检查你“有没有换新版本号”，所以第 1 步要自己记得）。
+4. 运行 `node --test tests/review-*.test.mjs`。`tests/review-version.test.mjs` 会检查 `index.html`、`finder.html`、`market.html` 和所有 import 的版本号一致，漏改会报错（它不能检查你“有没有换新版本号”，所以第 1 步要自己记得）。
 5. 用户普通刷新（Cmd+R）即可拿到新版本。
 
 ## 测试与安装
@@ -147,6 +147,21 @@ def compute(candles_by_tf: dict, params: dict) -> dict:
 - 区间从所选范围的起点开始算（范围之前已经开始的区间被截断）；画均线用范围内的 K 线计算，均线周期大于范围内已有 K 线根数时起点附近画不出线。
 - 挂单的成交与结果判定（每根挂单价只对下一根有效：开盘越过挂单价算这一次不成交、`gapBars` 计数并继续等下一根，最低/最高价越过挂单价算成交；止损 = 挂单价 ∓ k·ATR（用算出这个挂单价那根的 ATR），止盈 = 挂单价 ± r·(k·ATR)；成交那根只查止损，同一根两碰按止损，超过持有根数按收盘平；`open` 规则照旧下一根开盘成交）在 `limit-rules.mjs`（纯函数，`tests/review-limit-rules.test.mjs`），ATR(14) 用 Wilder 平滑，与复盘页附图口径一致。
 - 测试：`tests/test_factor_finder.py`（后端，用示例因子和造的 K 线）、`tests/review-finder-data.test.mjs`（表单、请求、阶梯序列转换）、`tests/review-live-kline.test.mjs`（K 线组合流 URL、不支持的周期过滤、K 线消息解析、形成中那根的指标末点与整段计算结果对照）。
+
+## 看行情页
+
+入口 `/review/market.html`（复盘页顶部「看行情」、因子查找器右上「看行情」；本页右上「因子查找器」「复盘页」）。一个干净的看盘页，像行情软件：选币、多周期 K 线同屏、实时跳动、指标跟着变，没有信号、挂单、标注和回测内容。
+
+- **数据直接从币安拿**：历史 K 线走 `https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=4h&limit=1000`（已实测允许跨域，`access-control-allow-origin: *`），浏览器直连交易所，不经过后端、不导入数据库，所以任何 USDT 永续都能看，不必先导入。返回 `[[开盘毫秒, "o","h","l","c","v", 收盘毫秒, …], …]`；最后一条是正在形成的那根（收盘时间在未来），页面把它当 forming，不当已收盘。
+- **往左拖到最早一根附近**（可见逻辑范围 `from < 50`）自动再拉更早的 1000 根（`endTime` = 最早一根开盘毫秒 − 1），每个周期最多 5000 根，正在加载时不重复请求；加载后可见逻辑范围按新增根数平移，画面不跳。
+- **实时**（打开页面就有，没有开关）：`live-price.mjs` 的 `klineStreamUrl` / `openKlines` 订阅币安公开 K 线组合流，正在形成的那根画在每张图最右边并随成交跳动，收盘的那根追加进已收盘数组（指标末点一起算好）；`streamUrl` / `openTicker` 订阅公开成交推送，把最新成交价画成浅红虚线（`#f19aa4`、lineWidth 1、lineStyle 2、轴标「实时」，与因子查找器同一条线）。交易所固定 `Binance Perpetual Futures`。断线按 1、2、4… 最多 30 秒重连；**重连成功后对每个周期重新拉最近 1000 根并按开盘时间合并**，避免中间缺 K 线（缺一根布林线就断）。页面隐藏超过 1 分钟再回来也做同样的合并。
+- **币种**：顶部输入框，`btc` / `BTCUSDT` / `BTC-USDT` / `btc/usdt` 都行，统一成 `BTCUSDT`（`market-data.mjs` 的 `normalizeSymbol`）。输入不存在的币时币安 REST 返回 400，页面给中文提示并保留当前图表，不白屏。左侧窄栏是自选列表（默认 BTC ETH SOL BNB XRP DOGE，可加可删，存 localStorage `jesse.market.watchlist.v1`），每行显示最新价 + 24 小时涨跌幅（订阅 `<sym>@miniTicker` 组合流，涨绿跌红），点一下切换。
+- **周期**：勾选框 1m 3m 5m 15m 30m 1h 4h 1D，默认 4h 1h 15m 5m，存 localStorage `jesse.market.timeframes.v1`。图按大周期在前排成两列网格（窄屏一列）；图高与因子查找器共用同一个选择（localStorage `jesse.finder.chartHeight.v2`）。
+- **图表行为与因子查找器相同**（直接复用，不重写）：`linkTimeRanges`（拖动 / 滚轮按根数联动，别的图 K 线宽度不变）、只有鼠标所在的图驱动十字线、横线按价格同步到所有图、`enablePriceZoom` 的 A 按钮、每张卡的「截图」「放大」。截图保存给 Claude 走 `POST /review/screenshot`，和因子查找器一样从 `localStorage.main` 读登录 token（**看图不需要登录，存截图需要**）；复制 / 分享这类只有 https 或 localhost 才有的功能都有退路，所以从别的电脑用 `http://<局域网 IP>:9100` 打开也正常。
+- **贴在最右边的图**：新 K 线出现时跟着往右走，K 线宽度不变（只用 `series.update()`，**不**每个 tick 调 `setVisibleRange`，那是 T-51 修过的坑）；拖到历史位置的图不动。
+- **指标**：沿用复盘页「周期与指标」里保存的显示设置（`settings.mjs` 的 `STORAGE_KEY` + `restorePreferences`），主图叠加 MA 均线组 / SMA / EMA / BOLL，用 `calculateIndicator` 整段算；正在形成的那根用 `formingTail` 更新最后一点，每张图最多每 500ms 一次。副图指标（成交量 / MACD）不画——因子查找器也没画副图，两页口径一致。设置在那两页改，本页刷新后生效。
+- **时间**：坐标轴和十字线都是 UTC，与其他页面一致；标题栏同时显示当前 UTC 时间和本地时间。每张图下面的小字是鼠标所指那根 K 线的开高低收（移开就回到最新一根）。
+- 纯函数在 `market-data.mjs`（币种规范化、REST URL 与 `endTime`、行解析与 forming 分离、按开盘时间合并去重、`miniTicker` 解析、自选 / 周期的存取与容错、逻辑范围平移），测试在 `tests/review-market-data.test.mjs`。
 
 ## 标注（因子查找器里分开标「趋势判断」和「挂单」）
 

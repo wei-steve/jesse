@@ -39,3 +39,20 @@ test('finder.html loads finder.mjs and the stylesheet with the same REVIEW_VERSI
   assert.ok(html.includes(`href="./review.css?v=${version}"`));
   assert.ok(!/src="\.\/finder\.mjs/.test(html));
 });
+
+test('market.html loads market.mjs and the stylesheet with the same REVIEW_VERSION', () => {
+  const version = /const REVIEW_VERSION = '([^']+)'/.exec(read('index.html'))[1];
+  const html = read('market.html');
+  assert.equal(/const REVIEW_VERSION = '([^']+)'/.exec(html)?.[1], version);
+  assert.ok(html.includes('import(`./market.mjs?v=${REVIEW_VERSION}`)'));
+  assert.ok(html.includes(`href="./review.css?v=${version}"`));
+  assert.ok(!/src="\.\/market\.mjs/.test(html));
+});
+
+test('the three review pages link to each other', () => {
+  // A new page can only be found from the pages that are already open somewhere.
+  assert.ok(read('index.html').includes('href="./market.html"'));
+  assert.ok(read('finder.html').includes('href="./market.html"'));
+  assert.ok(read('market.html').includes('href="./finder.html"'));
+  assert.ok(read('market.html').includes('href="./index.html"'));
+});

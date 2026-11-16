@@ -137,3 +137,9 @@ export function openKlines(url, { onKline, onState, silenceMs = 20000 }) {
     onMessage: message => { const candle = klineCandle(message); if (candle) onKline(candle); },
   });
 }
+
+// The same retry / silence policy for a stream whose messages the caller parses itself (the market page's
+// `<pair>@miniTicker` quotes). onMessage gets every message that parsed as JSON. Returns stop().
+export function openMessages(url, { onMessage, onState, silenceMs = 20000 }) {
+  return openSocket(url, { onMessage, onState, silenceMs });
+}
