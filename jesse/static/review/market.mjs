@@ -1,31 +1,32 @@
 // Market page: a clean multi-timeframe chart screen (「看行情」), with no signals, orders, labels or backtest
 // content. Four sources (T-54): Binance (contract / spot), OKX (contract / spot), Deepcoin (contract / spot) and the
-// US treasury yields. Binance and OKX are CORS-open and read straight from the exchange's public REST API in the
-// browser — nothing is imported into Jesse's database — and their public websockets keep them live: the forming bar,
-// the last price, and the watchlist's quotes. Deepcoin sends no CORS headers, so its candles and tickers come from
-// Jesse's own proxy (`POST /review/market/candles`, `/market/tickers`) and are polled; the treasury yields (Yahoo /
-// FRED) are the other proxied source and are polled every minute.
+// US treasury yields. Binance, OKX and CNBC (the yields, T-55) are CORS-open and read straight from the venue's public
+// REST API in the browser — nothing is imported into Jesse's database — and the exchanges' public websockets keep them
+// live: the forming bar, the last price, and the watchlist's quotes. Deepcoin sends no CORS headers, so its candles and
+// tickers come from Jesse's own proxy (`POST /review/market/candles`, `/market/tickers`) and are polled. The treasury
+// yields have no push at all: CNBC's one-minute series and its quote are polled every 15 seconds.
 // The chart behaviour (range linking, price zoom, snapshots) and the overlays (the review page's display settings)
 // are reused from the review/finder modules instead of being reimplemented.
-import { t as createChart } from './lightweight-charts.mjs?v=20261116j';
-import { linkTimeRanges } from './data.mjs?v=20261116j';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261116j';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116j';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116j';
+import { t as createChart } from './lightweight-charts.mjs?v=20261116k';
+import { linkTimeRanges } from './data.mjs?v=20261116k';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261116k';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116k';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116k';
 import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages, okxCandleChannels, openOkxKlines,
-  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261116j';
-import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116j';
-import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116j';
+  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261116k';
+import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116k';
+import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116k';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, MARKETS, MARKET_SOURCES, OKX_SOURCE, YIELD_SOURCE, YIELD_INSTRUMENTS,
-  DEFAULT_YIELD_SYMBOL, aggregateCandles, candleRequest, exchangeOf, instrumentName, isYieldSource, marketLabel,
-  marketsOf, normalizeMarket, normalizeYieldSymbol, pollRangeOf, restoreSource, sourceLabel, symbolOf, yieldRequest,
-  parseMarketCandles, sessionIndicator, sessionTail, signedPoints, yieldQuote } from './market-sources.mjs?v=20261116j';
+  DEFAULT_YIELD_SYMBOL, YIELD_POLL_RANGE, aggregateCandles, candleRequest, cnbcSymbolOf, exchangeOf, instrumentName,
+  isYieldSource, marketLabel, marketsOf, mergeYieldBars, mergeYieldDailyClose, normalizeMarket, normalizeYieldSymbol,
+  parseCnbcBars, parseCnbcQuote, parseMarketCandles, restoreSource, sessionIndicator, sessionTail, signedPoints,
+  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261116k';
 import { MARKET_KEYS, MARKET_TIMEFRAMES, MAX_BARS, MAX_WATCHLIST, PRODUCT_PAGE, PROXY_CANDLES,
-  PROXY_TICKERS, aggregateAnswer, addToWatchlist, defaultSymbolFor, endTimeBefore, filterProducts, klinesUrlFor,
-  mergeCandles, miniTickerStreamUrl, pageSizeOf, parseKlines, parseMiniTicker, parseOkxCandles,
-  proxyTickerRows, removeFromWatchlist, moveWatchItem, restoreAsideTab, restoreListMarket, restoreSelection, restoreTimeframes,
-  restoreWatchlist, sameWatchItem, shiftLogical, tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields }
-  from './market-data.mjs?v=20261116j';
+  PROXY_TICKERS, aggregateAnswer, addToWatchlist, cnbcChartUrl, cnbcQuoteUrl, defaultSymbolFor, endTimeBefore,
+  filterProducts, klinesUrlFor, mergeCandles, miniTickerStreamUrl, pageSizeOf, parseKlines, parseMiniTicker,
+  parseOkxCandles, proxyTickerRows, removeFromWatchlist, moveWatchItem, restoreAsideTab, restoreListMarket,
+  restoreSelection, restoreTimeframes, restoreWatchlist, sameWatchItem, shiftLogical, tickerRows, tickersUrlFor,
+  watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261116k';
 
 const $ = id => document.getElementById(id);
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
@@ -43,8 +44,8 @@ const TAIL_MS = 500;
 // Coming back to a hidden tab refetches the newest bars when it was away longer than this (the sockets may have been
 // cut, and a missing bar breaks the overlay lines).
 const HIDDEN_REFRESH_MS = 60000;
-// A yield is not pushed anywhere, so the page asks Jesse for the newest bars this often (and only while visible).
-const POLL_MS = 60000;
+// A yield is not pushed anywhere: CNBC's one-minute series and its quote are read this often (only while visible).
+const POLL_MS = 15000;
 // Deepcoin pushes no multi-timeframe candles (its socket has a 1-minute K-line topic only), so the forming bar of every
 // panel is fetched from the proxy every 3 seconds; the proxy caches each series for 2 seconds, which is what keeps
 // four panels at one upstream request per series per 2 seconds.
@@ -57,7 +58,7 @@ const fmtPrice = value => Number.isFinite(value)
   : '—';
 const signedPercent = change => Number.isFinite(change)
   ? `${change >= 0 ? '+' : '-'}${(Math.abs(change) * 100).toFixed(2)}%` : '';
-// A yield is a percentage already: 4.02 → 4.021 (three decimals, like the Cboe / FRED series).
+// A yield is a percentage already: 4.02 → 4.021 (three decimals, the precision CNBC / Tradeweb quotes it with).
 const fmtYield = value => Number.isFinite(value) ? value.toFixed(3) : '—';
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
 const candleOf = ({ time, open, high, low, close }) => ({ time, open, high, low, close });
@@ -88,7 +89,7 @@ let panels = [], pointerPanel = null, rangeLink = null, syncing = false;
 let loadVersion = 0;
 // Keyed by `watchKey` ({source, market, symbol}): the same pair on two venues or markets is two rows.
 let quotes = new Map(), livePrice = null, hiddenAt = 0;
-let yieldFetchedAt = 0, pollTimer = null, pollBusy = false, pollError = false;
+let pollTimer = null, pollBusy = false, pollError = false;
 let cryptoPollTimer = null, cryptoPollBusy = false;
 let tickerTimer = null, tickerBusy = false;
 let stopKlineStream = null, stopPriceStream = null;
@@ -110,11 +111,11 @@ const tokenOf = () => {
   try { return JSON.parse(localStorage.getItem('main') ?? '{}').authToken ?? null; } catch { return null; }
 };
 
-// One POST to Jesse, for the two things the browser cannot read itself: the proxied sources (Deepcoin, the treasury
-// yields) and saving a snapshot. The token is read exactly like the finder does it.
+// One POST to Jesse, for the one thing the browser cannot read itself (Deepcoin: its API sends no CORS headers) and
+// for saving a snapshot. The token is read exactly like the finder does it.
 async function post(path, body = {}) {
   const token = tokenOf();
-  if (!token) throw new Error('这个数据源要经 Jesse 代理，需要先在同一地址的 Jesse 页面登录，再刷新此页（币安、OKX 的图表不需要登录）。');
+  if (!token) throw new Error('这个数据源要经 Jesse 代理，需要先在同一地址的 Jesse 页面登录，再刷新此页（币安、OKX、美债的图表不需要登录）。');
   const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: token },
     body: JSON.stringify(body), credentials: 'same-origin' });
   if (response.status === 401) throw new Error('登录已失效：请在同一地址的 Jesse 页面重新登录，再刷新此页。');
@@ -262,11 +263,13 @@ function makePanel(tf, answer) {
     candles: answer.closed, closes: new Map(answer.closed.map(candle => [candle.time, candle.close])),
     byTime: new Map(answer.closed.map(candle => [candle.time, candle])),
     overlaySeries: [], overlayGroups: [], forming: answer.forming, tailTimer: null,
-    // The proxied sources arrive in one answer at the upstream's maximum range: there is no earlier page to ask for.
+    // A yield panel keeps the series it is built from (CNBC's own bars) so the poll can rebuild its newest bars.
+    request: source === YIELD_SOURCE ? yieldRequest(tf) : null, raw: answer.raw ?? null,
+    // CNBC hands back one range per panel: there is no earlier page to ask for.
     loadingEarlier: false, noMore: source === YIELD_SOURCE, sized: false };
-  if (answer.hint || !answer.closed.length) {
+  if (!answer.closed.length) {
     card.classList.add('empty');
-    host.textContent = answer.hint || `${timeframeLabel(interval)} 周期没有拿到 K 线，稍后刷新试试。`;
+    host.textContent = `${timeframeLabel(interval)} 周期没有拿到 K 线，稍后刷新试试。`;
     panel.empty = true;
     paintMeta(panel);
     return panel;
@@ -375,20 +378,50 @@ function snapshotPanel(panel) {
 
 // ---- Data ------------------------------------------------------------------
 /**
+ * What a yield chart says under it about the series it draws: CNBC's feed is Tradeweb's, its intraday history starts
+ * with the `1D` / `5D` range that panel is built from, and the daily panel is three years of `6M` bars.
+ */
+function yieldNote(tf) {
+  const { range, base } = yieldRequest(tf);
+  if (base >= 1440) return '来源 CNBC（Tradeweb），日线，约 3 年';
+  return `来源 CNBC（Tradeweb），${base} 分钟级，约 ${range === '1D' ? '1 天' : '10 天'}盘中历史`;
+}
+
+/**
+ * A yield panel's bars from its source series: `aggregate` is the bucket width in minutes (aggregateCandles counts
+ * minutes). The last bucket is always the one still forming — the poll keeps moving it, and the indicator tail that
+ * follows it — instead of a half-built bar being drawn as closed.
+ */
+function yieldBarsOf(raw, aggregate) {
+  const bars = aggregate > 1 ? aggregateCandles(raw, aggregate) : [...raw];
+  return bars.length > 1 ? { closed: bars.slice(0, -1), forming: bars.at(-1) } : { closed: bars, forming: null };
+}
+
+/**
+ * One CNBC chart series (`1D` one-minute, `5D` five-minute, `6M` daily), read by the browser: CNBC sends CORS headers,
+ * so neither Jesse nor a login token is involved.
+ */
+async function fetchYieldSeries(symbolName, range) {
+  const code = cnbcSymbolOf(symbolName);
+  if (!code) throw new Error(`${symbolName} 不是 CNBC 有的美债品种。`);
+  const response = await fetch(cnbcChartUrl(code, range));
+  if (!response.ok) throw new Error(`CNBC 美债行情请求失败（HTTP ${response.status}），稍后再试。`);
+  const bars = parseCnbcBars(await response.json());
+  if (!bars.length) throw new Error(`CNBC 没有返回 ${symbolName} 的美债行情，稍后再试。`);
+  return bars;
+}
+
+/**
  * One page of candles of one source. Binance answers in one REST page (fapi for the perpetual, api/v3 for spot), OKX
- * in its own envelope; Deepcoin and the treasury yields come from Jesse's proxy, which reads the venue and hands back
- * the series the panel needs (a bucketed panel asks for 1m and is aggregated here, so both pages agree on buckets).
+ * in its own envelope; Deepcoin comes from Jesse's proxy, which reads the venue and hands back the series the panel
+ * needs (a bucketed panel asks for 1m and is aggregated here, so both pages agree on buckets). The treasury yields are
+ * one CNBC chart range, kept whole as `raw` so the 15-second poll can rebuild the panel's newest bars from it.
  */
 async function fetchCandles(sourceId, marketId, symbolName, tf, options = {}) {
   if (sourceId === YIELD_SOURCE) {
-    const request = yieldRequest(symbolName, tf);
-    const answer = await post(PROXY_CANDLES, { source: YIELD_SOURCE, symbol: symbolName, interval: request.interval,
-      ...(options.range ? { range: options.range } : {}) });
-    const parsed = parseMarketCandles(answer);
-    // aggregateCandles takes the bucket width in minutes, not the bar count (passing 4 made 4-minute buckets, so the
-    // 4h chart was the 1h series again, 2026-11-16).
-    const closed = request.aggregate > 1 ? aggregateCandles(parsed.closed, timeframeMinutes(tf)) : parsed.closed;
-    return { closed, forming: null, note: parsed.note, dailyOnly: request.dailyOnly || parsed.dailyOnly };
+    const request = yieldRequest(tf);
+    const raw = await fetchYieldSeries(symbolName, options.range ?? request.range);
+    return { raw, ...yieldBarsOf(raw, request.aggregate), note: yieldNote(tf) };
   }
   const request = candleRequest(sourceId, tf);
   const limit = Math.max(1, Math.trunc((options.limit ?? pageSizeOf(sourceId)) * request.aggregate));
@@ -416,11 +449,9 @@ async function fetchCandles(sourceId, marketId, symbolName, tf, options = {}) {
   return { ...parseKlines(payload, Date.now()), note: '' };
 }
 
-// A panel of a FRED-only yield has no small-timeframe series to draw: it says so instead of faking a flat chart.
-// Everything else is capped at MAX_BARS like the exchange panels.
-const panelAnswer = (tf, answer) => (answer.dailyOnly && tf !== '1D')
-  ? { ...answer, closed: [], hint: `${symbol} 这个品种只有日线（FRED 官方数据），1D 图正常显示。` }
-  : { ...answer, closed: answer.closed.length > MAX_BARS ? answer.closed.slice(-MAX_BARS) : answer.closed };
+// Everything is capped at MAX_BARS like the exchange panels.
+const panelAnswer = answer => ({ ...answer,
+  closed: answer.closed.length > MAX_BARS ? answer.closed.slice(-MAX_BARS) : answer.closed });
 
 // Replaces a panel's candles without moving what the owner is looking at: the visible window is shifted by the
 // number of bars that came in before the bar it started on (prepended history), so nothing jumps.
@@ -450,6 +481,20 @@ function setBars(panel, next) {
   if (shift) panel.chart.timeScale().setVisibleLogicalRange(shiftLogical(logical, shift));
 }
 
+/**
+ * A yield panel redrawn from its source series after a poll: the buckets are rebuilt (the last one is still forming),
+ * the visible window stays where it is, and the indicator lines reach the new last bar.
+ */
+function applyYieldBars(panel) {
+  if (panel.empty || !panel.raw) return;
+  if (panel.raw.length > MAX_BARS) panel.raw = panel.raw.slice(-MAX_BARS);
+  const { closed, forming } = yieldBarsOf(panel.raw, panel.request.aggregate);
+  // setBars drops the forming bar the chart was drawing (it replaces the whole data set), so it is re-created below.
+  clearTimeout(panel.tailTimer); panel.tailTimer = null; panel.forming = null;
+  setBars(panel, closed);
+  if (forming) paintForming(panel, forming);
+}
+
 // One page of older bars for a chart dragged to its left edge. The limit keeps a timeframe at most MAX_BARS bars.
 async function loadEarlier(panel) {
   if (panel.empty || panel.loadingEarlier || panel.noMore || panel.candles.length >= MAX_BARS) return;
@@ -472,22 +517,19 @@ async function loadEarlier(panel) {
   } finally { panel.loadingEarlier = false; }
 }
 
-// The newest bars of one timeframe, merged into what is already loaded (by open time, newest wins). A poll asks the
-// yields for the newest bars only, so a reload of the whole chart history is not needed.
-async function refreshPanel(panel, version, { poll = false } = {}) {
+// The newest bars of one timeframe, merged into what is already loaded (by open time, newest wins).
+async function refreshPanel(panel, version) {
   if (panel.empty) return;
   try {
-    const query = poll ? { range: pollRangeOf(panel.tf, symbol) } : { limit: pageSizeOf(source) };
-    const { closed, forming } = await fetchCandles(source, market, symbol, panel.tf, query);
+    const { closed, forming } = await fetchCandles(source, market, symbol, panel.tf, { limit: pageSizeOf(source) });
     if (version !== loadVersion || !closed.length) return;
     setBars(panel, mergeCandles(panel.candles, closed));
     // The REST answer's forming bar is a snapshot of the same bar the stream is drawing: only replace ours with a
     // newer one, never move it backwards.
     if (forming && (!panel.forming || forming.time > panel.forming.time)) paintForming(panel, forming);
-  } catch (error) {
-    // A poll reports the failure (the header says so); the socket keeps pushing, so a failed catch-up is otherwise
-    // just a page of bars that did not arrive.
-    if (poll) throw error;
+  } catch {
+    // A failed catch-up just leaves the history as it was; the socket keeps pushing, and the next reconnect or the
+    // next drag towards the left asks again.
   }
 }
 
@@ -508,7 +550,7 @@ async function render() {
   catch (error) { if (version === loadVersion) status(error.message, true); return; }
   if (version !== loadVersion) return;
   destroyPanels();
-  panels = ordered.map((tf, i) => makePanel(tf, panelAnswer(tf, answers[i])));
+  panels = ordered.map((tf, i) => makePanel(tf, panelAnswer(answers[i])));
   rangeLink = linkTimeRanges(panels.filter(panel => !panel.empty));
   status('');
   // The sockets (or, for a proxied source, the poll's own line) own the light red line, so the stream state is
@@ -536,8 +578,9 @@ async function openSelection(nextSource, nextMarket, input) {
   const same = nextSource === source && wantedMarket === market && next === symbol;
   const version = ++loadVersion;
   try {
+    // A yield is probed with the small `1D` range (a few hundred one-minute bars) instead of the panel's whole series.
     await fetchCandles(nextSource, wantedMarket, next, timeframes[0],
-      isYieldSource(nextSource) ? { range: pollRangeOf(timeframes[0], next) } : { limit: 5 });
+      isYieldSource(nextSource) ? { range: YIELD_POLL_RANGE } : { limit: 5 });
   } catch (error) {
     if (version === loadVersion) { status(error.message, true); paintSource(); }
     return false;
@@ -548,7 +591,7 @@ async function openSelection(nextSource, nextMarket, input) {
   // The product list's sub-tab stays on the market it showed, unless this source has no such market.
   listMarket = normalizeMarket(source, listMarket);
   saveSelection();
-  livePrice = null; yieldFetchedAt = 0;
+  livePrice = null;
   paintSource(); paintAside(); paintWatchlist(); paintLastPrice();
   syncStreams(); syncPolling();
   if (asideTab === 'products') loadProducts();
@@ -841,7 +884,13 @@ const productRequest = () => ({
 async function loadProducts() {
   if (asideTab !== 'products' || document.hidden) return;
   const request = productRequest();
-  if (request.source === YIELD_SOURCE) { paintProducts(); refreshYieldQuotes(); return; }
+  if (request.source === YIELD_SOURCE) {
+    // The six yield rows are already in the watchlist quotes: one CNBC quote request refreshes all of them.
+    paintProducts();
+    try { await refreshYieldQuotes(); productError = ''; } catch (error) { productError = error.message; }
+    paintProducts();
+    return;
+  }
   // Another venue or market than the rows on screen: they are not this list any more, so nothing is shown until the
   // answer lands (a stale Binance list under an OKX heading would be worse than an empty one for a second).
   if (request.key !== productVenue) { productRows = []; productVenue = request.key; productError = ''; }
@@ -884,7 +933,7 @@ function paintLastPrice() {
 
 // The last traded price as a light red dashed line with an axis label on every chart (the finder's own line).
 function paintLivePrice() {
-  const title = source === YIELD_SOURCE ? '最新' : '实时';
+  const title = '实时';
   for (const panel of panels) {
     if (panel.empty || !panel.series) continue;
     if (livePrice === null) {
@@ -898,17 +947,18 @@ function paintLivePrice() {
   }
 }
 
-// A yield has no websocket: the line is the newest close the poll brought back, and the header says how old it is.
+// A yield has no websocket: the line is the newest value the poll brought back — the last bar of a chart on screen,
+// or the quote when there is none.
 function paintYieldPrice() {
-  const last = panels.filter(panel => !panel.empty).at(-1)?.candles.at(-1);
-  // A daily-only instrument with no 1D panel on screen has no candle to read: the watchlist's own value is the newest
-  // number there is, so the line and the stamp come from that instead.
+  const newest = panels.filter(panel => !panel.empty)
+    .map(panel => panel.forming ?? panel.candles.at(-1))
+    .filter(Boolean)
+    .sort((a, b) => a.time - b.time).at(-1);
   const quote = quotes.get(watchKey({ source, market, symbol }));
-  livePrice = last ? last.close : quote?.price ?? null;
-  yieldFetchedAt = last ? last.time : (quote?.time ?? 0);
+  livePrice = newest ? newest.close : (Number.isFinite(quote?.price) ? quote.price : null);
   paintLivePrice();
   paintLastPrice();
-  // The header's 「最新 …」 is this function's stamp, so it repaints the note with the numbers it just read.
+  // The header's note carries the numbers just read, so it is repainted here.
   paintLiveNote();
 }
 
@@ -917,10 +967,9 @@ const quotesReconnecting = () => [...quoteSockets.values()].some(socket => socke
 function paintLiveNote() {
   const note = $('m-live-note');
   if (source === YIELD_SOURCE) {
-    // No websocket: the newest close the poll brought back, and how often that happens.
-    const fresh = yieldFetchedAt ? `最新 ${stamp(yieldFetchedAt)} UTC` : '等待第一次轮询';
+    // No websocket at all: CNBC's one-minute series is read on a timer.
     note.hidden = false;
-    note.textContent = `${fresh} · ${pollError ? '轮询失败，稍后重试' : '每 60 秒轮询 Jesse（美债没有实时推送）'}`;
+    note.textContent = pollError ? '美债 · CNBC 轮询失败，稍后重试' : '美债 · CNBC 每 15 秒更新';
     return;
   }
   const parts = [];
@@ -1155,9 +1204,9 @@ async function refreshDeepcoinQuotes() {
   paintQuotes();
 }
 
-// Every 60 seconds ask Jesse for the newest bars of the yield panels on screen and for the value of every yield row in
-// the watchlist (and of the six products, while that list is open). A hidden page does not poll and coming back polls
-// once.
+// Every 15 seconds read the yields from CNBC: the current session's one-minute bars for the panels on screen, and one
+// quote request for every yield row in the watchlist (and the six products, while that list is open). A hidden page
+// does not poll and coming back polls once.
 const yieldRows = () => watchlist.filter(item => item.source === YIELD_SOURCE);
 const yieldSymbolsToQuote = () => {
   const symbols = new Set(yieldRows().map(item => item.symbol));
@@ -1177,11 +1226,7 @@ async function pollYields() {
   pollBusy = true;
   const version = loadVersion;
   try {
-    await Promise.all([
-      ...(source === YIELD_SOURCE
-        ? panels.filter(panel => !panel.empty).map(panel => refreshPanel(panel, version, { poll: true })) : []),
-      ...yieldSymbolsToQuote().map(symbolName => refreshYieldQuote(symbolName)),
-    ]);
+    await Promise.all([pollYieldPanels(version), refreshYieldQuotes()]);
     pollError = false;
   } catch { pollError = true; }
   finally {
@@ -1191,20 +1236,39 @@ async function pollYields() {
   }
 }
 
-async function refreshYieldQuotes() {
-  try { await Promise.all(yieldSymbolsToQuote().map(symbolName => refreshYieldQuote(symbolName))); pollError = false; }
-  catch { pollError = true; }
-  paintLiveNote();
+/**
+ * One `1D` read (the session's one-minute bars) merged into every panel on screen: an intraday panel re-buckets the
+ * newest bars from it (the last one stays forming), and the daily panel takes the newest minute as today's close.
+ */
+async function pollYieldPanels(version) {
+  if (source !== YIELD_SOURCE || !panels.length) return;
+  const minutes = await fetchYieldSeries(symbol, YIELD_POLL_RANGE);
+  if (version !== loadVersion) return;
+  for (const panel of panels) {
+    if (panel.empty || !panel.request || !panel.raw) continue;
+    panel.raw = panel.request.base >= 1440
+      ? mergeYieldDailyClose(panel.raw, minutes.at(-1))
+      : mergeYieldBars(panel.raw, panel.request.base, minutes);
+    applyYieldBars(panel);
+  }
 }
 
-// The watchlist value of one yield row: the daily series is enough, a change is against yesterday's close. The
-// failure goes to the poll, which reports it in the header instead of leaving a row that silently never updates.
-async function refreshYieldQuote(symbolName) {
-  const { closed } = await fetchCandles(YIELD_SOURCE, null, symbolName, '1D', { range: '1mo' });
-  const quote = yieldQuote(closed);
-  if (!quote) return;
-  quotes.set(watchKey({ source: YIELD_SOURCE, market: null, symbol: symbolName }), quote);
+/**
+ * The value and today's change of every yield on screen, in one CNBC quote request. The rows the list is showing are
+ * repainted with it, and the failure goes to the poll, which reports it in the header instead of leaving a row that
+ * silently never updates.
+ */
+async function refreshYieldQuotes() {
+  const url = cnbcQuoteUrl(yieldSymbolsToQuote().map(cnbcSymbolOf).filter(Boolean));
+  if (!url) return;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`CNBC 美债报价请求失败（HTTP ${response.status}），稍后再试。`);
+  for (const quote of parseCnbcQuote(await response.json())) {
+    quotes.set(watchKey({ source: YIELD_SOURCE, market: null, symbol: quote.symbol }),
+      { symbol: quote.symbol, price: quote.price, change: quote.change });
+  }
   paintQuotes();
+  if (asideTab === 'products' && source === YIELD_SOURCE) paintProducts();
 }
 
 // ---- Controls --------------------------------------------------------------
@@ -1254,13 +1318,11 @@ function onVisibility() {
   if (document.hidden) { hiddenAt = Date.now(); return; }
   const away = hiddenAt ? Date.now() - hiddenAt : 0;
   hiddenAt = 0;
-  // The sockets keep the newest bars, but a background tab may have been cut or throttled long enough to leave a
-  // hole: refetch the newest bars of every timeframe when it was away for over a minute. The proxied sources are
-  // polled anyway; coming back asks once immediately.
-  if (away > HIDDEN_REFRESH_MS) {
-    if (source === YIELD_SOURCE) pollYields();
-    else refreshAll();
-  }
+  // A hidden page stops polling the yields, so coming back reads them at once. The sockets keep the newest bars, but a
+  // background tab may have been cut or throttled long enough to leave a hole: refetch the newest bars of every
+  // timeframe when it was away for over a minute.
+  if (source === YIELD_SOURCE) pollYields();
+  else if (away > HIDDEN_REFRESH_MS) { refreshAll(); pollYields(); }
   if (asideTab === 'products') loadProducts();
 }
 

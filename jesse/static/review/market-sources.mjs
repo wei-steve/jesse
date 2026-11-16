@@ -1,11 +1,13 @@
-import { calculateIndicator, formingTail, tailBars } from './indicators.mjs?v=20261116j';
+import { calculateIndicator, formingTail, tailBars } from './indicators.mjs?v=20261116k';
 // The 看行情 page's sources (market.mjs): an exchange-level list (Binance / OKX / Deepcoin) plus the US treasury
 // yields, each with the contract / spot sub-markets it has, the instruments it defaults to, the exchange-side bar
-// spelling of every timeframe, and the interval mapping of the Jesse proxy that serves the data the browser cannot
-// read. No DOM, no fetch: tests/review-market-sources.test.mjs runs every function here with node.
+// spelling of every timeframe, the CNBC chart range of a yield panel, and the interval mapping of the Jesse proxy that
+// serves the data the browser cannot read. No DOM, no fetch: tests/review-market-sources.test.mjs runs every function
+// here with node.
 //
-// Binance and OKX are CORS-open and read by the browser itself; Deepcoin and Yahoo / FRED are not, so they come from
-// Jesse (`POST /review/market/candles`, `POST /review/market/tickers`, see jesse/services/market_sources.py).
+// Binance, OKX and CNBC are CORS-open and read by the browser itself; Deepcoin is not, so its candles and tickers come
+// from Jesse (`POST /review/market/candles`, `POST /review/market/tickers`, see jesse/services/market_sources.py). The
+// backend's us-yields branch (Yahoo / FRED) is kept as a spare: the page reads CNBC since T-55.
 
 export const BINANCE_SOURCE = 'binance';
 export const OKX_SOURCE = 'okx';
@@ -146,19 +148,20 @@ export function candleRequest(source, timeframe) {
 
 // --- Yields -------------------------------------------------------------------------------------------------------
 
-// TradingView-style codes, the ones the owner named. The value of every series IS the yield in percent (4.95 means
-// 4.95%), which is why a change is written +0.03 and never as a percentage of a percentage.
+// TradingView-style codes, the ones the owner named, and the code CNBC spells the same maturity with (T-55). The value
+// of every series IS the yield in percent (4.95 means 4.95%), which is why a change is written +0.03 and never as a
+// percentage of a percentage. All six are read from CNBC's Tradeweb feed: its `1D` chart is the current session at one
+// minute resolution, so every maturity has an intraday series (before T-55 the 2 and the 20 year only had FRED's
+// daily one).
 export const YIELD_INSTRUMENTS = [
-  { symbol: 'US03M', name: '13周' },
-  { symbol: 'US02Y', name: '2年' },
-  { symbol: 'US05Y', name: '5年' },
-  { symbol: 'US10Y', name: '10年' },
-  { symbol: 'US20Y', name: '20年' },
-  { symbol: 'US30Y', name: '30年' },
+  { symbol: 'US03M', cnbc: 'US3M', name: '13周' },
+  { symbol: 'US02Y', cnbc: 'US2Y', name: '2年' },
+  { symbol: 'US05Y', cnbc: 'US5Y', name: '5年' },
+  { symbol: 'US10Y', cnbc: 'US10Y', name: '10年' },
+  { symbol: 'US20Y', cnbc: 'US20Y', name: '20年' },
+  { symbol: 'US30Y', cnbc: 'US30Y', name: '30年' },
 ];
 export const YIELD_SYMBOLS = YIELD_INSTRUMENTS.map(instrument => instrument.symbol);
-// There is no Cboe yield index for the 2 and the 20 year, so those two only exist as FRED's daily series.
-export const DAILY_ONLY_YIELDS = ['US02Y', 'US20Y'];
 // The four the owner had on screen: seeded into the watchlist once (see withDefaultYields), then theirs to manage.
 export const DEFAULT_YIELD_SYMBOLS = ['US02Y', 'US10Y', 'US20Y', 'US30Y'];
 export const DEFAULT_YIELD_SYMBOL = 'US10Y';
@@ -171,25 +174,37 @@ export function normalizeYieldSymbol(input) {
   return YIELD_SYMBOLS.includes(code) ? code : '';
 }
 
-export const isDailyOnlyYield = symbol => DAILY_ONLY_YIELDS.includes(normalizeYieldSymbol(symbol));
-
-/**
- * What the proxy is asked for to draw `timeframe` of `symbol`, and how the answer is turned into that timeframe.
- * 3m and 4h exist only as aggregations (Yahoo has no bond data for them); the FRED-only symbols have nothing but
- * their daily series, so every panel of them asks for 1D and the small timeframes show a hint instead of a chart.
- */
-export function yieldRequest(symbol, timeframe) {
-  const dailyOnly = isDailyOnlyYield(symbol);
-  const interval = dailyOnly ? '1D' : { '3m': '1m', '4h': '1h' }[timeframe] ?? String(timeframe ?? '');
-  const aggregates = { '3m': 3, '4h': 4 }[timeframe] ?? 1;
-  return { interval, aggregate: dailyOnly ? 1 : aggregates, dailyOnly, timeframe };
+/** A yield code as CNBC spells it (`US02Y` -> `US2Y`), or '' when it is not one of the six. */
+export function cnbcSymbolOf(input) {
+  const code = normalizeYieldSymbol(input);
+  return YIELD_INSTRUMENTS.find(entry => entry.symbol === code)?.cnbc ?? '';
 }
 
-/** The range asked for by the 60-second poll: only the newest bars, the loaded history stays where it is. Keyed by
- * the interval actually requested (yieldRequest), not the panel's timeframe: a 4h panel asks Yahoo for 1h, whose
- * shortest range is 1mo, and a FRED symbol asks for 1D on every panel (2026-11-16, '5d' for 4h was refused). */
-export const POLL_RANGES = { '1m': '1d', '5m': '5d', '15m': '5d', '30m': '5d', '1h': '1mo', '1D': '1mo' };
-export const pollRangeOf = (timeframe, symbol = '') => POLL_RANGES[yieldRequest(symbol, timeframe).interval] ?? '1mo';
+/**
+ * What CNBC is asked for to draw a panel: the chart range, the width in minutes of one of that range's bars, and the
+ * bucket the panel draws (aggregateCandles counts minutes). 1m / 3m come from `1D`'s one-minute series (about a day of
+ * the current session), the rest of the intraday panels from `5D`'s five-minute series (about 10 days), 1D from `6M`'s
+ * daily series (about three years).
+ */
+const YIELD_SERIES = {
+  '1m': { range: '1D', base: 1, aggregate: 1 },
+  '3m': { range: '1D', base: 1, aggregate: 3 },
+  '5m': { range: '5D', base: 5, aggregate: 1 },
+  '15m': { range: '5D', base: 5, aggregate: 15 },
+  '30m': { range: '5D', base: 5, aggregate: 30 },
+  '1h': { range: '5D', base: 5, aggregate: 60 },
+  '4h': { range: '5D', base: 5, aggregate: 240 },
+  '1D': { range: '6M', base: 1440, aggregate: 1 },
+};
+
+/** The chart range, source bar width and panel bucket of `timeframe` (an unknown timeframe draws the 1m series). */
+export function yieldRequest(timeframe) {
+  const series = YIELD_SERIES[timeframe] ?? YIELD_SERIES['1m'];
+  return { ...series, timeframe: String(timeframe ?? '') };
+}
+
+/** The range the 15-second poll reads: the current session's one-minute bars, whatever the panels show. */
+export const YIELD_POLL_RANGE = '1D';
 
 /**
  * Candles of `minutes`-minute buckets, aligned to UTC, from a 1m or 1h series. A bond session is not 24 hours, so a
@@ -218,17 +233,116 @@ export function aggregateCandles(source, minutes) {
   return [...buckets.values()].sort((a, b) => a.time - b.time);
 }
 
+/** A value from an API answer: null / '' / a boolean are not the number 0, so they come back NaN and get dropped. */
+const numeric = value => (value === null || value === undefined || value === '' || typeof value === 'boolean')
+  ? NaN : Number(value);
+
+/** Bars by open time, oldest first, later lists winning on a shared time. market-data.mjs has mergeCandles, but that
+ * module imports this one: this file stays importable on its own. */
+function byTime(lists) {
+  const map = new Map();
+  for (const list of lists) {
+    for (const bar of Array.isArray(list) ? list : []) {
+      if (Number.isFinite(bar?.time)) map.set(bar.time, bar);
+    }
+  }
+  return [...map.values()].sort((a, b) => a.time - b.time);
+}
+
+/**
+ * CNBC's chart answer as the candles the charts draw: `{barData:{priceBars:[{open,high,low,close,tradeTimeinMills}]}}`,
+ * oldest first, every number a string. The strings become numbers, the millisecond stamps seconds, and a row that is not
+ * a sane OHLC bar is dropped (an unknown symbol answers `{status:'ERROR'}` with no bars at all).
+ */
+export function parseCnbcBars(payload) {
+  const rows = Array.isArray(payload?.barData?.priceBars) ? payload.barData.priceBars : [];
+  const bars = [];
+  for (const row of rows) {
+    const time = Math.trunc(numeric(row?.tradeTimeinMills) / 1000);
+    const [open, high, low, close] = ['open', 'high', 'low', 'close'].map(key => numeric(row?.[key]));
+    if (![time, open, high, low, close].every(Number.isFinite) || time <= 0) continue;
+    // The yield series carry no volume; a bar is not dropped over it.
+    const volume = numeric(row?.volume);
+    bars.push({ time, open, high, low, close, volume: Number.isFinite(volume) && volume >= 0 ? volume : 0 });
+  }
+  return byTime([bars]);
+}
+
+/**
+ * CNBC's quote answer (`FormattedQuoteResult.FormattedQuote[]`, one object when a single symbol was asked) as one row
+ * per yield the page knows: `{symbol, price, change}`. The codes come back CNBC-spelled (`US2Y`), so they are mapped
+ * back to the page's own (`US02Y`); `change` is already in percentage points (`-0.026` = -2.6 basis points) and a
+ * missing one (a closed instrument) is null instead of 0.
+ */
+export function parseCnbcQuote(payload) {
+  const raw = payload?.FormattedQuoteResult?.FormattedQuote;
+  const rows = Array.isArray(raw) ? raw : (raw && typeof raw === 'object' ? [raw] : []);
+  const quotes = [];
+  for (const row of rows) {
+    const code = String(row?.symbol ?? '').trim().toUpperCase();
+    const symbol = YIELD_INSTRUMENTS.find(entry => entry.cnbc === code)?.symbol;
+    const price = numeric(String(row?.last ?? '').replace('%', ''));
+    if (!symbol || !Number.isFinite(price) || price <= 0) continue;
+    const change = numeric(String(row?.change ?? '').replace('%', ''));
+    quotes.push({ symbol, price, change: Number.isFinite(change) ? change : null });
+  }
+  return quotes;
+}
+
+/**
+ * The 15-second poll's one-minute bars merged into one panel's source series; `base` is the width in minutes of that
+ * series' own bars (1 for the 1m / 3m panels, 5 for the ones drawn from `5D`). The polled minutes replace everything
+ * from the first bucket they cover, so the newest bars become minute-accurate; the buckets follow the series' own grid
+ * — CNBC's 5m bars start at :01, not :00, and a UTC-aligned bucket would draw the same minutes twice.
+ */
+export function mergeYieldBars(series, base, polled) {
+  const bars = (Array.isArray(series) ? series : []).filter(bar => Number.isFinite(bar?.time));
+  const minutes = (Array.isArray(polled) ? polled : [])
+    .filter(bar => Number.isFinite(bar?.time) && Number.isFinite(bar?.close))
+    .sort((a, b) => a.time - b.time);
+  if (!minutes.length) return bars;
+  const baseMinutes = Number.isFinite(base) && base > 0 ? Math.trunc(base) : 1;
+  const width = baseMinutes * 60;
+  const offset = bars.length ? ((bars[0].time % width) + width) % width : 0;
+  const grid = time => Math.floor((time - offset) / width) * width + offset;
+  // aggregateCandles buckets on a UTC-aligned grid, so shift by the series' own offset and shift back.
+  const buckets = aggregateCandles(minutes.map(bar => ({ ...bar, time: bar.time - offset })), baseMinutes)
+    .map(bar => ({ ...bar, time: bar.time + offset }));
+  return byTime([bars.filter(bar => bar.time < grid(minutes[0].time)), buckets]);
+}
+
+/**
+ * The daily panel during the session: CNBC publishes its daily series a session late, so the newest polled minute
+ * extends the last bar (its close, and its high / low when the minute goes past them), and a minute of a later session
+ * than that bar starts the session's own bar. The 05:00 UTC stamp CNBC opens its daily bars with is read off the series
+ * instead of being hardcoded.
+ */
+export function mergeYieldDailyClose(daily, minute) {
+  const bars = (Array.isArray(daily) ? daily : []).filter(bar => Number.isFinite(bar?.time));
+  if (!Number.isFinite(minute?.time) || !Number.isFinite(minute?.close)) return bars;
+  const width = 1440 * 60;
+  const close = minute.close;
+  const open = Number.isFinite(minute.open) ? minute.open : close;
+  const last = bars.at(-1);
+  if (!last) {
+    return [{ time: Math.floor(minute.time / width) * width, open, high: close, low: close, close, volume: 0 }];
+  }
+  const offset = ((last.time % width) + width) % width;
+  const sessionOf = time => Math.floor((time - offset) / width) * width + offset;
+  if (sessionOf(minute.time) <= last.time) {
+    return [...bars.slice(0, -1), { ...last, high: Math.max(last.high, close), low: Math.min(last.low, close),
+      close }];
+  }
+  return [...bars, { time: sessionOf(minute.time), open, high: close, low: close, close, volume: 0 }];
+}
+
 /**
  * `POST /review/market/candles` answer -> what the charts draw: sane candles (UTC seconds, o/h/l/c finite) plus the
- * provider and its note, which the page writes under every chart (the data is delayed, and one of the providers
- * only has daily bars: the picture has to say so).
+ * provider and its note, which the page writes under every chart (the proxied data is delayed, and the page has to say
+ * so). Used by Deepcoin; the treasury yields read CNBC directly (parseCnbcBars) since T-55.
  */
 export function parseMarketCandles(payload) {
   const rows = Array.isArray(payload?.candles) ? payload.candles : [];
-  // A JSON null / '' is not zero: `Number(null)` would draw a bar at 0 and `Number('x')` a NaN, so both are dropped
-  // here instead of at the chart.
-  const numeric = value => (value === null || value === undefined || value === '' || typeof value === 'boolean')
-    ? NaN : Number(value);
   const closed = [];
   for (const row of rows) {
     const [time, open, high, low, close] = ['time', 'open', 'high', 'low', 'close'].map(key => numeric(row?.[key]));
@@ -253,20 +367,7 @@ function cryptoRow(row) {
     volume: Number.isFinite(volume) && volume >= 0 ? volume : 0 };
 }
 
-/**
- * The watchlist row of a yield series: the newest value and its change against the previous bar, in percentage
- * points (a yield is a percentage already, so +0.03 is 3 basis points and not 0.03%).
- */
-export function yieldQuote(candles) {
-  const list = (Array.isArray(candles) ? candles : []).filter(candle => Number.isFinite(candle?.close))
-    .sort((a, b) => a.time - b.time);
-  if (!list.length) return null;
-  const last = list.at(-1);
-  const previous = list.length > 1 ? list.at(-2) : null;
-  return { price: last.close, change: previous ? last.close - previous.close : null, time: last.time };
-}
-
-/** A change in percentage points: `+0.03` / `-0.12` / '' — never `+3.00%` (see yieldQuote). */
+/** A change in percentage points: `+0.03` / `-0.12` / '' — never `+3.00%` (a yield is a percentage already). */
 export const signedPoints = change => Number.isFinite(change)
   ? `${change >= 0 ? '+' : '-'}${Math.abs(change).toFixed(2)}` : '';
 
