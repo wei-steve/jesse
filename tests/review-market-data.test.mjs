@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { klinesUrl, endTimeBefore, parseKlines, mergeCandles, parseMiniTicker,
-  miniTickerStreamUrl, restoreWatchlist, addToWatchlist, removeFromWatchlist, restoreTimeframes,
+  miniTickerStreamUrl, restoreWatchlist, addToWatchlist, removeFromWatchlist, moveWatchItem, restoreTimeframes,
   orderTimeframes, shiftLogical, spotKlinesUrl, klinesUrlFor, okxCandlesUrl, tickersUrlFor, watchItem, watchKey,
   withDefaultYields, restoreSelection, defaultSymbolFor, restoreAsideTab, restoreListMarket, parseOkxCandles,
   aggregateAnswer, tickerRows, proxyTickerRows, orderProducts, filterProducts, pageSizeOf, sameWatchItem, OKX_LIMIT,
@@ -416,4 +416,13 @@ test('the chart height is shared with the finder and only offered values count',
 test('the market page keeps at most 5000 bars per timeframe', () => {
   assert.equal(MAX_BARS, 5000);
   assert.ok(KLINE_LIMIT < MAX_BARS);
+});
+
+test('moveWatchItem reorders the watchlist and ignores bad indexes', () => {
+  const list = ['a', 'b', 'c', 'd'];
+  assert.deepEqual(moveWatchItem(list, 0, 2), ['b', 'c', 'a', 'd']);
+  assert.deepEqual(moveWatchItem(list, 3, 0), ['d', 'a', 'b', 'c']);
+  assert.deepEqual(moveWatchItem(list, 1, 9), ['a', 'c', 'd', 'b'], 'past the end lands last');
+  assert.deepEqual(moveWatchItem(list, 5, 0), list);
+  assert.deepEqual(list, ['a', 'b', 'c', 'd'], 'the input is not changed');
 });

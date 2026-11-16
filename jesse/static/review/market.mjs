@@ -7,25 +7,25 @@
 // FRED) are the other proxied source and are polled every minute.
 // The chart behaviour (range linking, price zoom, snapshots) and the overlays (the review page's display settings)
 // are reused from the review/finder modules instead of being reimplemented.
-import { t as createChart } from './lightweight-charts.mjs?v=20261116i';
-import { linkTimeRanges } from './data.mjs?v=20261116i';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261116i';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116i';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116i';
+import { t as createChart } from './lightweight-charts.mjs?v=20261116j';
+import { linkTimeRanges } from './data.mjs?v=20261116j';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261116j';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116j';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116j';
 import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages, okxCandleChannels, openOkxKlines,
-  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261116i';
-import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116i';
-import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116i';
+  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261116j';
+import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116j';
+import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116j';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, MARKETS, MARKET_SOURCES, OKX_SOURCE, YIELD_SOURCE, YIELD_INSTRUMENTS,
   DEFAULT_YIELD_SYMBOL, aggregateCandles, candleRequest, exchangeOf, instrumentName, isYieldSource, marketLabel,
   marketsOf, normalizeMarket, normalizeYieldSymbol, pollRangeOf, restoreSource, sourceLabel, symbolOf, yieldRequest,
-  parseMarketCandles, sessionIndicator, sessionTail, signedPoints, yieldQuote } from './market-sources.mjs?v=20261116i';
+  parseMarketCandles, sessionIndicator, sessionTail, signedPoints, yieldQuote } from './market-sources.mjs?v=20261116j';
 import { MARKET_KEYS, MARKET_TIMEFRAMES, MAX_BARS, MAX_WATCHLIST, PRODUCT_PAGE, PROXY_CANDLES,
   PROXY_TICKERS, aggregateAnswer, addToWatchlist, defaultSymbolFor, endTimeBefore, filterProducts, klinesUrlFor,
   mergeCandles, miniTickerStreamUrl, pageSizeOf, parseKlines, parseMiniTicker, parseOkxCandles,
-  proxyTickerRows, removeFromWatchlist, restoreAsideTab, restoreListMarket, restoreSelection, restoreTimeframes,
+  proxyTickerRows, removeFromWatchlist, moveWatchItem, restoreAsideTab, restoreListMarket, restoreSelection, restoreTimeframes,
   restoreWatchlist, sameWatchItem, shiftLogical, tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields }
-  from './market-data.mjs?v=20261116i';
+  from './market-data.mjs?v=20261116j';
 
 const $ = id => document.getElementById(id);
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
@@ -651,7 +651,11 @@ function paintWatchlist() {
     remove.type = 'button'; remove.className = 'watch-del'; remove.textContent = '×';
     remove.setAttribute('aria-label', `把 ${item.symbol}（${itemTag(item)}）从自选里删掉`);
     remove.onclick = event => { event.stopPropagation(); dropWatch(item); };
-    row.append(button, remove);
+    const handle = document.createElement('span');
+    handle.className = 'watch-drag'; handle.textContent = '⠿';
+    handle.title = '按住上下拖动，调整自选顺序';
+    handle.onpointerdown = event => startWatchDrag(event, row);
+    row.append(handle, button, remove);
     watchRows.set(watchKey(item), { row, price, change, item });
     return row;
   }));
@@ -679,6 +683,45 @@ const inWatchlist = item => watchlist.some(existing => sameWatchItem(existing, i
 function addWatch() {
   const item = watchItem({ source, market, symbol });
   if (item) addWatchItem(item);
+}
+
+// Custom order of the watchlist: press the ⠿ handle and drag the row up or down. Pointer events (not HTML drag and
+// drop) so it also works with a finger on a phone or tablet. The rows move live while dragging; the new order is
+// saved when the pointer is released.
+function startWatchDrag(event, row) {
+  event.preventDefault();
+  const box = $('watchlist');
+  const from = [...box.children].indexOf(row);
+  if (from < 0) return;
+  const horizontal = getComputedStyle(box).flexDirection === 'row'; // the phone layout lays the rows out side by side
+  row.classList.add('dragging');
+  try { event.target.setPointerCapture(event.pointerId); } catch { /* still follows window events */ }
+  const move = moving => {
+    for (const other of box.children) {
+      if (other === row) continue;
+      const rect = other.getBoundingClientRect();
+      const inside = horizontal ? moving.clientX >= rect.left && moving.clientX <= rect.right
+        : moving.clientY >= rect.top && moving.clientY <= rect.bottom;
+      if (!inside) continue;
+      const before = horizontal ? moving.clientX < rect.left + rect.width / 2 : moving.clientY < rect.top + rect.height / 2;
+      box.insertBefore(row, before ? other : other.nextSibling);
+      break;
+    }
+  };
+  const end = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', end);
+    window.removeEventListener('pointercancel', end);
+    row.classList.remove('dragging');
+    const to = [...box.children].indexOf(row);
+    if (to === from) return;
+    watchlist = moveWatchItem(watchlist, from, to);
+    write(MARKET_KEYS.watchlist, JSON.stringify(watchlist));
+    paintWatchlist();
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', end);
+  window.addEventListener('pointercancel', end);
 }
 
 function dropWatch(item) {

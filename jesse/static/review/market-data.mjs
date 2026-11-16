@@ -4,7 +4,7 @@
 // No DOM, no fetch, no websocket: tests/review-market-data.test.mjs runs every function in this file with node.
 import { BINANCE_SOURCE, DEFAULT_MARKET, DEFAULT_SOURCE, DEFAULT_YIELD_SYMBOLS, OKX_SOURCE, YIELD_SOURCE, MARKETS,
   aggregateCandles, candleRequest, defaultSymbolOf, migrateSource, normalizeMarket, normalizeSymbol,
-  symbolOf } from './market-sources.mjs?v=20261116i';
+  symbolOf } from './market-sources.mjs?v=20261116j';
 
 // Binance USDTⓈ-M futures, public and CORS-open (`access-control-allow-origin: *`), so the browser talks to the
 // exchange directly: any USDT perpetual can be watched, nothing has to be imported into Jesse's database and no
@@ -363,6 +363,15 @@ export function addToWatchlist(list, input) {
   const item = watchItem(input);
   if (!item || current.some(existing => sameWatchItem(existing, item))) return current;
   return [...current, item].slice(0, MAX_WATCHLIST);
+}
+
+/** The watchlist with the row at `from` moved to index `to` (the owner's own order, dragged by the handle). */
+export function moveWatchItem(list, from, to) {
+  const current = Array.isArray(list) ? [...list] : [];
+  if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || from >= current.length || from === to) return current;
+  const [item] = current.splice(from, 1);
+  current.splice(Math.max(0, Math.min(current.length, to)), 0, item);
+  return current;
 }
 
 export function removeFromWatchlist(list, input) {

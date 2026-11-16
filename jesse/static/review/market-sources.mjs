@@ -1,4 +1,4 @@
-import { calculateIndicator, formingTail, tailBars } from './indicators.mjs?v=20261116i';
+import { calculateIndicator, formingTail, tailBars } from './indicators.mjs?v=20261116j';
 // The 看行情 page's sources (market.mjs): an exchange-level list (Binance / OKX / Deepcoin) plus the US treasury
 // yields, each with the contract / spot sub-markets it has, the instruments it defaults to, the exchange-side bar
 // spelling of every timeframe, and the interval mapping of the Jesse proxy that serves the data the browser cannot

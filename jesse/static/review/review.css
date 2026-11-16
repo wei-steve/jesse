@@ -157,3 +157,4 @@ main[hidden]{display:none}
 /* The market page lists (自选 / product list) set display:flex, which would override the hidden attribute and leave
    both lists stacked (2026-11-16): hidden always wins there. */
 .market aside [hidden],aside [hidden]{display:none !important}
+.watch-drag{display:flex;align-items:center;padding:0 2px 0 5px;color:#b0bcce;cursor:grab;touch-action:none;user-select:none;font-size:13px}.watch-drag:hover{color:#315cd0}.watch-row.dragging{opacity:.6;border-color:#91b0ef}
