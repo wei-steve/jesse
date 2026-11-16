@@ -1,19 +1,19 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261115f';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261115f';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261115f';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261115f';
-import { calculateIndicator } from './indicators.mjs?v=20261115f';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261115f';
-import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261115f';
+import { t as createChart } from './lightweight-charts.mjs?v=20261115g';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261115g';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261115g';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261115g';
+import { calculateIndicator } from './indicators.mjs?v=20261115g';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261115g';
+import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261115g';
 import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone, barSnapshot,
-  nextTickDelay, newKeys, atRightEdge, shiftRange } from './finder-data.mjs?v=20261115f';
-import { streamUrl, openTicker } from './live-price.mjs?v=20261115f';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261115f';
+  nextTickDelay, newKeys, atRightEdge, shiftRange } from './finder-data.mjs?v=20261115g';
+import { streamUrl, openTicker } from './live-price.mjs?v=20261115g';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261115g';
 import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS,
-  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261115f';
+  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261115g';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -24,6 +24,7 @@ const UP_ENTRY = '#0b5e4c', DOWN_ENTRY = '#a3283a';
 // The selected signal's fill and exit markers: one colour no other marker uses, so it stands out when several
 // entries sit close together (2026-11-13, the user asked for it).
 const CHOSEN = '#f59e0b';
+const LIVE_PRICE = '#f19aa4';
 // Limit levels of orders that never traded (unfilled, or the next bar opened past the limit).
 const GREY = '#9aa7b8';
 const TIMEFRAME_CHOICES = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '1D'];
@@ -1130,8 +1131,7 @@ const liveConflict = () => form.rangeMode === 'custom' && !!form.finish;
 
 // ---- Live price (websocket) -----------------------------------------------
 // While 实时 is on, the exchange's public trade stream gives the last price, drawn on every chart as a thin solid line
-// with an axis label 「实时」, green above the last closed bar's close and red below (2026-11-15, the owner wanted to
-// see the live price like in a trading app). Candles are untouched: the charts keep showing closed bars only.
+// with an axis label 「实时」 (2026-11-15, the owner wanted to see the live price like in a trading app). Candles are untouched: the charts keep showing closed bars only.
 let stopTicker = null, tickerUrl = null, tickerState = '', livePrice = null;
 
 function paintLivePrice() {
@@ -1142,9 +1142,8 @@ function paintLivePrice() {
       panel.livePriceLine = null;
       continue;
     }
-    const close = panel.candles.at(-1)?.close;
-    const options = { price: livePrice, color: !Number.isFinite(close) || livePrice >= close ? UP : DOWN,
-      lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: '实时' };
+    // Light red dashed (2026-11-15, the owner's choice): visible but lighter than the order / stop / target lines.
+    const options = { price: livePrice, color: LIVE_PRICE, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '实时' };
     if (panel.livePriceLine) panel.livePriceLine.applyOptions(options);
     else panel.livePriceLine = panel.series.createPriceLine(options);
   }

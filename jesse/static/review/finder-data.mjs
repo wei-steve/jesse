@@ -1,9 +1,9 @@
 // Pure helpers of the factor finder page (finder.mjs): request building, saved form, and turning the
 // `/factors/run` answer into the same step series the signal mode of the review page uses (rides.mjs).
 // Nothing here knows what a factor does; the page only draws the numbers the factor file returns.
-import { timeframeMinutes } from './settings.mjs?v=20261115f';
-import { LIMIT_RULES, LIMIT_DEFAULTS, atr14 } from './limit-rules.mjs?v=20261115f';
-import { sma } from './data.mjs?v=20261115f';
+import { timeframeMinutes } from './settings.mjs?v=20261115g';
+import { LIMIT_RULES, LIMIT_DEFAULTS, atr14 } from './limit-rules.mjs?v=20261115g';
+import { sma } from './data.mjs?v=20261115g';
 
 export const FORM_KEY = 'jesse.finder.form.v1';
 // 「实时」fires a few seconds after every UTC minute: by then the minute that just closed is in the database, and a
