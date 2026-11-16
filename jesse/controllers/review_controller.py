@@ -221,25 +221,52 @@ def save_label(request_json: LabelRequestJson) -> JSONResponse:
 
 
 class MarketCandlesRequestJson(BaseModel):
-    """One series of a source the browser cannot read itself. Only US treasury yields need Jesse: Binance is
-    CORS-open and read directly by the page."""
+    """One series of a source the browser cannot read itself: US treasury yields (Yahoo / FRED) and Deepcoin. Binance
+    and OKX are CORS-open and read directly by the page."""
     source: str
     symbol: str
     interval: str
+    # Yields only: a Yahoo range name (`5d`, `1mo`, `1y` …).
     range: Optional[str] = None
+    # Deepcoin only: `swap` / `spot`, the page size, and the open time (seconds) of the oldest bar already loaded,
+    # which asks for the page of history before it.
+    market: Optional[str] = None
+    limit: Optional[int] = None
+    before: Optional[Union[int, float]] = None
+
+
+class MarketTickersJson(BaseModel):
+    """The product list of one source the browser cannot read itself (Deepcoin: no CORS headers)."""
+    source: str
+    market: Optional[str] = None
 
 
 @router.post('/market/candles')
 def market_candles(request_json: MarketCandlesRequestJson) -> JSONResponse:
     """Candles of one whitelisted market source for the 看行情 page.
 
-    Yahoo and FRED send no CORS headers, so the page cannot read them from the browser. The whitelist, the upstream
-    request (10-second timeout, generic browser User-Agent) and the 30-second cache live in
-    jesse/services/market_sources.py; here we only turn its two failure kinds into HTTP statuses.
+    Yahoo, FRED and Deepcoin send no CORS headers, so the page cannot read them from the browser. The whitelist, the
+    upstream request (10-second timeout) and the cache live in jesse/services/market_sources.py; here we only turn
+    its two failure kinds into HTTP statuses.
     """
     try:
         answer = market_sources.read_candles(request_json.source, request_json.symbol, request_json.interval,
-                                            request_json.range)
+                                             request_json.range, request_json.market, request_json.limit,
+                                             request_json.before)
+    except market_sources.MarketSourceError as error:
+        return JSONResponse({'error': str(error)}, status_code=error.status_code)
+    return JSONResponse(answer)
+
+
+@router.post('/market/tickers')
+def market_tickers(request_json: MarketTickersJson) -> JSONResponse:
+    """The USDT product list of one proxied source (Deepcoin), biggest 24h turnover first.
+
+    The page's left column draws it as 「合约 | 现货」 and refreshes it every 10 seconds; the upstream answer is cached
+    for the same 10 seconds, so several tabs cost one request.
+    """
+    try:
+        answer = market_sources.read_tickers(request_json.source, request_json.market)
     except market_sources.MarketSourceError as error:
         return JSONResponse({'error': str(error)}, status_code=error.status_code)
     return JSONResponse(answer)

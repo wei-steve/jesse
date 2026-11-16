@@ -1,38 +1,150 @@
-import { calculateIndicator, formingTail, tailBars } from './indicators.mjs?v=20261116g';
-// The 看行情 page's sources (market.mjs): which venue the candles come from, the US treasury yield instruments and
-// the interval mapping of the Jesse proxy that serves them. No DOM, no fetch: tests/review-market-sources.test.mjs
-// runs every function here with node.
+import { calculateIndicator, formingTail, tailBars } from './indicators.mjs?v=20261116h';
+// The 看行情 page's sources (market.mjs): an exchange-level list (Binance / OKX / Deepcoin) plus the US treasury
+// yields, each with the contract / spot sub-markets it has, the instruments it defaults to, the exchange-side bar
+// spelling of every timeframe, and the interval mapping of the Jesse proxy that serves the data the browser cannot
+// read. No DOM, no fetch: tests/review-market-sources.test.mjs runs every function here with node.
 //
-// Binance perpetual futures and Binance spot are read by the browser itself (both are CORS-open); Yahoo and FRED are
-// not, so the yields come from `POST /review/market/candles` (jesse/services/market_sources.py).
+// Binance and OKX are CORS-open and read by the browser itself; Deepcoin and Yahoo / FRED are not, so they come from
+// Jesse (`POST /review/market/candles`, `POST /review/market/tickers`, see jesse/services/market_sources.py).
 
-export const PERP_SOURCE = 'binance-perp';
-export const SPOT_SOURCE = 'binance-spot';
+export const BINANCE_SOURCE = 'binance';
+export const OKX_SOURCE = 'okx';
+export const DEEPCOIN_SOURCE = 'deepcoin';
 export const YIELD_SOURCE = 'us-yields';
-export const DEFAULT_SOURCE = PERP_SOURCE;
+export const DEFAULT_SOURCE = BINANCE_SOURCE;
+export const DEFAULT_MARKET = 'swap';
 
-// The dropdown at the top of the page, in the order it is shown.
+// 「合约 | 现货」 is a sub-tab of the product list, not a source of its own (T-54).
+export const MARKETS = [{ id: 'swap', label: '合约' }, { id: 'spot', label: '现货' }];
+export const MARKET_IDS = MARKETS.map(market => market.id);
+/** 合约 / 现货: the label the product list's sub-tab and the watchlist tag write. */
+export const marketLabel = id => MARKETS.find(entry => entry.id === id)?.label ?? '';
+
+// The dropdown at the top of the page, in the order it is shown. `exchanges` names the venue in `live-price.mjs`'s
+// stream table (Binance only: OKX and Deepcoin have their own socket envelopes, see market.mjs).
 export const MARKET_SOURCES = [
-  { id: PERP_SOURCE, label: '币安永续', exchange: 'Binance Perpetual Futures', defaultSymbol: 'BTCUSDT' },
-  { id: SPOT_SOURCE, label: '币安现货', exchange: 'Binance Spot', defaultSymbol: 'BTCUSDT' },
-  { id: YIELD_SOURCE, label: '美债收益率', exchange: null, defaultSymbol: 'US10Y' },
+  { id: BINANCE_SOURCE, label: 'Binance', markets: MARKET_IDS,
+    defaultSymbols: { swap: 'BTCUSDT', spot: 'BTCUSDT' },
+    exchanges: { swap: 'Binance Perpetual Futures', spot: 'Binance Spot' } },
+  { id: OKX_SOURCE, label: 'OKX', markets: MARKET_IDS,
+    defaultSymbols: { swap: 'BTC-USDT-SWAP', spot: 'BTC-USDT' }, exchanges: {} },
+  { id: DEEPCOIN_SOURCE, label: 'Deepcoin', markets: MARKET_IDS,
+    defaultSymbols: { swap: 'BTC-USDT-SWAP', spot: 'BTC-USDT' }, exchanges: {} },
+  { id: YIELD_SOURCE, label: '美债收益率', markets: [],
+    defaultSymbols: {}, exchanges: {} },
 ];
 
 const sourceOf = id => MARKET_SOURCES.find(source => source.id === id) ?? null;
 
+// Before T-54 the dropdown held the venue instead of the exchange: 币安永续 / 币安现货 were two sources. A saved
+// value (and every saved watchlist row) in that shape still opens, as the Binance market it named.
+const LEGACY_SOURCES = {
+  'binance-perp': { source: BINANCE_SOURCE, market: 'swap' },
+  'binance-spot': { source: BINANCE_SOURCE, market: 'spot' },
+  [YIELD_SOURCE]: { source: YIELD_SOURCE, market: null },
+};
+
+/** A saved / typed source id (legacy venue ids included) as `{source, market}`, or null when it names nothing. */
+export function migrateSource(serialized) {
+  const raw = String(serialized ?? '').trim().replace(/^"|"$/g, '');
+  const legacy = LEGACY_SOURCES[raw];
+  if (legacy) return { ...legacy };
+  return sourceOf(raw) ? { source: raw, market: marketsOf(raw)[0] ?? null } : null;
+}
+
 /** A saved / typed source id, or the default when it names nothing this page can draw. */
 export function restoreSource(serialized) {
-  const raw = String(serialized ?? '').trim().replace(/^"|"$/g, '');
-  return sourceOf(raw) ? raw : DEFAULT_SOURCE;
+  return migrateSource(serialized)?.source ?? DEFAULT_SOURCE;
 }
 
 export const sourceLabel = id => sourceOf(id)?.label ?? id;
-export const defaultSymbolOf = id => sourceOf(id)?.defaultSymbol ?? 'BTCUSDT';
-
-/** The live-price module's exchange name of a source: '' for a source without websockets (the yields). */
-export const exchangeOf = id => sourceOf(id)?.exchange ?? '';
-
+export const marketsOf = id => sourceOf(id)?.markets ?? [];
+export const hasMarkets = id => marketsOf(id).length > 0;
 export const isYieldSource = id => id === YIELD_SOURCE;
+
+/** `market` when that source has it (the yields have none: null), otherwise the source's first market. */
+export const normalizeMarket = (id, market) => {
+  const markets = marketsOf(id);
+  return markets.includes(market) ? market : (markets[0] ?? null);
+};
+
+/** The instrument the page switches to when the source (or the sub-market) changes. */
+export function defaultSymbolOf(id, market = null) {
+  if (isYieldSource(id)) return DEFAULT_YIELD_SYMBOL;
+  const symbols = sourceOf(id)?.defaultSymbols ?? {};
+  return symbols[market] ?? symbols[marketsOf(id)[0]] ?? DEFAULT_SYMBOL_FALLBACK;
+}
+const DEFAULT_SYMBOL_FALLBACK = 'BTCUSDT';
+
+/** The live-price module's exchange name of a source / market: '' when it has no Binance-style stream. */
+export const exchangeOf = (id, market = null) => sourceOf(id)?.exchanges?.[market] ?? '';
+
+// --- Symbols ------------------------------------------------------------------------------------------------------
+// Binance spells a pair BTCUSDT, OKX and Deepcoin BTC-USDT (spot) / BTC-USDT-SWAP (perpetual). One normalizer per
+// family keeps a saved or typed value usable and keeps the REST whitelist on the backend happy.
+
+/** `btc`, `BTCUSDT`, `btc-usdt`, `BTC/USDT` -> `BTCUSDT`; '' for anything that cannot be a USDT pair. */
+export function normalizeSymbol(input) {
+  const raw = String(input ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!raw) return '';
+  // The quote currency is implied: a base alone is completed, a full pair is kept as typed.
+  const pair = raw.endsWith('USDT') ? raw : `${raw}USDT`;
+  // 2–16 characters of base ("1000PEPEUSDT" is a real contract) plus USDT.
+  return /^[A-Z0-9]{2,16}USDT$/.test(pair) ? pair : '';
+}
+
+/** `btc` / `BTC-USDT` / `BTC-USDT-SWAP` -> the instId of that market: `BTC-USDT-SWAP` or `BTC-USDT`. */
+export function normalizeInstId(market, input) {
+  const raw = String(input ?? '').toUpperCase().replace(/[\s/]/g, '-').replace(/^-+|-+$/g, '');
+  if (!raw) return '';
+  const base = raw
+    .replace(/-SWAP$/, '')
+    .replace(/-USDT$/, '')
+    .replace(/USDT$/, '')
+    .replace(/-+/g, '');
+  // Same base rule as Binance's, and `USDT` alone is the quote of nothing.
+  if (!/^[A-Z0-9]{2,16}$/.test(base) || base === 'USDT') return '';
+  return market === 'spot' ? `${base}-USDT` : `${base}-USDT-SWAP`;
+}
+
+/** A typed / saved instrument of one source (and market) in the shape that source's API wants, or ''. */
+export function symbolOf(source, market, input) {
+  if (isYieldSource(source)) return normalizeYieldSymbol(input);
+  if (source === BINANCE_SOURCE) return normalizeSymbol(input);
+  if (source === OKX_SOURCE || source === DEEPCOIN_SOURCE) return normalizeInstId(market, input);
+  return '';
+}
+
+/** The name a list row shows: `BTC` for every exchange symbol, the code itself for a yield (US10Y). */
+export function instrumentName(source, symbol) {
+  const text = String(symbol ?? '');
+  if (source === YIELD_SOURCE) return text;
+  if (source === BINANCE_SOURCE) return text.replace(/USDT$/, '');
+  return text.replace(/-USDT(-SWAP)?$/, '') || text;
+}
+
+// --- Bars ---------------------------------------------------------------------------------------------------------
+// The bar spelling of each panel timeframe per exchange. Binance's is in market-data.mjs (it already had it), and its
+// daily interval is the only one that differs (1d). OKX and Deepcoin both say 1H / 4H in upper case, and OKX's daily
+// bar must be `1Dutc` (plain `1D` opens at the exchange's UTC+8 midnight).
+export const BARS = {
+  [OKX_SOURCE]: { '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1H', '4h': '4H', '1D': '1Dutc' },
+  [DEEPCOIN_SOURCE]: { '1m': '1m', '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1H', '4h': '4H', '1D': '1D' },
+};
+
+/**
+ * What to ask `source` for to draw `timeframe`, and how much of it has to be bucketed here. Deepcoin has no 3m bar
+ * (checked 2026-11-16: `1m 5m 15m 30m 1H 4H 12H 1D 1W 1M 1Y`), so that one panel asks for 1m and buckets three, the
+ * way the treasury 3m panel already works.
+ */
+export function candleRequest(source, timeframe) {
+  const bars = BARS[source];
+  if (!bars) return { interval: String(timeframe ?? ''), aggregate: 1 };
+  if (bars[timeframe]) return { interval: bars[timeframe], aggregate: 1 };
+  return timeframe === '3m' ? { interval: bars['1m'], aggregate: 3 } : { interval: bars['1m'], aggregate: 1 };
+}
+
+// --- Yields -------------------------------------------------------------------------------------------------------
 
 // TradingView-style codes, the ones the owner named. The value of every series IS the yield in percent (4.95 means
 // 4.95%), which is why a change is written +0.03 and never as a percentage of a percentage.
@@ -125,9 +237,20 @@ export function parseMarketCandles(payload) {
     closed.push({ time: Math.trunc(time), open, high, low, close,
       volume: Number.isFinite(volume) && volume >= 0 ? volume : 0 });
   }
-  return { closed, provider: typeof payload?.provider === 'string' ? payload.provider : '',
+  const forming = cryptoRow(payload?.forming);
+  return { closed, forming, provider: typeof payload?.provider === 'string' ? payload.provider : '',
     note: typeof payload?.note === 'string' ? payload.note : '', delayed: payload?.delayed === true,
     dailyOnly: payload?.daily_only === true };
+}
+
+/** One deepcoin / proxy forming bar (`{time, open, high, low, close, volume}`), or null. */
+function cryptoRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const [time, open, high, low, close] = ['time', 'open', 'high', 'low', 'close'].map(key => Number(row[key]));
+  if (![time, open, high, low, close].every(Number.isFinite) || time <= 0) return null;
+  const volume = Number(row.volume);
+  return { time: Math.trunc(time), open, high, low, close,
+    volume: Number.isFinite(volume) && volume >= 0 ? volume : 0 };
 }
 
 /**

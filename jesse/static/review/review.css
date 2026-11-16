@@ -114,11 +114,31 @@ main[hidden]{display:none}
 .market-controls .market-last{font-weight:600;color:#2b3a52;font-variant-numeric:tabular-nums}
 /* A hidden control (the symbol box while the yields are selected) must not inherit the toolbar's flex display. */
 .market-controls label[hidden],.market-controls input[hidden],.market-controls select[hidden]{display:none}
-.watch-tag{margin-left:5px;font-size:9px;font-weight:400;color:#315cd0;background:#eef3ff;border-radius:3px;padding:1px 4px;vertical-align:1px}
+.watch-tag{margin-left:5px;font-size:9px;font-weight:400;color:#315cd0;background:#eef3ff;border-radius:3px;padding:1px 4px;vertical-align:1px;display:inline-block;white-space:normal}
 .market-timeframes{display:flex;flex-wrap:wrap;gap:4px}
 .market-timeframes label{display:flex;align-items:center;gap:4px;border:1px solid #dce3ee;border-radius:7px;padding:4px 7px;cursor:pointer;font-size:12px}
 .market-timeframes input{accent-color:#315cd0}
+.aside-tabs{display:flex;gap:6px;width:100%}
+.aside-tab{border:1px solid #dce3ee;background:#fff;padding:5px 9px;font-size:12px;font-weight:600;color:#6c7b91;border-radius:7px;max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aside-tab[aria-pressed=true]{background:#edf3ff;border-color:#315cd0;color:#315cd0}
 #watchlist{padding:6px;display:flex;flex-direction:column;gap:5px;max-height:calc(100vh - 200px);overflow:auto}
+/* The product list of the source on screen: 合约 / 现货 sub-tabs, a search box over the whole list, and rows that
+   carry a ☆ that adds the instrument to the watchlist. It can hold a thousand rows, so it draws a page at a time. */
+#products{padding:6px;display:flex;flex-direction:column;gap:6px;max-height:calc(100vh - 200px);overflow:auto}
+#products[hidden]{display:none}
+.product-markets{display:flex;gap:5px}
+.product-markets[hidden]{display:none}
+.product-market{border:1px solid #dce3ee;background:#fff;padding:4px 9px;font-size:12px;border-radius:7px}
+.product-market[aria-pressed=true]{background:#edf3ff;border-color:#315cd0;color:#315cd0}
+.product-search{width:100%;border:1px solid #dce3ee;border-radius:7px;padding:5px 7px;font:inherit;font-size:12px}
+.product-count{font-size:10px;color:#8996aa}
+#product-list{display:flex;flex-direction:column;gap:4px}
+.product-row .watch-main{padding:5px 6px}
+.product-star{border:0;background:transparent;color:#b0bcce;padding:0 7px;font-size:14px;line-height:1}
+.product-star:hover{color:#e0a800;background:transparent}
+.product-star.on{color:#e0a800}
+.product-more{font-size:11px;padding:4px 8px}
+.product-more[hidden]{display:none}
 .watch-row{display:flex;align-items:stretch;border:1px solid transparent;border-radius:8px;background:#f8fafd}
 .watch-row[aria-pressed=true]{border-color:#315cd0;background:#edf3ff}
 .watch-main{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:1px;border:0;background:transparent;padding:6px 8px;text-align:left}
@@ -133,4 +153,4 @@ main[hidden]{display:none}
 .watch-del:hover{color:#c73f58;background:transparent}
 .market .chart-meta{font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media(max-width:950px){.market main{grid-template-columns:165px minmax(0,1fr)}}
-@media(max-width:700px){.market main{grid-template-columns:1fr}#watchlist{flex-direction:row;overflow-x:auto;max-height:none}.watch-row{min-width:126px}}
+@media(max-width:700px){.market main{grid-template-columns:1fr}#watchlist{flex-direction:row;overflow-x:auto;max-height:none}.watch-row{min-width:126px}#products{max-height:none}}

@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { klineStreamUrl, klineInterval, klineCandle } from '../jesse/static/review/live-price.mjs';
+import { klineStreamUrl, klineInterval, klineCandle, okxCandleChannel, okxCandleChannels, okxCandle,
+  okxTickerQuote, okxTickerPrice, deepcoinSubscription, deepcoinWsFilter, deepcoinTickerPrice } from
+  '../jesse/static/review/live-price.mjs';
 import { calculateIndicator, formingTail, tailBars } from '../jesse/static/review/indicators.mjs';
 import { validateIndicator, defaultMaLines, MA_LINE_COUNT } from '../jesse/static/review/settings.mjs';
 
@@ -142,4 +144,58 @@ test('an EMA tail converges on the full-history value instead of restarting at t
   // leave a difference of ~1e-4. SMA/BOLL above are exact.
   assert.ok(Math.abs(point.value - full) < 1e-3, `${point.value} differs from ${full}`);
   assert.equal(point.time, forming.time);
+});
+
+// --- OKX and Deepcoin sockets (T-54) -------------------------------------------------------------------------------
+
+test('OKX subscribes with its own candle channels, upper-case hours and the UTC day bar', () => {
+  assert.equal(okxCandleChannel('1m'), 'candle1m');
+  assert.equal(okxCandleChannel('1h'), 'candle1H');
+  assert.equal(okxCandleChannel('4h'), 'candle4H');
+  // Plain 1D would be the venue's UTC+8 day: the page always draws UTC.
+  assert.equal(okxCandleChannel('1D'), 'candle1Dutc');
+  assert.equal(okxCandleChannel('45m'), null);
+  assert.deepEqual(okxCandleChannels(['4h', '1h', '4h', '45m', '1m']), ['candle4H', 'candle1H', 'candle1m']);
+  assert.deepEqual(okxCandleChannels(null), []);
+});
+
+test('an OKX candle push is a candle, with confirm=0 meaning the bar is still forming', () => {
+  const forming = { arg: { channel: 'candle15m', instId: 'BTC-USDT-SWAP' },
+    data: [['1763196300000', '64010', '64030', '64005', '64022', '3.5', '0.035', '2242', '0']] };
+  assert.deepEqual(okxCandle(forming), { tf: '15m', time: 1763196300, open: 64010, high: 64030, low: 64005,
+    close: 64022, volume: 3.5, closed: false });
+  const closed = { arg: { channel: 'candle1H', instId: 'BTC-USDT-SWAP' },
+    data: [['1763193600000', '63900', '64100', '63800', '64000', '120', '1.2', '768000', '1']] };
+  assert.equal(okxCandle(closed).closed, true);
+  assert.equal(okxCandle(closed).tf, '1h');
+  // A subscription ack, another channel, a malformed row: nothing to draw.
+  for (const message of [{ event: 'subscribe', arg: { channel: 'candle15m' } }, { arg: { channel: 'tickers' }, data: [] },
+    { arg: { channel: 'candle15m' }, data: [] }, { arg: { channel: 'candle15m' }, data: [['x']] },
+    { arg: { channel: 'candle15m' }, data: [['0', '1', '1', '1', '1', '1', '1', '1', '1']] }]) {
+    assert.equal(okxCandle(message), null, JSON.stringify(message));
+  }
+});
+
+test('an OKX ticker push is a price and a 24-hour change; Deepcoin sends a topic bus', () => {
+  const ticker = { arg: { channel: 'tickers', instId: 'BTC-USDT' },
+    data: [{ instId: 'BTC-USDT', last: '64100', open24h: '63000' }] };
+  assert.deepEqual(okxTickerQuote(ticker), { symbol: 'BTC-USDT', price: 64100, change: (64100 - 63000) / 63000 });
+  assert.equal(okxTickerPrice(ticker), 64100);
+  assert.equal(okxTickerQuote({ arg: { channel: 'tickers', instId: 'BTC-USDT' }, data: [{ last: '0' }] }), null);
+  assert.equal(okxTickerPrice({ arg: { channel: 'candle1m' }, data: [] }), null);
+
+  // `BTC-USDT-SWAP` -> `DeepCoin_BTCUSDT`: the instrument code drops the quote and the perpetual suffix.
+  assert.equal(deepcoinWsFilter('BTC-USDT-SWAP'), 'DeepCoin_BTCUSDT');
+  assert.equal(deepcoinWsFilter('BTC-USDT'), 'DeepCoin_BTCUSDT');
+  const frame = deepcoinSubscription('ETH-USDT-SWAP');
+  assert.equal(frame.SendTopicAction.TopicID, '7');
+  assert.equal(frame.SendTopicAction.Action, '1');
+  assert.equal(frame.SendTopicAction.FilterValue, 'DeepCoin_ETHUSDT');
+  // The ticker push carries the last price in `N`; the topic ack, the kline topic and a zero price are not prices.
+  assert.equal(deepcoinTickerPrice({ a: 'PO', r: [{ d: { I: 'BTCUSDT', N: 64627.4, O: 64720.1 } }] }), 64627.4);
+  for (const message of [{ a: 'RecvTopicAction', r: [{ d: { T: '7' } }] },
+    { a: 'PK', r: [{ d: { I: 'BTCUSDT', P: '1m' } }] }, { a: 'PO', r: [{ d: { N: 'x' } }] },
+    { a: 'PO', r: [{ d: { N: 0 } }] }, null]) {
+    assert.equal(deepcoinTickerPrice(message), null, JSON.stringify(message));
+  }
 });
