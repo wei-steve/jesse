@@ -1,18 +1,18 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261115c';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261115c';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261115c';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261115c';
-import { calculateIndicator } from './indicators.mjs?v=20261115c';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261115c';
-import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261115c';
+import { t as createChart } from './lightweight-charts.mjs?v=20261115d';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261115d';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261115d';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261115d';
+import { calculateIndicator } from './indicators.mjs?v=20261115d';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261115d';
+import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261115d';
 import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone, barSnapshot,
-  nextTickDelay, newKeys, atRightEdge, shiftRange } from './finder-data.mjs?v=20261115c';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261115c';
+  nextTickDelay, newKeys, atRightEdge, shiftRange } from './finder-data.mjs?v=20261115d';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261115d';
 import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS,
-  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261115c';
+  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261115d';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -1274,7 +1274,10 @@ async function applyLive({ data, factor, params, version }) {
 async function importRound() {
   const id = crypto.randomUUID();
   await post('/candles/import', { id, exchange: form.exchange, symbol: form.symbol, start_date: importStartDate(Date.now(), result?.last_candle_time) });
-  for (let attempt = 0; attempt < LIVE_IMPORT_TRIES; attempt++) {
+  // Catching up a database that is hours or days behind is a long import, not a stuck one: give it 30 minutes.
+  const behind = Date.now() / 1000 - (result?.last_candle_time ?? 0) > 7200;
+  const tries = behind ? 900 : LIVE_IMPORT_TRIES;
+  for (let attempt = 0; attempt < tries; attempt++) {
     await sleep(LIVE_POLL_MS);
     const state = await post('/candles/import-status', { id });
     if (!importDone(state)) continue;
