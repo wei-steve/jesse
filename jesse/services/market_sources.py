@@ -56,11 +56,11 @@ FRED_DEFAULT_RANGE = '10y'
 YAHOO_URL = 'https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval={interval}&range={range}'
 FRED_URL = 'https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}'
 
-# Yahoo answers 429 to anything that is not a browser, so it gets a generic browser string. FRED's edge does the
-# opposite: it resets the connection of a User-Agent that claims to be a browser (checked 2026-11-16), so FRED gets
-# requests' own UA. Neither string carries anything about the owner.
-YAHOO_USER_AGENT = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
-                    '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36')
+# Yahoo answers 429 to python-requests' own UA, and also to a full Chrome string without Yahoo's cookies (checked
+# 2026-11-16: the full string got 429 while the bare 'Mozilla/5.0' got 200), so it gets the bare token. FRED's edge
+# does the opposite: it resets the connection of a User-Agent that claims to be a browser, so FRED gets requests' own
+# UA. Neither string carries anything about the owner.
+YAHOO_USER_AGENT = 'Mozilla/5.0'
 FRED_USER_AGENT = f'python-requests/{requests.__version__}'
 TIMEOUT = 10
 CACHE_TTL = 30.0
