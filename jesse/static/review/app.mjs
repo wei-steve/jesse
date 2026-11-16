@@ -1,15 +1,15 @@
 // Reuse the dependency already shipped with this Jesse dashboard. No CDN or
 // third-party requests are needed; the adapter is isolated for future rebuilds.
-import { t as createChart } from './lightweight-charts.mjs?v=20261115h';
-import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261115h';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261115h';
-import { calculateIndicator } from './indicators.mjs?v=20261115h';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261115h';
-import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261115h';
-import { mountControls } from './controls.mjs?v=20261115h';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261115h';
-import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261115h';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261115h';
+import { t as createChart } from './lightweight-charts.mjs?v=20261115i';
+import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261115i';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261115i';
+import { calculateIndicator } from './indicators.mjs?v=20261115i';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261115i';
+import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261115i';
+import { mountControls } from './controls.mjs?v=20261115i';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261115i';
+import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261115i';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261115i';
 
 const $ = id => document.getElementById(id);
 const money = value => Number.isFinite(value) ? value.toFixed(2) : '—';
@@ -28,6 +28,7 @@ let rideData = [];
 let session, chartData, route, trades = [], orderedTrades = [], selected, panels = [], views = [], anchor, syncing = false;
 let tradeIndex = null;
 // Signal mode: the backtest has extra_charts.ride (see rides.mjs). Rides replace the trade list.
+let pointerView = null; // the chart view the mouse is over (drives the crosshairs)
 let signalMode = false, rides = [], rideLines = [], selectedRide = null, shownTfs = new Set(), statusTime;
 let entryTime, contextPoints = [], token, loadVersion = 0, rangeLink, preferences, wantedRange;
 
@@ -88,8 +89,15 @@ function swatch(color) {
 
 function makeView(panel, chart, host, kind, series, lookup) {
   const view = { panel, chart, host, kind, series, lookup, line: host.querySelector('.event-line') };
-  for (const event of ['pointerdown', 'wheel']) host.addEventListener(event,
-    () => rangeLink?.activate(view), { capture: true, passive: true });
+  // The pointer's x goes along, so the other timeframes line up at the moment under it (see linkTimeRanges).
+  const pointerX = event => event.clientX - host.getBoundingClientRect().left;
+  for (const name of ['pointerdown', 'wheel']) host.addEventListener(name,
+    event => rangeLink?.activate(view, pointerX(event)), { capture: true, passive: true });
+  host.addEventListener('pointermove', event => {
+    pointerView = view;
+    if (event.buttons) rangeLink?.pointer(view, pointerX(event));
+  }, { passive: true });
+  host.addEventListener('pointerleave', () => { if (pointerView === view) pointerView = null; });
   chart.subscribeCrosshairMove(event => {
     // The price under the pointer, but only on a price chart: an indicator pane's value is not a price.
     const price = event.point && kind === 'main' ? series.coordinateToPrice(event.point.y) : null;
@@ -296,6 +304,9 @@ function paintSignalBar(t) {
 // panes, and every chart when the pointer is on an indicator pane, keep their own bar's value.
 function syncCrosshair(source, time, price = null) {
   if (syncing) return;
+  // Only the chart under the mouse drives the others: a chart whose crosshair this function placed reports a new
+  // moment when it scrolls (a wheel zoom elsewhere moves it), which used to drag the zoomed chart's crosshair away.
+  if (pointerView && source !== pointerView) return;
   syncing = true;
   try {
     // A hovered bar is judged as of its close (what was known when it finished), like the markers.

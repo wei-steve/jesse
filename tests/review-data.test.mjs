@@ -162,20 +162,29 @@ test('the first placement records each chart span even with keepSpan', () => {
 test('dragging one chart scrolls the other timeframes by bars and keeps their candle width', () => {
   const make = (name, interval, count, logical) => {
     let listener; const writes = [], logicalWrites = [];
+    const state = { logical };
     const scale = { subscribeVisibleTimeRangeChange: f => { listener = f; }, setVisibleRange: r => writes.push(r),
-      getVisibleLogicalRange: () => logical, setVisibleLogicalRange: r => logicalWrites.push(r) };
+      getVisibleLogicalRange: () => state.logical, setVisibleLogicalRange: r => logicalWrites.push(r),
+      width: () => 500, coordinateToLogical: x => state.logical.from + (state.logical.to - state.logical.from) * x / 500 };
     const candles = Array.from({ length: count }, (_, i) => ({ time: i * interval * 60 }));
-    return { name, interval, candles, writes, logicalWrites, chart: { timeScale: () => scale }, emit: r => listener(r) };
+    return { name, interval, candles, writes, logicalWrites, state, chart: { timeScale: () => scale }, emit: r => listener(r) };
   };
-  const m5 = make('5m', 5, 1000, { from: 900, to: 1000 });
+  const m5 = make('5m', 5, 1000, { from: 250, to: 350 });
   const h1 = make('1h', 60, 100, { from: 60, to: 100 });
   const linked = linkTimeRanges([m5, h1]);
+  // No pointer position: the 5m centre (bar 300 = 25h = 1h bar 25) goes to the 1h centre, which keeps 40 bars.
   linked.activate(m5);
-  // The 5m chart now centres on 300 * 5m = 25h = bar 25 of the 1h chart; the 1h chart keeps its 40 bars.
   m5.emit({ from: 250 * 300, to: 350 * 300 });
   assert.deepEqual(h1.logicalWrites.at(-1), { from: 5, to: 45 });
   assert.equal(h1.writes.length, 0);
+  // Pointer at 3/4 of the 5m chart (bar 325 = 27.083h): the 1h chart puts that moment at 3/4 of its 40 bars.
+  linked.activate(m5, 375);
+  m5.emit({ from: 250 * 300, to: 350 * 300 });
+  const at = 325 * 5 / 60;
+  assert.deepEqual(h1.logicalWrites.at(-1), { from: at - 30, to: at + 10 });
   // Past the newest 1h bar (99) the position keeps going into the empty space, same width.
+  m5.state.logical = { from: 6100, to: 6200 };
+  linked.activate(m5);
   m5.emit({ from: 6100 * 300, to: 6200 * 300 });
   assert.deepEqual(h1.logicalWrites.at(-1), { from: 512.5 - 20, to: 512.5 + 20 });
 });

@@ -1,19 +1,19 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261115h';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261115h';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261115h';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261115h';
-import { calculateIndicator } from './indicators.mjs?v=20261115h';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261115h';
-import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261115h';
+import { t as createChart } from './lightweight-charts.mjs?v=20261115i';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261115i';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261115i';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261115i';
+import { calculateIndicator } from './indicators.mjs?v=20261115i';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261115i';
+import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261115i';
 import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone, barSnapshot,
-  nextTickDelay, newKeys, atRightEdge, shiftRange } from './finder-data.mjs?v=20261115h';
-import { streamUrl, openTicker } from './live-price.mjs?v=20261115h';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261115h';
+  nextTickDelay, newKeys, atRightEdge, shiftRange } from './finder-data.mjs?v=20261115i';
+import { streamUrl, openTicker } from './live-price.mjs?v=20261115i';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261115i';
 import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS,
-  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261115h';
+  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261115i';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -30,6 +30,7 @@ const GREY = '#9aa7b8';
 const TIMEFRAME_CHOICES = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '1D'];
 
 let token, form, factors = [], result = null, rides = [], rideData = [], shownTfs = new Set();
+let pointerPanel = null; // the chart the mouse is over (drives the crosshairs)
 let panels = [], selectedRide = null, statusTime, wantedRange, rangeLink, syncing = false, runVersion = 0;
 const rideButtons = new Map();
 // 「实时（每分钟）」 state: the pending timer, whether a round is running, how many rounds failed in a row, when the
@@ -486,7 +487,14 @@ function makePanel(tf, item, preferences) {
   meta.textContent = `${item.candles.length.toLocaleString()} 根完整 K 线 · ${count} 个区间`;
   addSnapshotButton(card, () => snapshotPanel(panel));
   addMaximizeButton(card);
-  for (const event of ['pointerdown', 'wheel']) host.addEventListener(event, () => rangeLink?.activate(panel), { capture: true, passive: true });
+  // The pointer's x goes along, so the other charts line up at the moment under it (see linkTimeRanges).
+  const pointerX = event => event.clientX - host.getBoundingClientRect().left;
+  for (const name of ['pointerdown', 'wheel']) host.addEventListener(name, event => rangeLink?.activate(panel, pointerX(event)), { capture: true, passive: true });
+  host.addEventListener('pointermove', event => {
+    pointerPanel = panel;
+    if (event.buttons) rangeLink?.pointer(panel, pointerX(event));
+  }, { passive: true });
+  host.addEventListener('pointerleave', () => { if (pointerPanel === panel) pointerPanel = null; });
   panel.chart.subscribeCrosshairMove(event => syncCrosshair(panel, typeof event.time === 'number' ? event.time : null,
     event.point ? panel.series.coordinateToPrice(event.point.y) : null));
   // Double-clicking a candle opens the note box of this card; a click on the scales or past the last candle has no
@@ -515,6 +523,10 @@ function destroyPanels() {
 // the user wanted the level comparable across timeframes), and falls back to its own bar's close when unknown.
 function syncCrosshair(source, time, price = null) {
   if (syncing) return;
+  // Only the chart under the mouse drives the others. A chart whose crosshair was placed by this function redraws
+  // it when it scrolls (a wheel zoom on another chart moves it) and reports the moment now under that spot; taken
+  // as input, that dragged the crosshair of the zoomed chart a few bars away (2026-11-15).
+  if (pointerPanel && source !== pointerPanel) return;
   syncing = true;
   try {
     // A hovered bar is judged as of its close, like the markers.

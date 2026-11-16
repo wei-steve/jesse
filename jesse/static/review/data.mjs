@@ -116,24 +116,48 @@ export function linkTimeRanges(panels, onChange = () => {}, groupOf = panel => p
     const anchor = range.from + width * at;
     panel.chart.timeScale().setVisibleRange({ from: anchor - span * at, to: anchor - span * at + span });
   }
-  // Dragging one chart moves the others by bars, not by seconds: each peer keeps exactly the number of bars it
-  // shows (so its candle width never changes) and only scrolls until the dragged chart's centre moment is in its own
-  // centre. A time range would be clipped at the newest bar and stretch or squeeze the candles (2026-11-15, the
-  // owner saw the other charts' candles change width while dragging the 5m chart). Needs the peer's candles
-  // (`panel.candles` + `panel.interval` minutes, or the same on `panel.panel`); without them, place() as before.
-  function follow(peer, anchor) {
-    const scale = peer.chart.timeScale();
-    const owner = peer.candles ? peer : peer.panel;
-    const candles = owner?.candles, step = (owner?.interval ?? 0) * 60;
-    const current = scale.getVisibleLogicalRange?.();
-    if (!candles?.length || !step || !current) return false;
+  // Dragging or wheel-zooming one chart moves the others by bars, not by seconds: each peer keeps exactly the
+  // number of bars it shows (its candle width never changes, 2026-11-15) and only scrolls. The moment that lines up
+  // is the one under the pointer: the wheel zooms around the pointer, so that moment stays put on the zoomed chart
+  // and the other charts do not move at all; a drag carries it along with the pointer and the others follow. A peer
+  // puts that moment at the same fraction of its own width. Needs candles (`panel.candles` + `panel.interval`
+  // minutes, or the same on `panel.panel`); without them, place() by seconds as before.
+  const ownerOf = panel => (panel.candles ? panel : panel.panel);
+  const stepOf = panel => (ownerOf(panel)?.interval ?? 0) * 60;
+  // Bar position (fractional, may lie past either end) of a moment, and the moment of a bar position.
+  function indexAt(panel, time) {
+    const candles = ownerOf(panel)?.candles, step = stepOf(panel);
     let lo = 0, hi = candles.length - 1;
-    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (candles[mid].time <= anchor) lo = mid; else hi = mid - 1; }
-    // Between bars (or past either end) the position is interpolated, so the empty space after the newest bar
-    // scrolls like everywhere else.
-    const index = lo + (anchor - candles[lo].time) / step;
-    const width = current.to - current.from;
-    scale.setVisibleLogicalRange({ from: index - width / 2, to: index + width / 2 });
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (candles[mid].time <= time) lo = mid; else hi = mid - 1; }
+    return lo + (time - candles[lo].time) / step;
+  }
+  function timeAt(panel, logical) {
+    const candles = ownerOf(panel)?.candles, step = stepOf(panel);
+    const i = Math.max(0, Math.min(candles.length - 1, Math.floor(logical)));
+    return candles[i].time + (logical - i) * step;
+  }
+  const usable = panel => ownerOf(panel)?.candles?.length && stepOf(panel) && panel.chart.timeScale().getVisibleLogicalRange;
+  let pointerX = null; // px from the left of the active chart, while the pointer is on it
+  // The moment to line up and where it sits (0 left … 1 right) on the active chart, or null.
+  function anchorOf(panel) {
+    if (!usable(panel)) return null;
+    const scale = panel.chart.timeScale();
+    const width = scale.width?.() ?? 0;
+    const current = scale.getVisibleLogicalRange();
+    if (!current) return null;
+    if (Number.isFinite(pointerX) && width > 0 && pointerX >= 0 && pointerX <= width) {
+      const logical = scale.coordinateToLogical?.(pointerX);
+      if (Number.isFinite(logical)) return { time: timeAt(panel, logical), at: pointerX / width };
+    }
+    return { time: timeAt(panel, (current.from + current.to) / 2), at: 0.5 };
+  }
+  function follow(peer, anchor) {
+    if (!anchor || !usable(peer)) return false;
+    const scale = peer.chart.timeScale();
+    const current = scale.getVisibleLogicalRange();
+    if (!current) return false;
+    const index = indexAt(peer, anchor.time), width = current.to - current.from;
+    scale.setVisibleLogicalRange({ from: index - width * anchor.at, to: index - width * anchor.at + width });
     return true;
   }
   for (const panel of panels) panel.chart.timeScale().subscribeVisibleTimeRangeChange(range => {
@@ -145,14 +169,18 @@ export function linkTimeRanges(panels, onChange = () => {}, groupOf = panel => p
     if (panel !== active || !valid(range)) return;
     const group = groupOf(panel);
     spans.set(group, range.to - range.from);
+    const anchor = anchorOf(panel);
     for (const peer of panels) {
       if (peer === panel) continue;
       if (groupOf(peer) === group) peer.chart.timeScale().setVisibleRange(range);
-      else if (!follow(peer, (range.from + range.to) / 2)) place(peer, range, 0.5);
+      else if (!follow(peer, anchor)) place(peer, range, 0.5);
     }
   });
   return {
-    activate(panel) { active = panel; },
+    // x: the pointer's px from the chart's left edge (pointerdown / wheel / move while pressed), so a gesture lines
+    // the charts up at the moment under the pointer; omitted = the middle of the chart.
+    activate(panel, x = null) { active = panel; pointerX = x; },
+    pointer(panel, x) { if (panel === active) pointerX = x; },
     set(range, { keepSpan = false, at = 0.5 } = {}) {
       active = null;
       if (!valid(range)) return;
