@@ -1,17 +1,18 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261115a';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261115a';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261115a';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261115a';
-import { calculateIndicator } from './indicators.mjs?v=20261115a';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261115a';
-import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261115a';
-import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone, barSnapshot } from './finder-data.mjs?v=20261115a';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261115a';
+import { t as createChart } from './lightweight-charts.mjs?v=20261115b';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261115b';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261115b';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261115b';
+import { calculateIndicator } from './indicators.mjs?v=20261115b';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261115b';
+import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261115b';
+import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone, barSnapshot,
+  nextTickDelay, newKeys, atRightEdge, shiftRange } from './finder-data.mjs?v=20261115b';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261115b';
 import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS,
-  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261115a';
+  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261115b';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -29,6 +30,10 @@ const TIMEFRAME_CHOICES = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '1D
 let token, form, factors = [], result = null, rides = [], rideData = [], shownTfs = new Set();
 let panels = [], selectedRide = null, statusTime, wantedRange, rangeLink, syncing = false, runVersion = 0;
 const rideButtons = new Map();
+// 「实时（每分钟）」 state: the pending timer, whether a round is running, how many rounds failed in a row, when the
+// last one landed, the answer a round could not draw yet (the owner was typing) and the keys to blink in the list.
+let liveTimer = null, liveBusy = false, manualBusy = false, liveFails = 0, liveUpdatedAt = 0, pendingLive = null;
+let freshKeys = new Set(), freshTimer = null;
 // Labels of the signals on screen: `key -> {trend, order, note}`, as returned by POST /review/labels. A new run
 // starts empty and reloads, so marks of another factor / symbol never show up here. `labelFilter` narrows the list.
 let labels = {}, labelFilter = 'all';
@@ -139,6 +144,7 @@ function paintForm() {
   $('f-custom').hidden = form.rangeMode !== 'custom';
   $('f-start').value = form.start; $('f-finish').value = form.finish;
   $('f-overlay').checked = form.overlay;
+  $('f-live').checked = form.live;
   $('f-window').replaceChildren(...WINDOWS.map(([seconds, label]) => {
     const option = document.createElement('option'); option.value = seconds; option.textContent = label; return option;
   }));
@@ -153,6 +159,7 @@ function readForm() {
   if (form.rangeMode === 'recent') form.recentDays = RECENT_DAYS.includes(Number(range)) ? Number(range) : 7;
   form.start = $('f-start').value; form.finish = $('f-finish').value;
   form.overlay = $('f-overlay').checked; form.window = Number($('f-window').value);
+  form.live = $('f-live').checked;
   saveForm();
 }
 
@@ -361,45 +368,53 @@ function addRides(panel) {
   }
   panel.markers = markers.sort((a, b) => a.time - b.time);
   paintMarkers(panel);
-  const data = joinRideLines(lines, { up: UP, down: DOWN });
-  if (data.length) {
-    const line = panel.chart.addLineSeries({ color: UP, lineWidth: 4, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+  // "实时" repaints a panel from the new answer, so the ride lines of the previous one are dropped first: without
+  // this, every live round would add another copy of every line.
+  const addLine = (options, data) => {
+    if (!data.length) return;
+    const line = panel.chart.addLineSeries(options);
     line.setData(data);
-  }
-  const levelData = joinRideLines(levels, { up: UP_ENTRY, down: DOWN_ENTRY });
-  if (levelData.length) {
-    const line = panel.chart.addLineSeries({ color: UP_ENTRY, lineWidth: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
-    line.setData(levelData);
-  }
-  const untradedData = joinRideLines(untraded, { up: GREY, down: GREY });
-  if (untradedData.length) {
-    const line = panel.chart.addLineSeries({ color: GREY, lineWidth: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
-    line.setData(untradedData);
-  }
+    panel.rideSeries.push(line);
+  };
+  clearRideSeries(panel);
+  addLine({ color: UP, lineWidth: 4, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false },
+    joinRideLines(lines, { up: UP, down: DOWN }));
+  addLine({ color: UP_ENTRY, lineWidth: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false },
+    joinRideLines(levels, { up: UP_ENTRY, down: DOWN_ENTRY }));
+  addLine({ color: GREY, lineWidth: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false },
+    joinRideLines(untraded, { up: GREY, down: GREY }));
   // Still waiting for a fill: dashed, because nothing has been decided for this order yet.
-  const pendingData = joinRideLines(pending, { up: GREY, down: GREY });
-  if (pendingData.length) {
-    const line = panel.chart.addLineSeries({ color: GREY, lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
-    line.setData(pendingData);
-  }
+  addLine({ color: GREY, lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false },
+    joinRideLines(pending, { up: GREY, down: GREY }));
   for (const [lines, color] of [[stops, DOWN], [targets, UP]]) {
-    const dashed = joinRideLines(lines, { up: color, down: color });
-    if (!dashed.length) continue;
-    const line = panel.chart.addLineSeries({ color, lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
-    line.setData(dashed);
+    addLine({ color, lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false },
+      joinRideLines(lines, { up: color, down: color }));
   }
+}
+
+// Removes the ride lines a panel carries, so a repaint starts from an empty chart instead of stacking up.
+function clearRideSeries(panel) {
+  for (const series of panel.rideSeries ?? []) { try { panel.chart.removeSeries(series); } catch { /* chart rebuilt */ } }
+  panel.rideSeries = [];
 }
 
 // Optional: the review page's own main-chart indicators (MA group, SMA, EMA, BOLL) on top.
 function addOverlay(panel, preferences) {
+  clearOverlay(panel);
   for (const config of preferences.indicators) {
     if (INDICATORS[config.type].pane !== 'main') continue;
     for (const line of calculateIndicator(panel.candles, config, panel.interval).series) {
       const series = panel.chart.addLineSeries({ color: line.color, lineWidth: 1.5, lineStyle: line.dashed ? 2 : 0,
         lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
       series.setData(line.data);
+      panel.overlaySeries.push(series);
     }
   }
+}
+
+function clearOverlay(panel) {
+  for (const series of panel.overlaySeries ?? []) { try { panel.chart.removeSeries(series); } catch { /* chart rebuilt */ } }
+  panel.overlaySeries = [];
 }
 
 // ---- Snapshots -------------------------------------------------------------
@@ -442,7 +457,8 @@ function makePanel(tf, item, preferences) {
   card.insertBefore(noteRow, card.querySelector('.chart-host'));
   $('charts').append(card);
   const panel = { tf, interval, card, noteRow, noteTime: null,
-    candles: item.candles, closes: new Map(item.candles.map(c => [c.time, c.close])) };
+    candles: item.candles, closes: new Map(item.candles.map(c => [c.time, c.close])),
+    rideSeries: [], overlaySeries: [], chosenSeries: [] };
   const input = noteRow.querySelector('.bar-note-input');
   input.onkeydown = event => {
     if (event.key === 'Enter') { event.preventDefault(); submitBarNote(panel); }
@@ -592,6 +608,8 @@ function rideButton(ride) {
     button.append(note);
   }
   button.onclick = () => selectRide(ride);
+  // A signal the last live round found for the first time blinks for three seconds (see paintFreshStatus).
+  if (freshKeys.has(ride.key)) button.classList.add('fresh');
   rideButtons.set(ride, button);
   return button;
 }
@@ -608,7 +626,9 @@ function ensureRendered(ride) {
   if (i >= listRendered) renderMoreRides(i - listRendered + LIST_CHUNK);
 }
 
-function paintRides() {
+// `minRendered` rebuilds at least as many rows as were on screen before (a live round repaints the list too, and
+// dropping back to one chunk while the owner is scrolled far down would look like a jump to the top).
+function paintRides(minRendered = 0) {
   const list = shownRides();
   rideButtons.clear(); listShown = list; listRendered = 0;
   const box = $('trades'); box.replaceChildren();
@@ -620,7 +640,7 @@ function paintRides() {
       : `没有“${LABEL_FILTERS.find(([id]) => id === labelFilter)?.[1] ?? labelFilter}”标注的信号，点“全部”看回所有`;
     box.append(none);
   }
-  renderMoreRides(LIST_CHUNK);
+  renderMoreRides(Math.max(LIST_CHUNK, minRendered));
   $('trade-count').textContent = `${list.length}/${rides.length} 个`;
   $('ride-latest').disabled = !list.length;
   paintLabelBar(); updateNav();
@@ -784,6 +804,8 @@ function openNote() {
 function closeNote() {
   $('note-row').hidden = true; $('note-hint').textContent = ''; $('note-input').value = '';
   paintNoteShow(selectedRide ? entryOf(labels, selectedRide.key).note : '');
+  // A live round that landed while the box was open was only fetched, not drawn: draw it now.
+  flushLive();
 }
 
 // Enter in the note box: the note is its own row (kind=note), so it no longer waits for a good / bad mark. An empty
@@ -804,7 +826,8 @@ async function submitNote() {
 }
 
 // The saved marks of this factor / exchange / symbol, so reopening the page or switching back shows them.
-async function loadLabels(version) {
+// `repaint` false leaves the list to the caller (a live round paints it once, after the marks are in).
+async function loadLabels(version, repaint = true) {
   try {
     const data = await post('/review/labels', runIdentity());
     if (version !== runVersion) return;
@@ -816,7 +839,7 @@ async function loadLabels(version) {
   }
   // The purple squares of the candles already noted, on the charts that are already drawn.
   for (const panel of panels) paintMarkers(panel);
-  paintRides();
+  if (repaint) paintRides();
 }
 
 // ---- Candle notes ----------------------------------------------------------
@@ -860,6 +883,7 @@ function closeBarNote(panel) {
   if (!panel?.noteRow) return;
   panel.noteRow.hidden = true; panel.noteTime = null;
   barInput(panel).value = '';
+  flushLive();
 }
 
 // Enter in the box: one `kind=bar` row with the candle's numbers and the signal that was selected (if any), so the
@@ -1014,6 +1038,10 @@ function gotoLatest(keepSpan = true) {
 }
 
 // ---- Running ---------------------------------------------------------------
+const readPreferences = () => {
+  try { return restorePreferences(localStorage.getItem(STORAGE_KEY)); } catch { return restorePreferences(null); }
+};
+
 function render(data) {
   destroyPanels();
   result = data;
@@ -1022,8 +1050,8 @@ function render(data) {
   rides = buildRides(extra, data.last_candle_time + 60);
   keyRides();
   shownTfs = new Set(rideData.map(s => s.title)); selectedRide = null;
-  let preferences;
-  try { preferences = restorePreferences(localStorage.getItem(STORAGE_KEY)); } catch { preferences = restorePreferences(null); }
+  freshKeys = new Set(); clearTimeout(freshTimer);
+  const preferences = readPreferences();
   const order = Object.keys(data.timeframes).sort((a, b) => timeframeMinutes(b) - timeframeMinutes(a));
   panels = order.map(tf => makePanel(tf, data.timeframes[tf], preferences));
   rangeLink = linkTimeRanges(panels.filter(p => !p.empty));
@@ -1038,6 +1066,8 @@ async function run() {
   const factor = currentFactor();
   if (!factor) return;
   const version = ++runVersion;
+  // A live round must not import at the same moment: the user's own run has priority, the minute is skipped.
+  manualBusy = true;
   $('f-run').disabled = true;
   try {
     const timeframes = form.timeframes[factor.name] ?? factor.timeframes;
@@ -1055,12 +1085,13 @@ async function run() {
     await loadLabels(version);
   } catch (error) {
     if (version === runVersion) status(error.message, true);
-  } finally { if (version === runVersion) $('f-run').disabled = false; }
+  } finally { if (version === runVersion) $('f-run').disabled = false; manualBusy = false; }
 }
 
 // Pull the newest candles with the existing import API, then search again.
 async function importLatest() {
   readForm();
+  manualBusy = true;
   $('f-import').disabled = true;
   try {
     const id = crypto.randomUUID();
@@ -1076,7 +1107,243 @@ async function importLatest() {
     }
     status('');
     await run();
-  } catch (error) { status(error.message, true); } finally { $('f-import').disabled = false; }
+  } catch (error) { status(error.message, true); } finally { $('f-import').disabled = false; manualBusy = false; }
+}
+
+// ---- 「实时（每分钟）」 ------------------------------------------------------
+// A round imports the newest candles, runs the factor with the form as it is, and updates the panels already on
+// screen in place: the selected signal, each chart's visible range, the filters and the list scroll all survive, so
+// watching a chart is not interrupted every minute. The pure parts (next trigger, new-signal diff, right edge) are
+// in finder-data.mjs with their node tests.
+const LIVE_FAIL_LIMIT = 3;
+const LIVE_POLL_MS = 2000;
+// A minute's import can hang (network, exchange): give up on this round instead of blocking every later one.
+const LIVE_IMPORT_TRIES = 45;
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const liveClock = ms => new Date(ms).toISOString().slice(11, 19);
+
+// Custom range with an end date: a live round that never reaches "now" makes no sense there.
+const liveConflict = () => form.rangeMode === 'custom' && !!form.finish;
+
+function paintLiveNote(message) {
+  const note = $('live-note');
+  if (!form.live) { note.hidden = true; note.textContent = ''; return; }
+  note.hidden = false;
+  note.textContent = message ?? (liveUpdatedAt ? `实时 · 最后更新 ${liveClock(liveUpdatedAt)} UTC` : '实时 · 等待第一次更新');
+}
+
+// One timer, always re-armed from the clock: a slow round cannot drift the schedule the way a 60s setInterval does.
+function scheduleLive(delay) {
+  clearTimeout(liveTimer);
+  liveTimer = null;
+  if (!form.live || document.hidden) return;
+  liveTimer = setTimeout(liveTick, delay ?? nextTickDelay(Date.now()));
+}
+
+function setLive(on) {
+  form.live = on;
+  $('f-live').checked = on;
+  saveForm();
+  liveFails = 0;
+  if (!on) {
+    clearTimeout(liveTimer); liveTimer = null;
+    pendingLive = null;
+    freshKeys = new Set(); clearTimeout(freshTimer);
+    for (const button of rideButtons.values()) button.classList.remove('fresh');
+    paintLiveNote();
+    return;
+  }
+  paintLiveNote();
+  scheduleLive(0);
+}
+
+// While the owner is writing (a note box is open, or the cursor sits in an input), a round only refreshes the data;
+// the drawings wait until the box closes, so nothing jumps under the cursor.
+const liveBlocked = () => !$('note-row').hidden || !!openBarPanel() || typing();
+
+// The visible range of a chart in UTC seconds, or null before the chart has a size.
+const panelRange = panel => {
+  try {
+    const range = panel.chart.timeScale().getVisibleRange();
+    return range && Number.isFinite(range.from) && Number.isFinite(range.to) ? range : null;
+  } catch { return null; }
+};
+
+// Selection marks of one panel: the amber dashed line, stop / target lines and the chosen holstered lines. Dropped
+// before the selection is put back on new data, so no line of the previous answer stays behind.
+function clearSelection(panel) {
+  if (panel.limitLine) { try { panel.series.removePriceLine(panel.limitLine); } catch { /* chart rebuilt */ } }
+  panel.limitLine = null;
+  for (const line of panel.orderLines ?? []) { try { panel.series.removePriceLine(line); } catch { /* chart rebuilt */ } }
+  panel.orderLines = [];
+  drawChosen(panel, null);
+}
+
+// Replaces one panel's candles and drawings without touching the chart object, so the time scale (and what the
+// owner is looking at) survives. `range` / `last` are what the chart showed before the update.
+function updatePanel(panel, item, preferences, range, last) {
+  panel.candles = item.candles;
+  panel.closes = new Map(item.candles.map(candle => [candle.time, candle.close]));
+  panel.series.setData(panel.candles);
+  if (form.overlay) addOverlay(panel, preferences); else clearOverlay(panel);
+  addRides(panel);
+  const count = rides.filter(ride => ride.minutes === panel.interval).length;
+  panel.card.querySelector('.chart-meta').textContent = `${panel.candles.length.toLocaleString()} 根完整 K 线 · ${count} 个区间`;
+  if (!range) return;
+  // A chart whose right edge was at the newest bar follows the newest bar (same zoom); one dragged into history
+  // gets exactly the range it had.
+  const newest = panel.candles.at(-1).time;
+  panel.chart.timeScale().setVisibleRange(atRightEdge(range, last) ? shiftRange(range, newest - last) : range);
+}
+
+// A new signal from this round: the row blinks for 3s and the status bar names it. Nothing else marks the event.
+function paintFreshStatus() {
+  clearTimeout(freshTimer);
+  if (!freshKeys.size) return;
+  const rows = rides.filter(ride => freshKeys.has(ride.key));
+  const named = rows.slice(0, 3).map(ride => `${ride.tf} ${arrow(ride.dir)} ${maText(ride.periods)} `
+    + new Date((ride.start + 60) * 1000).toISOString().slice(11, 16));
+  status(`新信号：${named.join('、')}${rows.length > named.length ? ` 等 ${rows.length} 个` : ''}`);
+  // The row highlight (CSS, 3s) is the short signal; the sentence stays up a little longer and is replaced by the
+  // next round's own message anyway.
+  freshTimer = setTimeout(() => {
+    freshKeys = new Set();
+    for (const button of rideButtons.values()) button.classList.remove('fresh');
+    if ($('status').textContent.startsWith('新信号：')) status('');
+  }, 8000);
+}
+
+// Applies one live round to the page. Everything a person set up is read first and put back afterwards: the selected
+// signal (by key, and "nothing selected" when it is gone), each chart's visible range, the period / label filters
+// and the list scroll. A round that changes the set of timeframes (or a chart that had no candles and now has some)
+// cannot keep the per-chart ranges, so it falls back to the normal first render.
+async function applyLive({ data, factor, params, version }) {
+  const keepKey = selectedRide?.key ?? null;
+  const list = $('trades');
+  const scroll = { top: list.scrollTop, left: list.scrollLeft, rendered: listRendered };
+  const views = panels.map(panel => ({ panel, range: panelRange(panel), last: panel.candles.at(-1)?.time ?? null }));
+  const firstDraw = !views.length;
+  // Both the old and the new answer need candles of every timeframe that is on screen: a chart that was empty (or a
+  // timeframe the form added) has no chart object to update.
+  const sameShape = !firstDraw && views.every(({ panel }) => !panel.empty && data.timeframes[panel.tf]?.candles?.length);
+  const preferences = readPreferences();
+  const oldRides = rides;
+  result = data;
+  const extra = rideExtra(data.timeframes);
+  rideData = rideSeries(extra);
+  rides = buildRides(extra, data.last_candle_time + 60);
+  keyRides();
+  freshKeys = new Set(newKeys(oldRides, rides));
+  // The time-scale link remembers which chart the last pointer gesture was on; a programmatic range on that chart
+  // would then be pushed to every peer and overwrite the ranges read above.
+  rangeLink?.activate(null);
+  if (sameShape) {
+    for (const { panel, range, last } of views) updatePanel(panel, data.timeframes[panel.tf], preferences, range, last);
+  } else {
+    destroyPanels();
+    panels = Object.keys(data.timeframes).sort((a, b) => timeframeMinutes(b) - timeframeMinutes(a))
+      .map(tf => makePanel(tf, data.timeframes[tf], preferences));
+    rangeLink = linkTimeRanges(panels.filter(panel => !panel.empty));
+  }
+  paintFilter();
+  paintDataNote(); paintLimitSummary(); paintCondition(factor, params);
+  $('results').hidden = false; $('f-latest').disabled = false;
+  // Nothing was on screen (the first search failed, or this is the first answer): behave like the first render.
+  if (firstDraw) gotoLatest();
+  selectedRide = null;
+  for (const panel of panels) { panel.card.classList.remove('chosen'); clearSelection(panel); }
+  // The marks are re-read first (they add the purple 注 squares to the panels), then the list is painted once with
+  // as many rows as this page had — a live round must not throw the list back to its first chunk.
+  await loadLabels(version, false);
+  paintRides(scroll.rendered);
+  const keep = keepKey ? rides.find(ride => ride.key === keepKey) : null;
+  if (keep) selectRide(keep, false);
+  else {
+    if (keepKey) $('trade-info').textContent = '最新：各周期在最后一根已收盘 K 线时的状态';
+    statusTime = data.last_candle_time;
+    paintSignalBar(statusTime); updateNav();
+  }
+  paintFreshStatus();
+  list.scrollTop = scroll.top; list.scrollLeft = scroll.left;
+  liveUpdatedAt = Date.now(); liveFails = 0; paintLiveNote();
+  if ($('status').classList.contains('error')) status('');
+}
+
+// The import half of a live round: start one and wait for it. Bounded, unlike 「更新到最新」: a stuck import must not
+// swallow every later minute. Each round uses its own id, so the running one is cancelled on timeout.
+async function importRound() {
+  const id = crypto.randomUUID();
+  await post('/candles/import', { id, exchange: form.exchange, symbol: form.symbol, start_date: importStartDate(Date.now()) });
+  for (let attempt = 0; attempt < LIVE_IMPORT_TRIES; attempt++) {
+    await sleep(LIVE_POLL_MS);
+    const state = await post('/candles/import-status', { id });
+    if (!importDone(state)) continue;
+    if (state.status === 'failed') throw new Error(`更新 K 线失败：${state.error ?? '未知错误'}`);
+    return;
+  }
+  try { await post('/candles/cancel-import', { id }); } catch { /* the round fails anyway */ }
+  throw new Error('更新 K 线超时');
+}
+
+async function liveTick() {
+  liveTimer = null;
+  if (!form.live || document.hidden) return;
+  // The previous round is still running, or the owner is running a manual 查找 / 更新到最新: skip this minute.
+  if (liveBusy || manualBusy) { scheduleLive(); return; }
+  liveBusy = true;
+  let version = runVersion;
+  try {
+    readForm();
+    if (!form.live) return;
+    if (liveConflict()) {
+      setLive(false);
+      status('实时需要把结束留空，已关闭“实时”。', true);
+      return;
+    }
+    const factor = currentFactor();
+    if (!factor) throw new Error('没有可用的因子。');
+    const timeframes = form.timeframes[factor.name] ?? factor.timeframes;
+    if (!timeframes.length) throw new Error('请至少勾选 1 个周期。');
+    const params = selectedParams(factor);
+    // Built from the form before the import, so the answer matches the candles this round pulled.
+    const body = runBody(form, factor.name, params, timeframes, Date.now());
+    // A manual run started meanwhile wins: the old round must not overwrite its answer.
+    version = ++runVersion;
+    await importRound();
+    const data = await post('/factors/run', body);
+    if (version !== runVersion || !form.live) return;
+    if (liveBlocked()) {
+      pendingLive = { data, factor, params, version };
+      setTimeout(flushLive, 1500);
+      return;
+    }
+    await applyLive({ data, factor, params, version });
+  } catch (error) {
+    if (version !== runVersion) return;
+    liveFails++;
+    paintLiveNote(`实时 · 上次失败 ${liveClock(Date.now())} UTC`);
+    if (liveFails >= LIVE_FAIL_LIMIT) {
+      setLive(false);
+      status(`实时已关闭：连续 ${LIVE_FAIL_LIMIT} 次更新失败（${error.message}）。修好后重新勾选“实时（每分钟）”。`, true);
+      return;
+    }
+    // The next minute tries again; the error stays on screen until then.
+    status(`实时更新失败（第 ${liveFails} 次，下一分钟再试）：${error.message}`, true);
+  } finally {
+    liveBusy = false;
+    if (form.live) scheduleLive();
+  }
+}
+
+// A round that landed while the owner was typing: draw it once the box is closed (checked again every second and a
+// half, and right away from closeNote / closeBarNote).
+function flushLive() {
+  if (!pendingLive) return;
+  if (liveBlocked()) { setTimeout(flushLive, 1500); return; }
+  const pending = pendingLive;
+  pendingLive = null;
+  if (pending.version !== runVersion || !form.live) return;
+  applyLive(pending).catch(error => status(error.message, true));
 }
 
 async function start() {
@@ -1106,8 +1373,26 @@ async function start() {
     // A first switch to "custom" starts from the last 7 days instead of an empty box.
     if ($('f-range').value === 'custom' && !$('f-start').value) $('f-start').value = isoToLocal(Date.now() - 7 * 86400000);
     readForm(); $('f-custom').hidden = form.rangeMode !== 'custom';
+    checkLiveConflict();
   };
-  for (const id of ['f-exchange', 'f-symbol', 'f-start', 'f-finish']) $(id).onchange = readForm;
+  for (const id of ['f-exchange', 'f-symbol', 'f-start', 'f-finish']) $(id).onchange = () => { readForm(); checkLiveConflict(); };
+  // "实时（每分钟）": turning it on runs a round right away, then one per UTC minute (finder-data.mjs nextTickDelay).
+  $('f-live').onchange = () => {
+    readForm();
+    if ($('f-live').checked && liveConflict()) {
+      setLive(false);
+      status('实时需要把结束留空（自定义范围时填了“结束”就不能实时），已取消勾选。', true);
+      return;
+    }
+    setLive($('f-live').checked);
+    if (form.live) status('');
+  };
+  // A hidden tab does no work; coming back catches up at once instead of waiting for the next minute.
+  document.addEventListener('visibilitychange', () => {
+    if (!form.live) return;
+    if (document.hidden) { clearTimeout(liveTimer); liveTimer = null; return; }
+    if (!liveBusy) liveTick();
+  });
   $('f-overlay').onchange = () => { readForm(); if (result) render(result); };
   $('f-window').onchange = () => {
     readForm();
@@ -1123,11 +1408,21 @@ async function start() {
     $('data-note').textContent = '项目的 factors/ 文件夹里没有因子文件';
     status('没有找到因子文件。在项目目录的 factors/ 下放一个 <名字>.py（约定见复盘页 README 的“因子查找器”一节）。', true);
     $('f-run').disabled = true;
+    if (form.live) setLive(false);
     return;
   }
   status('');
   paintFactors();
   paintDataNote();
   if (!currentFactor()?.error) await run();
+  // The saved form may have 实时 on: keep waiting for the next minute, the page already ran a fresh search.
+  if (form.live) { if (liveConflict()) setLive(false); else paintLiveNote(); scheduleLive(); }
+}
+
+// Filling in an end date while 实时 is on would make every round stale: say why and switch it off.
+function checkLiveConflict() {
+  if (!form.live || !liveConflict()) return;
+  setLive(false);
+  status('实时需要把结束留空，已关闭“实时”。', true);
 }
 start().catch(error => status(error.message, true));

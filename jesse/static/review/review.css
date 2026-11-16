@@ -99,3 +99,11 @@ main[hidden]{display:none}
 .bar-note-help{padding:0 12px 6px;font-size:10px;line-height:1.5;color:#8996aa}
 .signal-bar .bar-note{flex-basis:100%;font-size:12px;color:#5b3fb0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .signal-bar .bar-note[hidden]{display:none}
+
+/* 「实时（每分钟）」: the checkbox next to 更新到最新, the small "last update" chip in the header corner, and the
+   three-second highlight of a signal the last live round found for the first time. */
+.finder-live{gap:4px}.finder-live input{accent-color:#315cd0}
+.live-note{font-size:11px;color:#315cd0;background:#eef3ff;border-radius:7px;padding:3px 8px;font-variant-numeric:tabular-nums}
+.live-note[hidden]{display:none}
+@keyframes ride-fresh{from{background:#fff5d6;box-shadow:inset 3px 0 0 #e0a800}to{background:#f8fafd;box-shadow:none}}
+.ride.fresh{animation:ride-fresh 3s ease-out}

@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>因子查找器 · Jesse</title>
   <link rel="icon" href="/favicon.ico">
-  <link rel="stylesheet" href="./review.css?v=20261115a">
+  <link rel="stylesheet" href="./review.css?v=20261115b">
 </head>
 <body class="signal-mode finder">
   <header>
     <div><span class="brand">J</span><div><h1>因子查找器</h1><p id="data-note">正在读取因子…</p></div></div>
-    <a id="back" href="./index.html">← 返回复盘页</a>
+    <div class="header-links"><span id="live-note" class="live-note" hidden></span><a id="back" href="./index.html">← 返回复盘页</a></div>
   </header>
   <!-- novalidate: the 挂单 boxes keep their arrow steps (0.05 / 0.1 / 0.5) but defaults like y 0.382 and k 1 (min 0.01) are off that grid, and the browser then refused to submit "查找"; the page clamps every value itself. -->
   <form id="finder-form" class="finder-form" aria-label="查找条件" autocomplete="off" novalidate>
@@ -46,6 +46,7 @@
     <div class="finder-row">
       <button id="f-run" type="submit">查找</button>
       <button id="f-import" type="button">更新到最新</button>
+      <label class="finder-live"><input id="f-live" type="checkbox">实时（每分钟）</label>
       <button id="f-latest" type="button" disabled>跳到最新</button>
       <button id="snapshot-all" type="button" title="截取所有周期图并拼接成一张，可标注后发给 Claude">截全部</button>
       <label>窗口 <select id="f-window" aria-label="共同时间窗口"></select></label>
@@ -88,7 +89,7 @@
   <script type="module">
     // REVIEW_VERSION: change it (and every "?v=" in the .mjs imports and the stylesheet link) whenever
     // any file in this folder changes. tests/review-version.test.mjs checks that they all match.
-    const REVIEW_VERSION = '20261115a';
+    const REVIEW_VERSION = '20261115b';
     import(`./finder.mjs?v=${REVIEW_VERSION}`).catch(error => {
       const status = document.getElementById('status');
       status.hidden = false; status.classList.add('error'); status.textContent = `查找器脚本加载失败：${error.message}`;

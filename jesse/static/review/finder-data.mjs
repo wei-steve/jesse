@@ -1,11 +1,15 @@
 // Pure helpers of the factor finder page (finder.mjs): request building, saved form, and turning the
 // `/factors/run` answer into the same step series the signal mode of the review page uses (rides.mjs).
 // Nothing here knows what a factor does; the page only draws the numbers the factor file returns.
-import { timeframeMinutes } from './settings.mjs?v=20261115a';
-import { LIMIT_RULES, LIMIT_DEFAULTS, atr14 } from './limit-rules.mjs?v=20261115a';
-import { sma } from './data.mjs?v=20261115a';
+import { timeframeMinutes } from './settings.mjs?v=20261115b';
+import { LIMIT_RULES, LIMIT_DEFAULTS, atr14 } from './limit-rules.mjs?v=20261115b';
+import { sma } from './data.mjs?v=20261115b';
 
 export const FORM_KEY = 'jesse.finder.form.v1';
+// 「实时」fires a few seconds after every UTC minute: by then the minute that just closed is in the database, and a
+// delay computed from the clock (not a fixed 60s setInterval) never drifts.
+export const LIVE_OFFSET_MS = 5000;
+export const MINUTE_MS = 60000;
 export const RECENT_DAYS = [1, 3, 7, 14, 30, 90, 180, 365];
 export const WINDOWS = [[21600, '6 小时'], [43200, '12 小时'], [86400, '24 小时'], [259200, '3 天'], [604800, '7 天']];
 const LIMIT_IDS = LIMIT_RULES.map(rule => rule.id);
@@ -13,7 +17,7 @@ const pad = n => String(n).padStart(2, '0');
 
 export function defaultForm() {
   return { exchange: 'Binance Perpetual Futures', symbol: 'BTC-USDT', rangeMode: 'recent', recentDays: 7,
-    start: '', finish: '', factor: '', params: {}, timeframes: {}, overlay: false, window: 86400,
+    start: '', finish: '', factor: '', params: {}, timeframes: {}, overlay: false, live: false, window: 86400,
     limit: { ...LIMIT_DEFAULTS } };
 }
 
@@ -44,7 +48,7 @@ export function restoreForm(serialized) {
     rangeMode: value.rangeMode === 'custom' ? 'custom' : 'recent',
     recentDays: RECENT_DAYS.includes(value.recentDays) ? value.recentDays : base.recentDays,
     start: text(value.start, ''), finish: text(value.finish, ''), factor: text(value.factor, ''),
-    params, timeframes, overlay: value.overlay === true,
+    params, timeframes, overlay: value.overlay === true, live: value.live === true,
     window: WINDOWS.some(([seconds]) => seconds === value.window) ? value.window : base.window,
     limit: {
       // v2: the default moved from the next-bar open to SMA5; a form saved before that (no v) still holds the old
@@ -88,6 +92,32 @@ export function importStartDate(nowMs) {
   const d = new Date(nowMs - 86400000);
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 }
+
+// Milliseconds until the next 「实时」trigger, strictly in (0, one minute]. Exactly on a trigger the next minute is
+// meant, so two rounds never fire at the same instant.
+export function nextTickDelay(nowMs, offsetMs = LIVE_OFFSET_MS) {
+  if (!Number.isFinite(nowMs)) return offsetMs;
+  const since = ((nowMs % MINUTE_MS) + MINUTE_MS) % MINUTE_MS;
+  return since < offsetMs ? offsetMs - since : MINUTE_MS - since + offsetMs;
+}
+
+// Keys of the signals in `newRides` that `oldRides` did not have. Those rows got a new signal in this round, so the
+// list blinks them; nothing else about the answer is treated as an event.
+export function newKeys(oldRides, newRides) {
+  const before = new Set((oldRides ?? []).map(ride => ride?.key));
+  return (newRides ?? []).filter(ride => ride?.key && !before.has(ride.key)).map(ride => ride.key);
+}
+
+// A chart whose right edge sits at (or past) its newest bar is glued to the newest candle: after an update it follows
+// the new newest bar. One the owner dragged back into history stays where it is.
+export function atRightEdge(range, lastTime, tolerance = 0) {
+  if (!range || !Number.isFinite(range.from) || !Number.isFinite(range.to) || range.to <= range.from) return false;
+  if (!Number.isFinite(lastTime)) return false;
+  return range.to >= lastTime - tolerance;
+}
+
+// Moves a visible range by `seconds`, keeping its width (the zoom the owner chose).
+export const shiftRange = (range, seconds) => ({ from: range.from + seconds, to: range.to + seconds });
 
 // The ride series (extra_charts format of rides.mjs) of a /factors/run answer. A bar's value is known when the
 // bar closes, i.e. at its last 1m candle (open time = bar time + length - 60). Only changes are written.

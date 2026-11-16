@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { defaultForm, restoreForm, localToIso, isoToLocal, clampParam, runBody, importStartDate, rideExtra,
-  barSnapshot } from '../jesse/static/review/finder-data.mjs';
+  barSnapshot, nextTickDelay, newKeys, atRightEdge, shiftRange } from '../jesse/static/review/finder-data.mjs';
 import { buildRides, rideSeries, signalStatus } from '../jesse/static/review/rides.mjs';
 
 test('restoreForm falls back to defaults field by field', () => {
@@ -111,4 +111,47 @@ test('barSnapshot carries the numbers of the clicked candle, computed up to it o
   assert.equal(barSnapshot(undefined, 1763000000, 3), null);
   // The ATR needs a previous bar: the first bar has none.
   assert.equal(barSnapshot(candles, candles[0].time, 3).atr, null);
+});
+
+test('nextTickDelay fires ~5s after every UTC minute and does not drift', () => {
+  const at = (h, m, s, ms = 0) => Date.UTC(2026, 10, 15, h, m, s, ms);
+  assert.equal(nextTickDelay(at(9, 30, 0)), 5000);
+  assert.equal(nextTickDelay(at(9, 30, 5)), 60000);       // exactly on a trigger: the next minute, not "now"
+  assert.equal(nextTickDelay(at(9, 30, 59, 500)), 5500);
+  assert.equal(nextTickDelay(at(9, 30, 6)), 59000);
+  // Following the delays one after another keeps the trigger at :05 of every minute.
+  let now = at(9, 30, 7);
+  const fired = [];
+  for (let i = 0; i < 3; i++) { now += nextTickDelay(now); fired.push(new Date(now).toISOString().slice(11, 19)); }
+  assert.deepEqual(fired, ['09:31:05', '09:32:05', '09:33:05']);
+  // A NaN clock must not schedule a round in a tight loop.
+  assert.equal(nextTickDelay(NaN), 5000);
+});
+
+test('newKeys names only the signals the previous answer did not have', () => {
+  const old = [{ key: 'a' }, { key: 'b' }];
+  const fresh = [{ key: 'a' }, { key: 'c' }, { key: 'd' }];
+  assert.deepEqual(newKeys(old, fresh), ['c', 'd']);
+  assert.deepEqual(newKeys([], fresh), ['a', 'c', 'd']);
+  assert.deepEqual(newKeys(old, old), []);
+  // A ride without a key (never drawn in the list) is not an event.
+  assert.deepEqual(newKeys([], [{ start: 1 }]), []);
+  assert.deepEqual(newKeys(undefined, undefined), []);
+});
+
+test('atRightEdge tells a chart glued to the newest bar from one dragged into history', () => {
+  const last = 1800;
+  assert.equal(atRightEdge({ from: 1200, to: 1800 }, last), true);
+  assert.equal(atRightEdge({ from: 1200, to: 1860 }, last), true);   // past the last bar (right offset)
+  assert.equal(atRightEdge({ from: 600, to: 1740 }, last), false);   // dragged back one bar
+  assert.equal(atRightEdge(null, last), false);
+  assert.equal(atRightEdge({ from: 1800, to: 1800 }, last), false);  // no width: nothing to follow
+  assert.equal(atRightEdge({ from: 1200, to: 1800 }, null), false);
+  assert.deepEqual(shiftRange({ from: 1200, to: 1800 }, 420), { from: 1620, to: 2220 });
+});
+
+test('the 实时 checkbox is saved with the form', () => {
+  assert.equal(defaultForm().live, false);
+  assert.equal(restoreForm(JSON.stringify({ live: true })).live, true);
+  assert.equal(restoreForm(JSON.stringify({ live: 'yes' })).live, false);
 });
