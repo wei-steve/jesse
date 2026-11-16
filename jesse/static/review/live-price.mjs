@@ -4,7 +4,8 @@
 // the status bar keep reading closed bars only, so they stay the same as in the backtest.
 
 // Public streams of the exchanges the finder reads candles from. Deepcoin (where the owner trades) is not listed: the
-// candles in the database come from Binance, and a price from another venue would not match them.
+// candles in the database come from Binance, and a price from another venue would not match them. The market page's
+// OKX / Deepcoin sockets are at the bottom of this file: their envelopes are their own, not Binance stream names.
 const STREAMS = {
   // USDⓈ-M market streams moved under /market (checked 2026-11-16: the bare /ws path still accepts the connection but
   // sends nothing). Combined kline subscriptions (`?streams=a/b/…`) live under /stream on both markets.
@@ -79,16 +80,24 @@ export const reconnectDelay = attempt => Math.min(30000, 1000 * 2 ** Math.max(0,
 // One websocket with the retry / silence policy both streams share: exponential backoff after a drop, and a socket
 // that stays open but goes quiet for `silenceMs` (a moved endpoint does exactly that) is closed and reopened. Returns
 // stop(); it reconnects by itself until stopped.
-function openSocket(url, { onMessage, onState, silenceMs = 20000 }) {
-  let socket = null, stopped = false, attempt = 0, retry = null, watchdog = null;
+// `handshake()` returns the messages to send once connected (OKX / Deepcoin subscription frames), and `ping` a text
+// frame resent every `pingMs`: OKX drops a connection that sends nothing for 30 seconds, Deepcoin wants `ping`.
+function openSocket(url, { onMessage, onState, silenceMs = 20000, handshake = null, ping = null, pingMs = 25000 }) {
+  let socket = null, stopped = false, attempt = 0, retry = null, watchdog = null, heartbeat = null;
+  const send = message => { try { socket?.send(typeof message === 'string' ? message : JSON.stringify(message)); } catch { /* closed */ } };
   const arm = () => {
     clearTimeout(watchdog);
     watchdog = setTimeout(() => { try { socket?.close(); } catch { /* reopened below */ } }, silenceMs);
+    clearInterval(heartbeat);
+    if (ping) heartbeat = setInterval(() => send(ping), pingMs);
   };
   const connect = () => {
     socket = new WebSocket(url);
     arm();
-    socket.onopen = () => onState?.('connected');
+    socket.onopen = () => {
+      onState?.('connected');
+      for (const message of handshake?.() ?? []) send(message);
+    };
     socket.onmessage = event => {
       attempt = 0; arm();
       let message;
@@ -96,7 +105,7 @@ function openSocket(url, { onMessage, onState, silenceMs = 20000 }) {
       onMessage(message);
     };
     socket.onclose = () => {
-      clearTimeout(watchdog);
+      clearTimeout(watchdog); clearInterval(heartbeat);
       if (stopped) return;
       onState?.('reconnecting');
       retry = setTimeout(connect, reconnectDelay(attempt++));
@@ -105,7 +114,7 @@ function openSocket(url, { onMessage, onState, silenceMs = 20000 }) {
   };
   connect();
   return () => {
-    stopped = true; clearTimeout(retry); clearTimeout(watchdog);
+    stopped = true; clearTimeout(retry); clearTimeout(watchdog); clearInterval(heartbeat);
     try { socket?.close(); } catch { /* already closed */ }
   };
 }
@@ -142,4 +151,150 @@ export function openKlines(url, { onKline, onState, silenceMs = 20000 }) {
 // `<pair>@miniTicker` quotes). onMessage gets every message that parsed as JSON. Returns stop().
 export function openMessages(url, { onMessage, onState, silenceMs = 20000 }) {
   return openSocket(url, { onMessage, onState, silenceMs });
+}
+
+// ---- OKX ----------------------------------------------------------------------------------------------------------
+// OKX has its own envelope: a JSON subscription frame on open, `{arg:{channel, instId}, data:[…]}` afterwards, and a
+// text `ping` every 25 seconds the server answers with `pong` (a silent socket is dropped after 30). Candles come on
+// the business channel, tickers on the public one; a websocket is not a cross-origin read, so the browser talks to
+// OKX itself. All of this was checked against the live venue on 2026-11-16.
+const OKX_WS = { business: 'wss://ws.okx.com/ws/v5/business', public: 'wss://ws.okx.com/ws/v5/public' };
+// `1Dutc` is OKX's UTC day bar; plain `1D` opens at the exchange's UTC+8 midnight.
+const OKX_CANDLE_CHANNELS = { '1m': 'candle1m', '3m': 'candle3m', '5m': 'candle5m', '15m': 'candle15m',
+  '30m': 'candle30m', '1h': 'candle1H', '4h': 'candle4H', '1D': 'candle1Dutc' };
+const OKX_CHANNEL_LABELS = new Map(Object.entries(OKX_CANDLE_CHANNELS).map(([label, channel]) => [channel, label]));
+
+/** The candle channel of one page timeframe, or null when OKX pushes none for it. */
+export const okxCandleChannel = timeframe => OKX_CANDLE_CHANNELS[String(timeframe ?? '')] ?? null;
+
+/** The channels to subscribe for a set of page timeframes (deduplicated, in the order given). */
+export function okxCandleChannels(timeframes) {
+  return [...new Set((Array.isArray(timeframes) ? timeframes : []).map(okxCandleChannel).filter(Boolean))];
+}
+
+/** One candle message of a subscribed channel as the chart's candle; `closed` is false while `confirm` is 0. */
+export function okxCandle(message) {
+  const tf = OKX_CHANNEL_LABELS.get(message?.arg?.channel);
+  const row = Array.isArray(message?.data) ? message.data[0] : null;
+  if (!tf || !Array.isArray(row) || row.length < 6) return null;
+  const [milliseconds, open, high, low, close] = row.slice(0, 5).map(Number);
+  if (![milliseconds, open, high, low, close].every(value => Number.isFinite(value) && value > 0)) return null;
+  const volume = Number(row[5]);
+  return { tf, time: Math.floor(milliseconds / 1000), open, high, low, close,
+    volume: Number.isFinite(volume) && volume >= 0 ? volume : 0, closed: row[8] !== '0' && row[8] !== 0 };
+}
+
+/** One `tickers` message as a watchlist quote (`{symbol: instId, price, change}`), or null for anything else. */
+export function okxTickerQuote(message) {
+  if (message?.arg?.channel !== 'tickers') return null;
+  const instId = message?.arg?.instId;
+  const price = Number(message?.data?.[0]?.last);
+  const open = Number(message?.data?.[0]?.open24h);
+  if (!instId || !Number.isFinite(price) || price <= 0) return null;
+  return { symbol: String(instId), price, change: Number.isFinite(open) && open > 0 ? (price - open) / open : null };
+}
+
+/** The last price of a `tickers` message, or null for anything else (OKX pushes one per trade burst). */
+export const okxTickerPrice = message => okxTickerQuote(message)?.price ?? null;
+
+/** The forming bar and the bar that just closed of every timeframe OKX pushes. Returns stop(). */
+export function openOkxKlines(instId, timeframes, { onKline, onState, silenceMs = 20000 }) {
+  const channels = okxCandleChannels(timeframes);
+  if (!instId || !channels.length) return () => {};
+  return openSocket(OKX_WS.business, {
+    silenceMs, ping: 'ping', pingMs: 25000, onState,
+    handshake: () => [JSON.stringify({ op: 'subscribe', args: channels.map(channel => ({ channel, instId })) })],
+    onMessage: message => { const candle = okxCandle(message); if (candle) onKline(candle); },
+  });
+}
+
+/** OKX's ticker channel: the last traded price of one instrument. Returns stop(). */
+export function openOkxTicker(instId, { onPrice, onState, throttleMs = 250, silenceMs = 20000 }) {
+  if (!instId) return () => {};
+  let timer = null, latest = null, active = true;
+  const flush = () => { timer = null; if (latest !== null && active) onPrice(latest); };
+  const stop = openSocket(OKX_WS.public, {
+    silenceMs, ping: 'ping', pingMs: 25000, onState,
+    handshake: () => [JSON.stringify({ op: 'subscribe', args: [{ channel: 'tickers', instId }] })],
+    onMessage: message => {
+      const price = okxTickerPrice(message);
+      if (price === null) return;
+      latest = price;
+      if (!timer) timer = setTimeout(flush, throttleMs);
+    },
+  });
+  return () => { active = false; clearTimeout(timer); stop(); };
+}
+
+/** The watchlist's OKX quotes: one socket carries every watched instrument (the subscription takes an args array). */
+export function openOkxTickers(instIds, { onQuote, onState, throttleMs = 1000, silenceMs = 20000 }) {
+  const ids = [...new Set((Array.isArray(instIds) ? instIds : []).filter(Boolean))];
+  if (!ids.length) return () => {};
+  let timer = null, latest = new Map(), active = true;
+  const flush = () => {
+    timer = null;
+    if (!active) return;
+    const pending = latest;
+    latest = new Map();
+    for (const quote of pending.values()) onQuote(quote);
+  };
+  const stop = openSocket(OKX_WS.public, {
+    silenceMs, ping: 'ping', pingMs: 25000, onState,
+    handshake: () => [JSON.stringify({ op: 'subscribe', args: ids.map(instId => ({ channel: 'tickers', instId })) })],
+    onMessage: message => {
+      const quote = okxTickerQuote(message);
+      if (!quote) return;
+      latest.set(quote.symbol, quote);
+      if (!timer) timer = setTimeout(flush, throttleMs);
+    },
+  });
+  return () => { active = false; clearTimeout(timer); stop(); };
+}
+
+// ---- Deepcoin -----------------------------------------------------------------------------------------------------
+// Deepcoin's public socket is a topic bus, not a documented streaming API: subscribe with a `SendTopicAction` frame
+// and it answers `{a:'PO', r:[{d:{…}}]}`. Topic 7 is the ticker of one instrument (`I: 'BTCUSDT'`, `N` = last price,
+// `O` = the 24h open), topic 11 is a 1m K-line — the venue documents no other period, which is why the forming bar of
+// every panel is polled from REST instead (see market.mjs) and only the price line comes from here. The instrument
+// code drops the `-USDT-SWAP` suffix, and the venue must be kept alive with a text `ping` every 10 seconds. The spot
+// endpoint has no ticker cluster at all ("subscription cluster does not exist", checked 2026-11-16).
+const DEEPCOIN_WS = {
+  swap: 'wss://stream.deepcoin.com/streamlet/trade/public/swap?platform=api',
+  spot: 'wss://stream.deepcoin.com/streamlet/trade/public/spot?platform=api',
+};
+
+/** `BTC-USDT-SWAP` -> `BTCUSDT`: the instrument code the socket's topic filter uses. */
+export const deepcoinWsFilter = symbol => `DeepCoin_${String(symbol ?? '').replace(/-SWAP$/, '').replace(/-/g, '')}`;
+
+/** The subscription frame of the ticker topic (topic 7) of one instrument. */
+export const deepcoinSubscription = symbol => ({
+  SendTopicAction: { Action: '1', FilterValue: deepcoinWsFilter(symbol), LocalNo: 111, ResumeNo: -1, TopicID: '7' },
+});
+
+/** The last price of a `PO` ticker push (`r[0].d.N`), or null for any other message (the kline topic, the acks). */
+export function deepcoinTickerPrice(message) {
+  if (message?.a !== 'PO') return null;
+  const price = Number(message?.r?.[0]?.d?.N);
+  return Number.isFinite(price) && price > 0 ? price : null;
+}
+
+/** Deepcoin's ticker push for one instrument. Returns stop(); spot has no ticker cluster, so it never connects. */
+export function openDeepcoinTicker(market, symbol, { onPrice, onState, throttleMs = 250, silenceMs = 30000 }) {
+  // The spot endpoint has no ticker cluster, so a spot instrument simply gets no push (its price comes from the REST
+  // poll the page runs for every Deepcoin panel).
+  const url = market === 'spot' ? null : DEEPCOIN_WS.swap;
+  if (!url || !symbol) return () => {};
+  let timer = null, latest = null, active = true;
+  const flush = () => { timer = null; if (latest !== null && active) onPrice(latest); };
+  const stop = openSocket(url, {
+    silenceMs, ping: 'ping', pingMs: 10000, onState,
+    handshake: () => [JSON.stringify(deepcoinSubscription(symbol))],
+    onMessage: message => {
+      const price = deepcoinTickerPrice(message);
+      if (price === null) return;
+      latest = price;
+      if (!timer) timer = setTimeout(flush, throttleMs);
+    },
+  });
+  return () => { active = false; clearTimeout(timer); stop(); };
 }

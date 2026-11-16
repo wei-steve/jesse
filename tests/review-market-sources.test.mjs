@@ -1,37 +1,121 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MARKET_SOURCES, DEFAULT_SOURCE, YIELD_SOURCE, SPOT_SOURCE, restoreSource, sourceLabel, exchangeOf,
-  defaultSymbolOf, isYieldSource, YIELD_SYMBOLS, DEFAULT_YIELD_SYMBOLS, normalizeYieldSymbol, isDailyOnlyYield,
-  yieldRequest, pollRangeOf, aggregateCandles, parseMarketCandles, yieldQuote, signedPoints, sessionIndicator, sessionTail } from
+import { MARKET_SOURCES, DEFAULT_SOURCE, DEFAULT_MARKET, MARKETS, YIELD_SOURCE, BINANCE_SOURCE, OKX_SOURCE,
+  DEEPCOIN_SOURCE, migrateSource, restoreSource, sourceLabel, marketsOf, hasMarkets, normalizeMarket, defaultSymbolOf,
+  exchangeOf, isYieldSource, marketLabel, normalizeSymbol, normalizeInstId, symbolOf, instrumentName, candleRequest,
+  BARS, YIELD_SYMBOLS, DEFAULT_YIELD_SYMBOLS, normalizeYieldSymbol, isDailyOnlyYield, yieldRequest, pollRangeOf,
+  aggregateCandles, parseMarketCandles, yieldQuote, signedPoints, sessionIndicator, sessionTail } from
   '../jesse/static/review/market-sources.mjs';
 import { mergeCandles, watchKey } from '../jesse/static/review/market-data.mjs';
 
 // --- Sources ------------------------------------------------------------------------------------------------------
 
-test('the dropdown offers the three sources, the perpetual first', () => {
-  assert.deepEqual(MARKET_SOURCES.map(source => source.id), ['binance-perp', 'binance-spot', 'us-yields']);
-  assert.deepEqual(MARKET_SOURCES.map(source => source.label), ['币安永续', '币安现货', '美债收益率']);
-  assert.equal(DEFAULT_SOURCE, 'binance-perp');
-  assert.equal(sourceLabel('us-yields'), '美债收益率');
-  assert.equal(defaultSymbolOf(YIELD_SOURCE), 'US10Y');
-  assert.equal(defaultSymbolOf(SPOT_SOURCE), 'BTCUSDT');
-  assert.equal(isYieldSource(YIELD_SOURCE), true);
-  assert.equal(isYieldSource(SPOT_SOURCE), false);
+test('the dropdown offers the three exchanges plus the yields, Binance first', () => {
+  assert.deepEqual(MARKET_SOURCES.map(source => source.id), ['binance', 'okx', 'deepcoin', 'us-yields']);
+  assert.deepEqual(MARKET_SOURCES.map(source => source.label), ['Binance', 'OKX', 'Deepcoin', '美债收益率']);
+  assert.equal(DEFAULT_SOURCE, 'binance');
+  assert.equal(DEFAULT_MARKET, 'swap');
+  // 合约 / 现货 are sub-tabs of the product list, not sources of their own any more.
+  assert.deepEqual(MARKETS.map(market => [market.id, market.label]), [['swap', '合约'], ['spot', '现货']]);
+  assert.equal(marketLabel('swap'), '合约');
+  assert.equal(marketLabel('spot'), '现货');
+  assert.equal(marketLabel(null), '');
 });
 
-test('a saved source id restores, anything else falls back to the perpetual', () => {
-  assert.equal(restoreSource('binance-spot'), 'binance-spot');
+test('every exchange has both markets, the yields have none', () => {
+  for (const source of [BINANCE_SOURCE, OKX_SOURCE, DEEPCOIN_SOURCE]) {
+    assert.deepEqual(marketsOf(source), ['swap', 'spot'], source);
+    assert.equal(hasMarkets(source), true);
+  }
+  assert.deepEqual(marketsOf(YIELD_SOURCE), []);
+  assert.equal(hasMarkets(YIELD_SOURCE), false);
+  assert.equal(normalizeMarket(OKX_SOURCE, 'spot'), 'spot');
+  assert.equal(normalizeMarket(OKX_SOURCE, 'nonsense'), 'swap');
+  assert.equal(normalizeMarket(YIELD_SOURCE, 'swap'), null);
+  assert.equal(isYieldSource(YIELD_SOURCE), true);
+  assert.equal(isYieldSource(OKX_SOURCE), false);
+  assert.equal(sourceLabel('deepcoin'), 'Deepcoin');
+  assert.equal(sourceLabel('us-yields'), '美债收益率');
+});
+
+test('the defaults are one instrument per market, in that venue\'s own spelling', () => {
+  assert.equal(defaultSymbolOf(BINANCE_SOURCE, 'swap'), 'BTCUSDT');
+  assert.equal(defaultSymbolOf(BINANCE_SOURCE, 'spot'), 'BTCUSDT');
+  assert.equal(defaultSymbolOf(OKX_SOURCE, 'swap'), 'BTC-USDT-SWAP');
+  assert.equal(defaultSymbolOf(OKX_SOURCE, 'spot'), 'BTC-USDT');
+  assert.equal(defaultSymbolOf(DEEPCOIN_SOURCE, 'swap'), 'BTC-USDT-SWAP');
+  assert.equal(defaultSymbolOf(YIELD_SOURCE, null), 'US10Y');
+});
+
+test('only Binance rows have a Binance-style stream venue', () => {
+  assert.equal(exchangeOf(BINANCE_SOURCE, 'swap'), 'Binance Perpetual Futures');
+  assert.equal(exchangeOf(BINANCE_SOURCE, 'spot'), 'Binance Spot');
+  for (const source of [OKX_SOURCE, DEEPCOIN_SOURCE, YIELD_SOURCE]) assert.equal(exchangeOf(source, 'swap'), '');
+});
+
+test('a pre-T-54 source id migrates to the exchange and market it named', () => {
+  // The old dropdown listed the venue: binance-perp / binance-spot / us-yields.
+  assert.deepEqual(migrateSource('binance-perp'), { source: 'binance', market: 'swap' });
+  assert.deepEqual(migrateSource('binance-spot'), { source: 'binance', market: 'spot' });
+  assert.deepEqual(migrateSource('"binance-spot"'), { source: 'binance', market: 'spot' });
+  assert.deepEqual(migrateSource(' us-yields '), { source: 'us-yields', market: null });
+  // Current ids restore with their first market.
+  assert.deepEqual(migrateSource('okx'), { source: 'okx', market: 'swap' });
+  assert.deepEqual(migrateSource('deepcoin'), { source: 'deepcoin', market: 'swap' });
+  for (const broken of [null, undefined, '', 'bybit', '{}', 'BTCUSDT']) assert.equal(migrateSource(broken), null, String(broken));
+  // restoreSource keeps the old name and returns just the id.
+  assert.equal(restoreSource('binance-spot'), 'binance');
   assert.equal(restoreSource('"us-yields"'), 'us-yields');
-  assert.equal(restoreSource(' us-yields '), 'us-yields');
-  for (const broken of [null, undefined, '', 'bybit', '{}', 'BTCUSDT']) {
-    assert.equal(restoreSource(broken), 'binance-perp', String(broken));
+  for (const broken of [null, '', 'bybit', 'BTCUSDT']) assert.equal(restoreSource(broken), 'binance', String(broken));
+});
+
+// --- Symbols ------------------------------------------------------------------------------------------------------
+
+test('Binance symbols stay the concatenated pair', () => {
+  for (const typed of ['btc', 'BTC', 'BTCUSDT', 'btcusdt', 'BTC-USDT', 'btc/usdt', ' btc_usdt ', 'Btc-Usdt']) {
+    assert.equal(normalizeSymbol(typed), 'BTCUSDT', typed);
+    assert.equal(symbolOf(BINANCE_SOURCE, 'swap', typed), 'BTCUSDT', typed);
+  }
+  assert.equal(normalizeSymbol('1000pepe'), '1000PEPEUSDT');
+  for (const typed of ['', '   ', null, undefined, 'usdt', '-', '///', 'a']) {
+    assert.equal(normalizeSymbol(typed), '', String(typed));
   }
 });
 
-test('the live streams know which venue each source belongs to, and the yields have none', () => {
-  assert.equal(exchangeOf('binance-perp'), 'Binance Perpetual Futures');
-  assert.equal(exchangeOf('binance-spot'), 'Binance Spot');
-  assert.equal(exchangeOf('us-yields'), '');
+test('OKX / Deepcoin symbols become the instId of the market on screen', () => {
+  for (const typed of ['btc', 'BTC-USDT', 'BTC-USDT-SWAP', 'btcusdt', 'btc/usdt', '  btc ']) {
+    assert.equal(normalizeInstId('swap', typed), 'BTC-USDT-SWAP', typed);
+    assert.equal(normalizeInstId('spot', typed), 'BTC-USDT', typed);
+    assert.equal(symbolOf(OKX_SOURCE, 'swap', typed), 'BTC-USDT-SWAP', typed);
+    assert.equal(symbolOf(DEEPCOIN_SOURCE, 'spot', typed), 'BTC-USDT', typed);
+  }
+  assert.equal(normalizeInstId('swap', '1000pepe'), '1000PEPE-USDT-SWAP');
+  for (const typed of ['', null, 'usdt', '-', 'a']) assert.equal(normalizeInstId('swap', typed), '', String(typed));
+});
+
+test('a row shows the base name, and a yield its own code', () => {
+  assert.equal(instrumentName(BINANCE_SOURCE, 'BTCUSDT'), 'BTC');
+  assert.equal(instrumentName(OKX_SOURCE, 'BTC-USDT-SWAP'), 'BTC');
+  assert.equal(instrumentName(DEEPCOIN_SOURCE, 'BTC-USDT'), 'BTC');
+  assert.equal(instrumentName(YIELD_SOURCE, 'US10Y'), 'US10Y');
+});
+
+// --- Bars ---------------------------------------------------------------------------------------------------------
+
+test('each exchange\'s bar spelling of a panel timeframe', () => {
+  assert.deepEqual(BARS[OKX_SOURCE]['1h'], '1H');
+  assert.deepEqual(BARS[OKX_SOURCE]['4h'], '4H');
+  // The daily bar must be OKX's UTC one: plain 1D opens at the venue's UTC+8 midnight.
+  assert.deepEqual(BARS[OKX_SOURCE]['1D'], '1Dutc');
+  assert.equal(BARS[DEEPCOIN_SOURCE]['1D'], '1D');
+  // Deepcoin has no 3m bar (checked 2026-11-16), so that panel asks for 1m and buckets three; OKX has one.
+  assert.deepEqual(candleRequest(DEEPCOIN_SOURCE, '3m'), { interval: '1m', aggregate: 3 });
+  assert.deepEqual(candleRequest(DEEPCOIN_SOURCE, '15m'), { interval: '15m', aggregate: 1 });
+  assert.deepEqual(candleRequest(OKX_SOURCE, '3m'), { interval: '3m', aggregate: 1 });
+  assert.deepEqual(candleRequest(OKX_SOURCE, '1h'), { interval: '1H', aggregate: 1 });
+  // A source without its own table (Binance, the yields) hands the label through unchanged.
+  assert.deepEqual(candleRequest(BINANCE_SOURCE, '1h'), { interval: '1h', aggregate: 1 });
+  assert.deepEqual(candleRequest(YIELD_SOURCE, '1m'), { interval: '1m', aggregate: 1 });
 });
 
 // --- Yield instruments --------------------------------------------------------------------------------------------
@@ -45,6 +129,7 @@ test('the six yields are named the way the owner names them', () => {
   for (const broken of ['', null, 'US07Y', 'US10', 'btc']) {
     assert.equal(normalizeYieldSymbol(broken), '', String(broken));
   }
+  assert.equal(symbolOf(YIELD_SOURCE, null, '10y'), 'US10Y');
 });
 
 test('only the 2 and the 20 year are daily-only (FRED has no intraday series for them)', () => {
@@ -143,6 +228,17 @@ test('the proxy answer becomes candles in UTC seconds plus what the chart has to
   }
 });
 
+test('a Deepcoin answer carries the bar the venue is still building separately', () => {
+  // The proxy sends `{candles: [...closed, oldest first...], forming: {...} | null}`; a malformed forming bar is no bar.
+  const parsed = parseMarketCandles({ source: 'deepcoin', candles: [
+    { time: 1763178600, open: 64000, high: 64020, low: 63990, close: 64010, volume: 12 },
+  ], forming: { time: 1763179200, open: 64010, high: 64030, low: 64005, close: 64022, volume: 3 } });
+  assert.equal(parsed.closed.length, 1);
+  assert.deepEqual(parsed.forming, { time: 1763179200, open: 64010, high: 64030, low: 64005, close: 64022, volume: 3 });
+  assert.equal(parseMarketCandles({ forming: { time: 0 } }).forming, null);
+  assert.equal(parseMarketCandles({}).forming, null);
+});
+
 // --- Watchlist values ----------------------------------------------------------------------------------------------
 
 test('a yield quote is the newest value and its change in percentage points', () => {
@@ -176,12 +272,14 @@ test('the 60-second poll merges into the loaded history instead of replacing it'
   assert.deepEqual(mergeCandles(loaded, parseMarketCandles({ candles: [] }).closed), loaded);
 });
 
-test('a watchlist row is identified by source and symbol together', () => {
-  assert.equal(watchKey({ source: 'binance-perp', symbol: 'BTCUSDT' }), 'binance-perp|BTCUSDT');
-  assert.equal(watchKey({ source: 'us-yields', symbol: 'US10Y' }), 'us-yields|US10Y');
-  // The same pair on spot is a different row: the sidebar keeps both quotes apart.
-  assert.notEqual(watchKey({ source: 'binance-perp', symbol: 'BTCUSDT' }),
-    watchKey({ source: 'binance-spot', symbol: 'BTCUSDT' }));
+test('a watchlist row is identified by source, market and symbol', () => {
+  assert.equal(watchKey({ source: 'binance', market: 'swap', symbol: 'BTCUSDT' }), 'binance|swap|BTCUSDT');
+  assert.equal(watchKey({ source: 'us-yields', market: null, symbol: 'US10Y' }), 'us-yields||US10Y');
+  // The same pair on spot, or on another venue, is a different row: the sidebar keeps both quotes apart.
+  assert.notEqual(watchKey({ source: 'binance', market: 'swap', symbol: 'BTCUSDT' }),
+    watchKey({ source: 'binance', market: 'spot', symbol: 'BTCUSDT' }));
+  assert.notEqual(watchKey({ source: 'okx', market: 'swap', symbol: 'BTC-USDT-SWAP' }),
+    watchKey({ source: 'deepcoin', market: 'swap', symbol: 'BTC-USDT-SWAP' }));
 });
 
 test('session indicators bridge the overnight gap and keep real times', () => {

@@ -1,40 +1,57 @@
-// Pure helpers of the market page (market.mjs): the Binance request URLs, REST rows -> candles, the merge that keeps
-// loaded history while refreshing, the `@miniTicker` quotes of the watchlist, and what localStorage holds.
+// Pure helpers of the market page (market.mjs): the exchange request URLs of Binance / OKX / Deepcoin, REST rows ->
+// candles, the product list (`tickers`) of each venue, the merge that keeps loaded history while refreshing, the
+// `@miniTicker` quotes of the watchlist, and what localStorage holds.
 // No DOM, no fetch, no websocket: tests/review-market-data.test.mjs runs every function in this file with node.
-import { DEFAULT_SOURCE, SPOT_SOURCE, YIELD_SOURCE, DEFAULT_YIELD_SYMBOLS, DEFAULT_YIELD_SYMBOL, MARKET_SOURCES,
-  normalizeYieldSymbol, isYieldSource } from './market-sources.mjs?v=20261116g';
+import { BINANCE_SOURCE, DEFAULT_MARKET, DEFAULT_SOURCE, DEFAULT_YIELD_SYMBOLS, OKX_SOURCE, YIELD_SOURCE, MARKETS,
+  aggregateCandles, candleRequest, defaultSymbolOf, migrateSource, normalizeMarket, normalizeSymbol,
+  symbolOf } from './market-sources.mjs?v=20261116h';
 
 // Binance USDTⓈ-M futures, public and CORS-open (`access-control-allow-origin: *`), so the browser talks to the
 // exchange directly: any USDT perpetual can be watched, nothing has to be imported into Jesse's database and no
 // Jesse endpoint is involved. Spot is the same API on the other host (api.binance.com, `v3` instead of `fapi/v1`).
 const KLINE_API = 'https://fapi.binance.com/fapi/v1/klines';
 const SPOT_KLINE_API = 'https://api.binance.com/api/v3/klines';
-// `@miniTicker` exists on both markets, on different hosts: the rows of each source come from its own venue.
+// OKX answers with CORS echoing the origin, so it is read directly too. `candles` serves the newest 1440 bars of a
+// timeframe at most 300 at a time; anything older comes from `history-candles` (100 at a time).
+const OKX_API = 'https://www.okx.com/api/v5/market';
+export const OKX_LIMIT = 300;
+export const OKX_HISTORY_LIMIT = 100;
+
+// Deepcoin does not send CORS headers: its candles and tickers go through Jesse (see market.mjs).
+export const PROXY_CANDLES = '/review/market/candles';
+export const PROXY_TICKERS = '/review/market/tickers';
+
+// `@miniTicker` exists on both Binance markets, on different hosts: the rows of each source come from its own venue.
 const QUOTE_STREAMS = {
   'Binance Perpetual Futures': 'wss://fstream.binance.com/market/stream?streams=',
   'Binance Spot': 'wss://stream.binance.com:9443/stream?streams=',
 };
 const DEFAULT_QUOTE_EXCHANGE = 'Binance Perpetual Futures';
 
-// One REST page is the exchange's maximum of 1000 bars ("limit"). 5000 bars per timeframe is the most this page
+// One REST page is the exchange's maximum for that venue ("limit"). 5000 bars per timeframe is the most this page
 // keeps: earlier pages are only requested while a chart is under it, and a live catch-up keeps the newest bars.
 export const KLINE_LIMIT = 1000;
 export const MAX_BARS = 5000;
+/** The page size one request may ask of `source` (`OKX_LIMIT` for OKX, 1000 elsewhere). */
+export const pageSizeOf = source => (source === OKX_SOURCE ? OKX_LIMIT : KLINE_LIMIT);
+/** Rows the product list draws at first; 「显示更多」 adds another page. */
+export const PRODUCT_PAGE = 200;
 
 export const MARKET_TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1D'];
 export const DEFAULT_TIMEFRAMES = ['4h', '1h', '15m', '5m'];
-// One entry per watchlist row, with the source it belongs to; the yields are seeded once by the page (the four the
-// owner had on screen), after that the list is only what he saved.
+// One entry per watchlist row, with the source and market it belongs to; the yields are seeded once by the page (the
+// four the owner had on screen), after that the list is only what he saved.
 export const DEFAULT_WATCHLIST = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT']
-  .map(symbol => ({ source: DEFAULT_SOURCE, symbol }));
+  .map(symbol => ({ source: DEFAULT_SOURCE, market: DEFAULT_MARKET, symbol }));
 export const MAX_WATCHLIST = 20;
 export const DEFAULT_SYMBOL = 'BTCUSDT';
 // One key per saved choice; the market page has its own namespace so it never collides with the finder's form.
-// `symbol` holds the whole selection (`{source, symbol}`), `source` the dropdown on its own, `yields` remembers that
-// the four default yields were added once (so deleting them keeps them deleted).
+// `symbol` holds the whole selection (`{source, market, symbol}`), `source` the dropdown on its own, `yields` remembers
+// that the four default yields were added once (so deleting them keeps them deleted), `aside` which of the two left
+// column tabs was last open, `listMarket` the contract / spot sub-tab of the product list.
 export const MARKET_KEYS = { symbol: 'jesse.market.symbol.v1', source: 'jesse.market.source.v1',
   watchlist: 'jesse.market.watchlist.v1', timeframes: 'jesse.market.timeframes.v1',
-  yieldSeed: 'jesse.market.yields.v1' };
+  yieldSeed: 'jesse.market.yields.v1', aside: 'jesse.market.asidetab.v1', listMarket: 'jesse.market.listmarket.v1' };
 
 // Binance spells the daily interval in lower case; every other timeframe of this page is the same in both.
 const INTERVALS = { '1D': '1d' };
@@ -49,14 +66,6 @@ const minutesOf = timeframe => {
  * What the owner typed -> the exchange's symbol: `btc`, `btc-usdt`, ` BTCUSDT ` and `btc/usdt` all become
  * `BTCUSDT`. Anything that cannot be a USDT perpetual gives '' (the page shows a hint instead of requesting it).
  */
-export function normalizeSymbol(input) {
-  const raw = String(input ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (!raw) return '';
-  // The quote currency is implied: a base alone is completed, a full pair is kept as typed.
-  const pair = raw.endsWith('USDT') ? raw : `${raw}USDT`;
-  // 2–16 characters of base ("1000PEPEUSDT" is a real contract) plus USDT.
-  return /^[A-Z0-9]{2,16}USDT$/.test(pair) ? pair : '';
-}
 
 /**
  * The klines request of one timeframe. `endTime` (milliseconds) asks for the page ending at that bar, which is how
@@ -79,16 +88,42 @@ function klineParams(symbol, timeframe, limit, endTime) {
 }
 
 /**
- * The REST URL of one source's klines page, or null for a source the browser cannot read (the yields go through
- * `POST /review/market/candles`). Everything else about the two Binance sources is identical.
+ * The OKX candles request of one timeframe: the newest page from `candles`, an older one from `history-candles`
+ * (`after` = strictly older than that bar, which is what `before` means here). The interval is the display spelling
+ * (`1h` -> `1H`, `1D` -> `1Dutc`), see candleRequest in market-sources.mjs.
  */
-export function klinesUrlFor(source, symbol, timeframe, options = {}) {
-  if (isYieldSource(source)) return null;
-  return source === SPOT_SOURCE ? spotKlinesUrl(symbol, timeframe, options) : klinesUrl(symbol, timeframe, options);
+export function okxCandlesUrl(instId, timeframe, { limit = OKX_LIMIT, before = null } = {}) {
+  const interval = candleRequest(OKX_SOURCE, timeframe).interval;
+  const path = Number.isFinite(before) ? 'history-candles' : 'candles';
+  const size = Number.isFinite(before) ? Math.min(limit, OKX_HISTORY_LIMIT) : Math.min(limit, OKX_LIMIT);
+  const params = new URLSearchParams({ instId: String(instId ?? ''), bar: interval, limit: String(size) });
+  if (Number.isFinite(before)) params.set('after', String(Math.round(before * 1000)));
+  return `${OKX_API}/${path}?${params}`;
 }
 
 /** `endTime` of the page before the oldest loaded bar: the REST filter is inclusive, so one millisecond earlier. */
 export const endTimeBefore = earliestSeconds => Math.round(earliestSeconds * 1000) - 1;
+
+/**
+ * The REST URL of one source's klines page, or null when the browser cannot read it (the yields and Deepcoin go
+ * through `POST /review/market/candles`).
+ */
+export function klinesUrlFor(source, market, symbol, timeframe, options = {}) {
+  if (source === BINANCE_SOURCE) {
+    return market === 'spot' ? spotKlinesUrl(symbol, timeframe, options) : klinesUrl(symbol, timeframe, options);
+  }
+  if (source === OKX_SOURCE) return okxCandlesUrl(symbol, timeframe, options);
+  return null;
+}
+
+/** The product list request of one venue: Binance's whole 24h ticker array, OKX's per-market ticker array, or null. */
+export function tickersUrlFor(source, market) {
+  if (source === BINANCE_SOURCE) {
+    return market === 'spot' ? 'https://api.binance.com/api/v3/ticker/24hr' : 'https://fapi.binance.com/fapi/v1/ticker/24hr';
+  }
+  if (source === OKX_SOURCE) return `${OKX_API}/tickers?${new URLSearchParams({ instType: market === 'spot' ? 'SPOT' : 'SWAP' })}`;
+  return null;
+}
 
 /**
  * One REST row (`[openTimeMs, "o", "h", "l", "c", "v", closeTimeMs, …]`) as the candle the chart draws, or null for
@@ -118,6 +153,27 @@ export function parseKlines(rows, nowMs = Date.now()) {
 }
 
 /**
+ * OKX's candles answer (`{code:'0', data:[[ts,o,h,l,c,vol,volCcy,volCcyQuote,confirm], …]}`, newest first) as the
+ * charts draw it: oldest first, and the newest row as `forming` while `confirm` is 0 (the bar OKX is still building).
+ * Only the newest row can be unconfirmed, so a 0 further down the list is treated as a closed bar.
+ */
+export function parseOkxCandles(payload) {
+  const rows = Array.isArray(payload?.data) ? payload.data : [];
+  if (String(payload?.code ?? '0') !== '0') return { closed: [], forming: null };
+  const candles = [];
+  for (const row of rows) {
+    const candle = rowCandle(row);
+    if (!candle) continue;
+    candles.push({ candle, unconfirmed: row[8] === '0' || row[8] === 0 });
+  }
+  // OKX sends newest first; mergeCandles sorts and de-duplicates, so the order of the answer does not matter.
+  const newest = candles[0];
+  const closed = candles.filter((entry, index) => !(index === 0 && newest?.unconfirmed));
+  return { closed: mergeCandles(closed.map(entry => entry.candle)),
+    forming: newest?.unconfirmed ? newest.candle : null };
+}
+
+/**
  * Candles by open time, oldest first, later lists winning on a shared time: an older history page plus the newest
  * bars a refresh returned in one array, without duplicates and without a second copy of a bar that closed meanwhile.
  */
@@ -130,6 +186,93 @@ export function mergeCandles(...lists) {
   }
   return [...byTime.values()].sort((a, b) => a.time - b.time);
 }
+
+/**
+ * The forming bar of a bucketed panel (Deepcoin's 3m, built from 1m bars): the 1m bars of the bucket the forming bar
+ * belongs to, plus the forming bar itself. `closed` loses that half-built bucket — it is not a closed bar yet.
+ */
+export function aggregateAnswer(closed, forming, minutes) {
+  if (!Number.isInteger(minutes) || minutes <= 0) return { closed: Array.isArray(closed) ? closed : [], forming };
+  if (minutes === 1) return { closed: Array.isArray(closed) ? closed : [], forming };
+  const width = minutes * 60;
+  const buckets = aggregateCandles([...(Array.isArray(closed) ? closed : []),
+    ...(forming ? [forming] : [])], minutes);
+  const formingStart = forming ? Math.floor(forming.time / width) * width : null;
+  return { closed: buckets.filter(bucket => bucket.time !== formingStart), forming:
+    formingStart === null ? null : buckets.find(bucket => bucket.time === formingStart) ?? forming };
+}
+// --- Product list -------------------------------------------------------------------------------------------------
+// The left column's second tab: every USDT product of a venue, biggest 24h turnover first.
+
+const finite = value => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : NaN;
+};
+
+/** A ticker row as the list draws it; `change` is relative (0.012 = +1.2%), null without an open price. */
+const tickerRow = (symbol, last, open, quoteVolume) => {
+  if (!symbol || !Number.isFinite(last) || last <= 0) return null;
+  return { symbol: String(symbol).toUpperCase(), last,
+    change: Number.isFinite(open) && open > 0 ? (last - open) / open : null,
+    quoteVolume: Number.isFinite(quoteVolume) ? quoteVolume : 0 };
+};
+
+/**
+ * One venue's ticker answer as `[{symbol, last, change, quoteVolume}]`, USDT pairs only, biggest turnover first.
+ * Binance answers the whole array (1.9 MB on spot) with `lastPrice` / `openPrice` / `quoteVolume`; OKX and Deepcoin
+ * answer `{code:'0', data:[{instId, last, open24h, volCcy24h}]}` per market, and both list non-USDT pairs too.
+ */
+export function tickerRows(source, market, payload) {
+  const rows = [];
+  if (source === BINANCE_SOURCE) {
+    for (const entry of Array.isArray(payload) ? payload : []) {
+      const symbol = String(entry?.symbol ?? '').toUpperCase();
+      if (!symbol.endsWith('USDT')) continue;
+      const row = tickerRow(symbol, finite(entry?.lastPrice), finite(entry?.openPrice), finite(entry?.quoteVolume));
+      if (row) rows.push(row);
+    }
+  } else {
+    const swap = market !== 'spot';
+    for (const entry of Array.isArray(payload?.data) ? payload.data : []) {
+      const symbol = String(entry?.instId ?? '').toUpperCase();
+      // `BTC-USDT-SWAP` is a perpetual, `BTC-USDT` the spot pair; the venue lists USD / USDC pairs next to them.
+      if (swap ? !symbol.endsWith('-USDT-SWAP') : !(symbol.endsWith('-USDT'))) continue;
+      const row = tickerRow(symbol, finite(entry?.last), finite(entry?.open24h), finite(entry?.volCcy24h));
+      if (row) rows.push(row);
+    }
+  }
+  return orderProducts(rows);
+}
+
+/** Biggest 24h turnover first, ties by name: the owner scans from the top of the list. */
+export function orderProducts(rows) {
+  return [...(Array.isArray(rows) ? rows : [])]
+    .sort((a, b) => (b.quoteVolume - a.quoteVolume) || String(a.symbol).localeCompare(String(b.symbol)));
+}
+
+/** The rows whose symbol matches what was typed (`sol` -> SOLUSDT / SOL-USDT / SOL-USDT-SWAP), in list order. */
+export function filterProducts(rows, query) {
+  const wanted = String(query ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!wanted) return Array.isArray(rows) ? rows : [];
+  return (Array.isArray(rows) ? rows : []).filter(row => String(row?.symbol ?? '').replace(/[^A-Z0-9]/g, '')
+    .includes(wanted));
+}
+
+/**
+ * `POST /review/market/tickers` answer (Deepcoin: Jesse reads the venue because it sends no CORS headers) as the same
+ * `[{symbol, last, change, quoteVolume}]` the direct venues produce.
+ */
+export function proxyTickerRows(payload) {
+  const rows = [];
+  for (const entry of Array.isArray(payload?.tickers) ? payload.tickers : []) {
+    const row = tickerRow(String(entry?.symbol ?? '').toUpperCase(), finite(entry?.last), finite(entry?.open24h),
+      finite(entry?.quoteVolume24h));
+    if (row) rows.push(row);
+  }
+  return orderProducts(rows);
+}
+
+// --- Watchlist quotes ---------------------------------------------------------------------------------------------
 
 /**
  * One `@miniTicker` message (combined stream: `{stream, data:{…}}`) as the watchlist row shows it: the last price and
@@ -152,32 +295,38 @@ export function miniTickerStreamUrl(symbols, exchange = DEFAULT_QUOTE_EXCHANGE) 
   return base && pairs.length ? `${base}${pairs.map(pair => `${pair.toLowerCase()}@miniTicker`).join('/')}` : null;
 }
 
+// --- Saved choices ------------------------------------------------------------------------------------------------
+
 /**
- * A watchlist row: `{source, symbol}`. A bare string is the pre-T-53 format (there was only one source then), so a
- * saved list keeps working; `symbol` is normalized per source (a pair for Binance, US03M…US30Y for the yields).
+ * A watchlist row: `{source, market, symbol}`. A bare string is the pre-T-53 format (there was only one source
+ * then) and `binance-perp` / `binance-spot` are the pre-T-54 sources: both still restore. `symbol` is normalized per
+ * source (a pair for an exchange, US03M…US30Y for the yields).
  */
 export function watchItem(value) {
   // Only strings and objects: a number in a hand-edited file is junk, not a pair. `normalizeSymbol` would turn
   // `42` into `42USDT` (a real base name looks like that).
   if (typeof value === 'string') {
     const symbol = normalizeSymbol(value);
-    return symbol ? { source: DEFAULT_SOURCE, symbol } : null;
+    return symbol ? { source: DEFAULT_SOURCE, market: DEFAULT_MARKET, symbol } : null;
   }
   if (!value || typeof value !== 'object') return null;
-  const known = MARKET_SOURCES.some(source => source.id === value.source);
-  if (!known) return null;
-  if (isYieldSource(value.source)) {
-    const symbol = normalizeYieldSymbol(value.symbol);
-    return symbol ? { source: value.source, symbol } : null;
-  }
-  const symbol = normalizeSymbol(value.symbol);
-  return symbol ? { source: value.source, symbol } : null;
+  const migrated = migrateSource(value.source);
+  if (!migrated) return null;
+  const source = migrated.source;
+  const market = normalizeMarket(source, value.market ?? migrated.market);
+  const symbol = symbolOf(source, market, value.symbol);
+  return symbol ? { source, market, symbol } : null;
 }
 
-/** One row's identity (`binance-perp|BTCUSDT`): the same pair on another source is another row. */
-export const watchKey = item => `${item.source}|${item.symbol}`;
+/** One row's identity (`binance|swap|BTCUSDT`): the same pair on another market or venue is another row. */
+export const watchKey = item => `${item.source}|${item.market ?? ''}|${item.symbol}`;
 
-export const sameWatchItem = (a, b) => !!a && !!b && a.source === b.source && a.symbol === b.symbol;
+export const sameWatchItem = (a, b) => !!a && !!b && a.source === b.source && a.symbol === b.symbol
+  && (a.market ?? null) === (b.market ?? null);
+
+/** Compare a watchlist row with the chart's selection (`{source, market, symbol}`). */
+export const isSelected = (item, source, market, symbol) => item.source === source && item.symbol === symbol
+  && (item.market ?? null) === (market ?? null);
 
 /**
  * The saved watchlist. A broken or empty value falls back to the default list (an empty sidebar would look like the
@@ -202,7 +351,7 @@ export function restoreWatchlist(serialized) {
 export function withDefaultYields(list) {
   let next = Array.isArray(list) ? [...list] : [];
   for (const symbol of DEFAULT_YIELD_SYMBOLS) {
-    const item = { source: YIELD_SOURCE, symbol };
+    const item = { source: YIELD_SOURCE, market: null, symbol };
     if (next.some(existing => sameWatchItem(existing, item))) continue;
     next.push(item);
   }
@@ -222,20 +371,22 @@ export function removeFromWatchlist(list, input) {
 }
 
 /**
- * The last chart on screen (`{source, symbol}`). Before T-53 the value was a bare pair string and there was one
- * source; that still restores, as a Binance perpetual.
+ * The last chart on screen (`{source, market, symbol}`). Before T-53 the value was a bare pair string and there was
+ * one source; before T-54 the source named a venue (`binance-perp`). Both still restore.
  */
 export function restoreSelection(serialized) {
   let value;
   try { value = JSON.parse(serialized); } catch { value = serialized; }
   const item = watchItem(value);
   if (item) return item;
-  return { source: DEFAULT_SOURCE, symbol: DEFAULT_SYMBOL };
+  return { source: DEFAULT_SOURCE, market: DEFAULT_MARKET, symbol: DEFAULT_SYMBOL };
 }
 
-/** A source's default instrument (the page switches to it when the dropdown changes the source). */
-export const defaultSymbolFor = source => (isYieldSource(source) ? DEFAULT_YIELD_SYMBOL
-  : MARKET_SOURCES.find(entry => entry.id === source)?.defaultSymbol ?? DEFAULT_SYMBOL);
+/** A source's (and market's) default instrument, in that source's symbol shape. */
+export const defaultSymbolFor = (source, market = null) => {
+  const wanted = normalizeMarket(source, market);
+  return symbolOf(source, wanted, defaultSymbolOf(source, wanted)) || DEFAULT_SYMBOL;
+};
 
 /** Only the timeframes this page can draw, smallest first (the same order the checkbox row uses). */
 export function orderTimeframes(list) {
@@ -249,6 +400,14 @@ export function restoreTimeframes(serialized) {
   try { value = JSON.parse(serialized); } catch { return [...DEFAULT_TIMEFRAMES]; }
   const list = orderTimeframes(value);
   return list.length ? list : [...DEFAULT_TIMEFRAMES];
+}
+
+/** `watch` / `products`: which of the two left column tabs was open. */
+export const restoreAsideTab = serialized => (String(serialized ?? '').trim() === 'products' ? 'products' : 'watch');
+/** The product list's contract / spot sub-tab; a source without markets has none (null). */
+export function restoreListMarket(serialized) {
+  const raw = String(serialized ?? '').trim();
+  return MARKETS.some(market => market.id === raw) ? raw : null;
 }
 
 /**

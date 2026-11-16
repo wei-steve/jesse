@@ -1,26 +1,31 @@
 // Market page: a clean multi-timeframe chart screen (「看行情」), with no signals, orders, labels or backtest
-// content. The candles of the two Binance sources come straight from the exchange's public REST API in the browser —
-// nothing is imported into Jesse's database — and its public websockets keep them live: the forming bar, the last
-// price, and the watchlist's 24h quotes. The US treasury yields are the one source the browser cannot read itself
-// (Yahoo and FRED send no CORS headers), so they come from Jesse's own proxy (`POST /review/market/candles`) and are
-// polled every minute instead of pushed.
+// content. Four sources (T-54): Binance (contract / spot), OKX (contract / spot), Deepcoin (contract / spot) and the
+// US treasury yields. Binance and OKX are CORS-open and read straight from the exchange's public REST API in the
+// browser — nothing is imported into Jesse's database — and their public websockets keep them live: the forming bar,
+// the last price, and the watchlist's quotes. Deepcoin sends no CORS headers, so its candles and tickers come from
+// Jesse's own proxy (`POST /review/market/candles`, `/market/tickers`) and are polled; the treasury yields (Yahoo /
+// FRED) are the other proxied source and are polled every minute.
 // The chart behaviour (range linking, price zoom, snapshots) and the overlays (the review page's display settings)
 // are reused from the review/finder modules instead of being reimplemented.
-import { t as createChart } from './lightweight-charts.mjs?v=20261116g';
-import { linkTimeRanges } from './data.mjs?v=20261116g';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261116g';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116g';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116g';
-import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages } from './live-price.mjs?v=20261116g';
-import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116g';
-import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116g';
-import { MARKET_SOURCES, PERP_SOURCE, SPOT_SOURCE, YIELD_SOURCE, sourceLabel, exchangeOf, restoreSource,
-  YIELD_INSTRUMENTS, DEFAULT_YIELD_SYMBOL, normalizeYieldSymbol, yieldRequest, pollRangeOf, aggregateCandles, sessionIndicator, sessionTail,
-  parseMarketCandles, yieldQuote, signedPoints } from './market-sources.mjs?v=20261116g';
-import { MARKET_KEYS, MARKET_TIMEFRAMES, KLINE_LIMIT, MAX_BARS, MAX_WATCHLIST, normalizeSymbol, klinesUrlFor,
-  endTimeBefore, parseKlines, mergeCandles, parseMiniTicker, miniTickerStreamUrl, restoreWatchlist, addToWatchlist,
-  removeFromWatchlist, restoreTimeframes, shiftLogical, restoreSelection, defaultSymbolFor, watchItem, watchKey,
-  sameWatchItem, withDefaultYields } from './market-data.mjs?v=20261116g';
+import { t as createChart } from './lightweight-charts.mjs?v=20261116h';
+import { linkTimeRanges } from './data.mjs?v=20261116h';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261116h';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116h';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116h';
+import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages, okxCandleChannels, openOkxKlines,
+  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261116h';
+import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116h';
+import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116h';
+import { BINANCE_SOURCE, DEEPCOIN_SOURCE, MARKETS, MARKET_SOURCES, OKX_SOURCE, YIELD_SOURCE, YIELD_INSTRUMENTS,
+  DEFAULT_YIELD_SYMBOL, aggregateCandles, candleRequest, exchangeOf, instrumentName, isYieldSource, marketLabel,
+  marketsOf, normalizeMarket, normalizeYieldSymbol, pollRangeOf, restoreSource, sourceLabel, symbolOf, yieldRequest,
+  parseMarketCandles, sessionIndicator, sessionTail, signedPoints, yieldQuote } from './market-sources.mjs?v=20261116h';
+import { MARKET_KEYS, MARKET_TIMEFRAMES, MAX_BARS, MAX_WATCHLIST, PRODUCT_PAGE, PROXY_CANDLES,
+  PROXY_TICKERS, aggregateAnswer, addToWatchlist, defaultSymbolFor, endTimeBefore, filterProducts, klinesUrlFor,
+  mergeCandles, miniTickerStreamUrl, pageSizeOf, parseKlines, parseMiniTicker, parseOkxCandles,
+  proxyTickerRows, removeFromWatchlist, restoreAsideTab, restoreListMarket, restoreSelection, restoreTimeframes,
+  restoreWatchlist, sameWatchItem, shiftLogical, tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields }
+  from './market-data.mjs?v=20261116h';
 
 const $ = id => document.getElementById(id);
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
@@ -40,6 +45,12 @@ const TAIL_MS = 500;
 const HIDDEN_REFRESH_MS = 60000;
 // A yield is not pushed anywhere, so the page asks Jesse for the newest bars this often (and only while visible).
 const POLL_MS = 60000;
+// Deepcoin pushes no multi-timeframe candles (its socket has a 1-minute K-line topic only), so the forming bar of every
+// panel is fetched from the proxy every 3 seconds; the proxy caches each series for 2 seconds, which is what keeps
+// four panels at one upstream request per series per 2 seconds.
+const CRYPTO_POLL_MS = 3000;
+// The product list and the Deepcoin watchlist quotes: one REST read of a venue's 24h tickers, every 10 seconds.
+const TICKER_POLL_MS = 10000;
 
 const fmtPrice = value => Number.isFinite(value)
   ? value.toLocaleString('en-US', { minimumFractionDigits: value >= 1 ? 2 : 0, maximumFractionDigits: value >= 1 ? 2 : 6 })
@@ -50,15 +61,17 @@ const signedPercent = change => Number.isFinite(change)
 const fmtYield = value => Number.isFinite(value) ? value.toFixed(3) : '—';
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
 const candleOf = ({ time, open, high, low, close }) => ({ time, open, high, low, close });
+const quoteOf = item => ({ source: item.source, market: item.market ?? null, symbol: item.symbol });
 
 const read = key => { try { return localStorage.getItem(key); } catch { return null; } };
 const write = (key, value) => { try { localStorage.setItem(key, value); } catch { /* still works for this page */ } };
 
 const saved = restoreSelection(read(MARKET_KEYS.symbol));
 // The dropdown is its own saved choice; when it disagrees with the saved chart, the dropdown wins and the chart falls
-// back to that source's default instrument.
+// back to that source's default instrument (in the market the saved chart was on, when that source has it).
 let source = restoreSource(read(MARKET_KEYS.source) ?? saved.source);
-let symbol = source === saved.source ? saved.symbol : defaultSymbolFor(source);
+let market = normalizeMarket(source, source === saved.source ? saved.market : null);
+let symbol = source === saved.source && (saved.market ?? null) === market ? saved.symbol : defaultSymbolFor(source, market);
 let watchlist = restoreWatchlist(read(MARKET_KEYS.watchlist));
 // The four yields of the owner's screenshot join the list once, and the flag makes deleting them stick.
 if (!read(MARKET_KEYS.yieldSeed)) {
@@ -67,17 +80,24 @@ if (!read(MARKET_KEYS.yieldSeed)) {
   write(MARKET_KEYS.yieldSeed, '1');
 }
 let timeframes = restoreTimeframes(read(MARKET_KEYS.timeframes));
+// 「自选 | <数据源>」: which of the two left column tabs is open, and the product list's 合约 / 现货 sub-tab.
+let asideTab = restoreAsideTab(read(MARKET_KEYS.aside));
+let listMarket = normalizeMarket(source, restoreListMarket(read(MARKET_KEYS.listMarket)) ?? market);
 let panels = [], pointerPanel = null, rangeLink = null, syncing = false;
 // Every rebuild (source / symbol / timeframe change) bumps this: answers and socket events of an older build are dropped.
 let loadVersion = 0;
-// Keyed by `watchKey` ({source, symbol}): the same pair can be a row on two venues.
+// Keyed by `watchKey` ({source, market, symbol}): the same pair on two venues or markets is two rows.
 let quotes = new Map(), livePrice = null, hiddenAt = 0;
 let yieldFetchedAt = 0, pollTimer = null, pollBusy = false, pollError = false;
+let cryptoPollTimer = null, cryptoPollBusy = false;
+let tickerTimer = null, tickerBusy = false;
 let stopKlineStream = null, stopPriceStream = null;
-let klineUrl = null, priceUrl = null;
+let klineKey = '', priceKey = '';
 let klineState = '', priceState = '';
 const quoteSockets = new Map();
 const watchRows = new Map();
+// The product list of the venue on screen: `[{symbol, last, change, quoteVolume}]`, biggest turnover first.
+let productRows = [], productShown = PRODUCT_PAGE, productQuery = '', productError = '', productVenue = '';
 
 function status(message, error = false) {
   const box = $('status');
@@ -86,11 +106,15 @@ function status(message, error = false) {
   box.textContent = message;
 }
 
-// One POST to Jesse, only used by the snapshot saver. The charts themselves need no login; saving a screenshot to
-// the machine running `jesse run` does, and the token is read exactly like the finder does it.
+const tokenOf = () => {
+  try { return JSON.parse(localStorage.getItem('main') ?? '{}').authToken ?? null; } catch { return null; }
+};
+
+// One POST to Jesse, for the two things the browser cannot read itself: the proxied sources (Deepcoin, the treasury
+// yields) and saving a snapshot. The token is read exactly like the finder does it.
 async function post(path, body = {}) {
   const token = tokenOf();
-  if (!token) throw new Error('保存截图需要先在同一地址的 Jesse 页面登录，再刷新此页。');
+  if (!token) throw new Error('这个数据源要经 Jesse 代理，需要先在同一地址的 Jesse 页面登录，再刷新此页（币安、OKX 的图表不需要登录）。');
   const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: token },
     body: JSON.stringify(body), credentials: 'same-origin' });
   if (response.status === 401) throw new Error('登录已失效：请在同一地址的 Jesse 页面重新登录，再刷新此页。');
@@ -99,26 +123,8 @@ async function post(path, body = {}) {
   return data;
 }
 
-const tokenOf = () => {
-  try { return JSON.parse(localStorage.getItem('main') ?? '{}').authToken ?? null; } catch { return null; }
-};
-
-// The US treasury yields: Jesse reads Yahoo / FRED and answers with candles, because neither source allows a
-// cross-origin read. The route sits behind the review login, so without a token nothing can be drawn.
-async function postMarket(body) {
-  const token = tokenOf();
-  if (!token) throw new Error('美债数据要先在同一地址的 Jesse 页面登录，再刷新此页（币安行情不需要登录）。');
-  const response = await fetch('/review/market/candles', { method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: token }, body: JSON.stringify(body),
-    credentials: 'same-origin' });
-  if (response.status === 401) throw new Error('登录已失效：请在同一地址的 Jesse 页面重新登录，再刷新此页。');
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error ?? data.detail ?? `Jesse 请求失败（HTTP ${response.status}）`);
-  return data;
-}
-
 function saveSelection() {
-  write(MARKET_KEYS.symbol, JSON.stringify({ source, symbol }));
+  write(MARKET_KEYS.symbol, JSON.stringify({ source, market, symbol }));
   write(MARKET_KEYS.source, source);
 }
 
@@ -256,7 +262,7 @@ function makePanel(tf, answer) {
     candles: answer.closed, closes: new Map(answer.closed.map(candle => [candle.time, candle.close])),
     byTime: new Map(answer.closed.map(candle => [candle.time, candle])),
     overlaySeries: [], overlayGroups: [], forming: answer.forming, tailTimer: null,
-    // The yields arrive in one answer at the upstream's maximum range: there is no earlier page to ask for.
+    // The proxied sources arrive in one answer at the upstream's maximum range: there is no earlier page to ask for.
     loadingEarlier: false, noMore: source === YIELD_SOURCE, sized: false };
   if (answer.hint || !answer.closed.length) {
     card.classList.add('empty');
@@ -338,14 +344,14 @@ function paintMeta(panel, time = null) {
 
 // `price` is the price under the pointer: every other chart puts its horizontal line at that same price, and falls
 // back to its own bar's close when unknown. Only the chart under the mouse drives the others.
-function syncCrosshair(source, time, price = null) {
-  if (syncing || source.empty) return;
-  if (pointerPanel && source !== pointerPanel) return;
+function syncCrosshair(from, time, price = null) {
+  if (syncing || from.empty) return;
+  if (pointerPanel && from !== pointerPanel) return;
   syncing = true;
   try {
-    paintMeta(source, time);
+    paintMeta(from, time);
     for (const panel of panels) {
-      if (panel === source || panel.empty) continue;
+      if (panel === from || panel.empty) continue;
       const step = panel.interval * 60;
       const t = time === null ? null : Math.floor(time / step) * step;
       const close = t === null ? undefined : panel.closes.get(t);
@@ -357,22 +363,26 @@ function syncCrosshair(source, time, price = null) {
 }
 
 // ---- Snapshots -------------------------------------------------------------
+const marketSuffix = () => (market ? ` ${marketLabel(market)}` : '');
+
 function snapshotPanel(panel) {
   if (panel.empty || !panel.chart) return;
   const label = `market-${timeframeLabel(panel.interval)}`;
   const canvas = captureCard(panel.card, [panel.chart], { title: timeframeLabel(panel.interval),
-    subtitle: `${symbol} · ${sourceLabel(source)} · ${utcStamp()} UTC` });
+    subtitle: `${symbol} · ${sourceLabel(source)}${marketSuffix()} · ${utcStamp()} UTC` });
   openAnnotator(canvas, { onSave: screenshotSaver(post, label), fileLabel: label });
 }
 
 // ---- Data ------------------------------------------------------------------
-// One page of candles of one source. Binance answers in one REST page (fapi for the perpetual, api/v3 for spot); the
-// US treasury yields come from Jesse's proxy, which reads Yahoo / FRED and hands back the series the panel needs
-// (3m is three 1m bars, 4h is four 1h bars, aggregated here so both pages agree on the buckets).
-async function fetchCandles(sourceId, symbolName, tf, options = {}) {
+/**
+ * One page of candles of one source. Binance answers in one REST page (fapi for the perpetual, api/v3 for spot), OKX
+ * in its own envelope; Deepcoin and the treasury yields come from Jesse's proxy, which reads the venue and hands back
+ * the series the panel needs (a bucketed panel asks for 1m and is aggregated here, so both pages agree on buckets).
+ */
+async function fetchCandles(sourceId, marketId, symbolName, tf, options = {}) {
   if (sourceId === YIELD_SOURCE) {
     const request = yieldRequest(symbolName, tf);
-    const answer = await postMarket({ source: YIELD_SOURCE, symbol: symbolName, interval: request.interval,
+    const answer = await post(PROXY_CANDLES, { source: YIELD_SOURCE, symbol: symbolName, interval: request.interval,
       ...(options.range ? { range: options.range } : {}) });
     const parsed = parseMarketCandles(answer);
     // aggregateCandles takes the bucket width in minutes, not the bar count (passing 4 made 4-minute buckets, so the
@@ -380,21 +390,34 @@ async function fetchCandles(sourceId, symbolName, tf, options = {}) {
     const closed = request.aggregate > 1 ? aggregateCandles(parsed.closed, timeframeMinutes(tf)) : parsed.closed;
     return { closed, forming: null, note: parsed.note, dailyOnly: request.dailyOnly || parsed.dailyOnly };
   }
-  const response = await fetch(klinesUrlFor(sourceId, symbolName, tf, options));
+  const request = candleRequest(sourceId, tf);
+  const limit = Math.max(1, Math.trunc((options.limit ?? pageSizeOf(sourceId)) * request.aggregate));
+  if (sourceId === DEEPCOIN_SOURCE) {
+    const answer = await post(PROXY_CANDLES, { source: DEEPCOIN_SOURCE, market: marketId, symbol: symbolName,
+      interval: request.interval, limit: Math.min(limit, 1000),
+      ...(Number.isFinite(options.before) ? { before: Math.trunc(options.before) } : {}) });
+    const parsed = parseMarketCandles(answer);
+    const bucketed = request.aggregate > 1 ? aggregateAnswer(parsed.closed, parsed.forming, request.aggregate)
+      : { closed: parsed.closed, forming: parsed.forming };
+    return { closed: bucketed.closed, forming: bucketed.forming, note: parsed.note };
+  }
+  const response = await fetch(klinesUrlFor(sourceId, marketId, symbolName, tf, { ...options, limit }));
   if (!response.ok) {
     if (response.status === 400) {
-      throw new Error(`${sourceLabel(sourceId)}没有「${symbolName}」这个交易对。输入 btc、BTCUSDT 或 BTC-USDT 都可以。`);
+      throw new Error(`${sourceLabel(sourceId)}没有「${symbolName}」这个交易对。输入 btc、BTC-USDT 或 BTC-USDT-SWAP 都可以。`);
     }
     if (response.status === 451 || response.status === 403) {
-      throw new Error(`币安拒绝了这次请求（HTTP ${response.status}），这个网络所在地区可能被限制。`);
+      throw new Error(`${sourceLabel(sourceId)}拒绝了这次请求（HTTP ${response.status}），这个网络所在地区可能被限制。`);
     }
-    throw new Error(`币安 K 线请求失败（HTTP ${response.status}），稍后再试。`);
+    throw new Error(`${sourceLabel(sourceId)} K 线请求失败（HTTP ${response.status}），稍后再试。`);
   }
-  return { ...parseKlines(await response.json(), Date.now()), note: '' };
+  const payload = await response.json();
+  if (sourceId === OKX_SOURCE) return { ...parseOkxCandles(payload), note: '' };
+  return { ...parseKlines(payload, Date.now()), note: '' };
 }
 
 // A panel of a FRED-only yield has no small-timeframe series to draw: it says so instead of faking a flat chart.
-// Everything else is capped at MAX_BARS like the Binance panels.
+// Everything else is capped at MAX_BARS like the exchange panels.
 const panelAnswer = (tf, answer) => (answer.dailyOnly && tf !== '1D')
   ? { ...answer, closed: [], hint: `${symbol} 这个品种只有日线（FRED 官方数据），1D 图正常显示。` }
   : { ...answer, closed: answer.closed.length > MAX_BARS ? answer.closed.slice(-MAX_BARS) : answer.closed };
@@ -433,8 +456,12 @@ async function loadEarlier(panel) {
   const version = loadVersion;
   panel.loadingEarlier = true;
   try {
-    const limit = Math.min(KLINE_LIMIT, MAX_BARS - panel.candles.length);
-    const { closed } = await fetchCandles(source, symbol, panel.tf, { limit, endTime: endTimeBefore(panel.candles[0].time) });
+    const limit = Math.min(pageSizeOf(source), MAX_BARS - panel.candles.length);
+    const oldest = panel.candles[0].time;
+    // Binance pages by `endTime` (ms, inclusive, hence the one millisecond); the proxied and OKX sources page by the
+    // open time of the oldest bar already loaded.
+    const query = source === BINANCE_SOURCE ? { limit, endTime: endTimeBefore(oldest) } : { limit, before: oldest };
+    const { closed } = await fetchCandles(source, market, symbol, panel.tf, query);
     if (version !== loadVersion || panel.empty) return;
     if (!closed.length) { panel.noMore = true; return; /* the contract's listing is the end of the history */ }
     const next = mergeCandles(panel.candles, closed);
@@ -450,8 +477,8 @@ async function loadEarlier(panel) {
 async function refreshPanel(panel, version, { poll = false } = {}) {
   if (panel.empty) return;
   try {
-    const query = poll ? { range: pollRangeOf(panel.tf, symbol) } : { limit: KLINE_LIMIT };
-    const { closed, forming } = await fetchCandles(source, symbol, panel.tf, query);
+    const query = poll ? { range: pollRangeOf(panel.tf, symbol) } : { limit: pageSizeOf(source) };
+    const { closed, forming } = await fetchCandles(source, market, symbol, panel.tf, query);
     if (version !== loadVersion || !closed.length) return;
     setBars(panel, mergeCandles(panel.candles, closed));
     // The REST answer's forming bar is a snapshot of the same bar the stream is drawing: only replace ours with a
@@ -477,69 +504,65 @@ async function render() {
   const ordered = [...timeframes].sort((a, b) => (timeframeMinutes(b) ?? 0) - (timeframeMinutes(a) ?? 0));
   status(`正在读取 ${symbol} 的 K 线…`);
   let answers;
-  try { answers = await Promise.all(ordered.map(tf => fetchCandles(source, symbol, tf, { limit: KLINE_LIMIT }))); }
+  try { answers = await Promise.all(ordered.map(tf => fetchCandles(source, market, symbol, tf, { limit: pageSizeOf(source) }))); }
   catch (error) { if (version === loadVersion) status(error.message, true); return; }
   if (version !== loadVersion) return;
   destroyPanels();
   panels = ordered.map((tf, i) => makePanel(tf, panelAnswer(tf, answers[i])));
   rangeLink = linkTimeRanges(panels.filter(panel => !panel.empty));
   status('');
-  // The sockets (or, for a yield, the poll's own line) own the light red line, so the stream state is settled first.
+  // The sockets (or, for a proxied source, the poll's own line) own the light red line, so the stream state is
+  // settled first.
   syncStreams();
   if (source === YIELD_SOURCE) paintYieldPrice(); else paintLivePrice();
   if (panels[0]) paintMeta(panels[0]);
   paintLastPrice();
 }
 
-// Switches the whole page to another instrument. One cheap request first: a typo must be reported instead of wiping
-// the charts that are on screen. Returns false when the instrument could not be read.
-async function openSymbol(input) {
-  const next = source === YIELD_SOURCE ? normalizeYieldSymbol(input) : normalizeSymbol(input);
+/**
+ * Switches the whole page to another instrument (source + market + symbol). One cheap request first: a typo must be
+ * reported instead of wiping the charts that are on screen. Returns false when the instrument could not be read.
+ */
+async function openSelection(nextSource, nextMarket, input) {
+  const wantedMarket = normalizeMarket(nextSource, nextMarket);
+  const next = symbolOf(nextSource, wantedMarket, input);
   if (!next) {
-    status(source === YIELD_SOURCE
+    status(isYieldSource(nextSource)
       ? '请选一个美债品种：US03M / US02Y / US05Y / US10Y / US20Y / US30Y。'
-      : '请输入币种，例如 btc、BTCUSDT、BTC-USDT。', true);
+      : (nextSource === BINANCE_SOURCE ? '请输入币种，例如 btc、BTCUSDT、BTC-USDT。'
+        : '请输入币种，例如 btc、BTC-USDT、BTC-USDT-SWAP。'), true);
     return false;
   }
+  const same = nextSource === source && wantedMarket === market && next === symbol;
   const version = ++loadVersion;
   try {
-    await fetchCandles(source, next, timeframes[0],
-      source === YIELD_SOURCE ? { range: pollRangeOf(timeframes[0], next) } : { limit: 5 });
-  } catch (error) { if (version === loadVersion) status(error.message, true); return false; }
+    await fetchCandles(nextSource, wantedMarket, next, timeframes[0],
+      isYieldSource(nextSource) ? { range: pollRangeOf(timeframes[0], next) } : { limit: 5 });
+  } catch (error) {
+    if (version === loadVersion) { status(error.message, true); paintSource(); }
+    return false;
+  }
   if (version !== loadVersion) return false;
-  if (next === symbol) { paintSymbolBox(); await render(); return true; }
-  symbol = next;
+  if (same) { paintSource(); await render(); return true; }
+  source = nextSource; market = wantedMarket; symbol = next;
+  // The product list's sub-tab stays on the market it showed, unless this source has no such market.
+  listMarket = normalizeMarket(source, listMarket);
   saveSelection();
-  paintSymbolBox();
-  livePrice = null;
-  paintWatchlist(); paintLastPrice();
+  livePrice = null; yieldFetchedAt = 0;
+  paintSource(); paintAside(); paintWatchlist(); paintLastPrice();
+  syncStreams(); syncPolling();
+  if (asideTab === 'products') loadProducts();
   await render();
   return true;
 }
 
-// ---- Sources ---------------------------------------------------------------
-// The dropdown (or a watchlist row of another source) switches the whole page. It probes the new source first, like a
-// typed symbol: the yields need a Jesse login, and a refused source must leave the charts that are on screen alone.
+/** The dropdown: same source, or that source's first kept instrument / default, in the market it already shows. */
 async function switchSource(next) {
-  if (!MARKET_SOURCES.some(entry => entry.id === next) || next === source) return;
-  // The first row of that source the owner kept, otherwise its default instrument.
-  const nextSymbol = watchlist.find(item => item.source === next)?.symbol ?? defaultSymbolFor(next);
-  const version = ++loadVersion;
-  try {
-    await fetchCandles(next, nextSymbol, timeframes[0],
-      next === YIELD_SOURCE ? { range: pollRangeOf(timeframes[0], nextSymbol) } : { limit: 5 });
-  } catch (error) {
-    if (version === loadVersion) { status(error.message, true); paintSource(); }
-    return;
-  }
-  if (version !== loadVersion) return;
-  source = next;
-  symbol = nextSymbol;
-  livePrice = null; yieldFetchedAt = 0;
-  saveSelection();
-  paintSource(); paintWatchlist(); paintLastPrice();
-  syncPolling();
-  await render();
+  if (!MARKET_SOURCES.some(entry => entry.id === next) || next === source) { paintSource(); return; }
+  const nextMarket = normalizeMarket(next, market);
+  const kept = watchlist.find(item => item.source === next && (item.market ?? null) === nextMarket);
+  const nextSymbol = kept?.symbol ?? defaultSymbolFor(next, nextMarket);
+  await openSelection(next, nextMarket, nextSymbol);
 }
 
 function paintSource() {
@@ -553,57 +576,80 @@ function paintSource() {
   paintSymbolBox();
 }
 
-// The symbol control follows the source: a text box for a Binance pair, the six whitelisted codes for the yields
-// (the upstream has nothing else, so typing is pointless there).
+// The symbol control follows the source: a text box for an exchange (with that venue's own spelling), the six
+// whitelisted codes for the yields (the upstream has nothing else, so typing is pointless there).
 function paintSymbolBox() {
   const select = $('m-yield'), input = $('m-symbol');
   const yields = source === YIELD_SOURCE;
   input.hidden = yields;
   $('m-yield-label').hidden = !yields;
-  if (!yields) { input.value = symbol; return; }
+  if (!yields) {
+    input.value = symbol;
+    input.placeholder = source === BINANCE_SOURCE ? 'btc / BTCUSDT / BTC-USDT' : 'btc / BTC-USDT / BTC-USDT-SWAP';
+    return;
+  }
   select.replaceChildren(...YIELD_INSTRUMENTS.map(({ symbol: code, name }) => {
     const option = document.createElement('option'); option.value = code; option.textContent = `${code}（${name}）`;
     return option;
   }));
   select.value = normalizeYieldSymbol(symbol) || DEFAULT_YIELD_SYMBOL;
-  select.onchange = () => openSymbol(select.value);
+  select.onchange = () => openSelection(source, market, select.value);
+}
+
+// ---- Left column: 「自选 | <数据源>」 ----------------------------------------
+const rowLabel = item => instrumentName(item.source, item.symbol);
+const itemTag = item => [sourceLabel(item.source), item.market ? marketLabel(item.market) : ''].filter(Boolean).join(' ');
+
+function paintAside() {
+  for (const button of document.querySelectorAll('.aside-tab')) {
+    const tab = button.dataset.tab;
+    button.setAttribute('aria-pressed', String(tab === asideTab));
+    if (tab === 'products') button.textContent = sourceLabel(source);
+  }
+  $('watchlist').hidden = asideTab !== 'watch';
+  $('products').hidden = asideTab !== 'products';
+  if (asideTab === 'products') paintProducts();
+}
+
+function setAsideTab(tab) {
+  asideTab = tab === 'products' ? 'products' : 'watch';
+  write(MARKET_KEYS.aside, asideTab);
+  paintAside();
+  syncTickerPolling();
+  if (asideTab === 'products') loadProducts();
 }
 
 // ---- Watchlist -------------------------------------------------------------
-const rowLabel = item => (item.source === YIELD_SOURCE ? item.symbol : item.symbol.replace(/USDT$/, ''));
-
 function paintWatchlist() {
   watchRows.clear();
   const box = $('watchlist');
-  // Only a mixed list needs the venue tag: with one source the whole sidebar is that source.
-  const mixed = new Set(watchlist.map(item => item.source)).size > 1;
+  // Only a mixed list needs the venue tag: with one source and one market the whole sidebar is that one.
+  const mixed = new Set(watchlist.map(item => `${item.source}|${item.market ?? ''}`)).size > 1;
   box.replaceChildren(...watchlist.map(item => {
     const row = document.createElement('div');
     row.className = 'watch-row';
     row.dataset.source = item.source;
-    row.setAttribute('aria-pressed', String(item.source === source && item.symbol === symbol));
+    row.setAttribute('aria-pressed', String(item.source === source && item.symbol === symbol
+      && (item.market ?? null) === (market ?? null)));
     const button = document.createElement('button');
     button.type = 'button'; button.className = 'watch-main';
-    button.setAttribute('aria-label', `看 ${item.symbol}（${sourceLabel(item.source)}）的行情`);
+    button.setAttribute('aria-label', `看 ${item.symbol}（${itemTag(item)}）的行情`);
     const name = document.createElement('strong');
     name.textContent = rowLabel(item);
-    if (mixed) {
-      const tag = document.createElement('span');
-      tag.className = 'watch-tag';
-      // Short enough for the narrow sidebar: 永续 / 现货 / 美债.
-      tag.textContent = item.source === YIELD_SOURCE ? '美债' : sourceLabel(item.source).replace('币安', '');
-      name.append(tag);
-    }
+    const tag = document.createElement('span');
+    tag.className = 'watch-tag';
+    tag.textContent = mixed ? itemTag(item) : (item.market ? marketLabel(item.market) : '美债');
+    name.append(tag);
     const quote = document.createElement('span');
     quote.className = 'watch-quote';
     const price = document.createElement('span'); price.className = 'watch-last';
     const change = document.createElement('span'); change.className = 'watch-change';
     quote.append(price, change);
     button.append(name, quote);
-    button.onclick = () => openWatch(item);
+    button.onclick = () => openSelection(item.source, item.market, item.symbol);
     const remove = document.createElement('button');
     remove.type = 'button'; remove.className = 'watch-del'; remove.textContent = '×';
-    remove.setAttribute('aria-label', `把 ${item.symbol}（${sourceLabel(item.source)}）从自选里删掉`);
+    remove.setAttribute('aria-label', `把 ${item.symbol}（${itemTag(item)}）从自选里删掉`);
     remove.onclick = event => { event.stopPropagation(); dropWatch(item); };
     row.append(button, remove);
     watchRows.set(watchKey(item), { row, price, change, item });
@@ -627,23 +673,12 @@ function paintQuotes() {
   paintLastPrice();
 }
 
-async function openWatch(item) {
-  const previous = source;
-  if (item.source !== previous) { source = item.source; livePrice = null; yieldFetchedAt = 0; paintSource(); }
-  const opened = await openSymbol(item.symbol);
-  if (!opened && source !== previous) { source = previous; paintSource(); }
-  syncStreams(); syncPolling();
-}
+const inWatchlist = item => watchlist.some(existing => sameWatchItem(existing, item));
 
+/** 「加入自选」 of the toolbar: the chart's instrument. */
 function addWatch() {
-  const item = watchItem({ source, symbol });
-  if (!item) return;
-  if (watchlist.some(existing => sameWatchItem(existing, item))) return;
-  if (watchlist.length >= MAX_WATCHLIST) { status(`自选最多 ${MAX_WATCHLIST} 个，先删掉一个再加。`, true); return; }
-  watchlist = addToWatchlist(watchlist, item);
-  write(MARKET_KEYS.watchlist, JSON.stringify(watchlist));
-  paintWatchlist();
-  syncStreams(); syncPolling();
+  const item = watchItem({ source, market, symbol });
+  if (item) addWatchItem(item);
 }
 
 function dropWatch(item) {
@@ -652,12 +687,145 @@ function dropWatch(item) {
   write(MARKET_KEYS.watchlist, JSON.stringify(watchlist));
   const keys = new Set(watchlist.map(watchKey));
   quotes = new Map([...quotes].filter(([key]) => keys.has(key)));
-  paintWatchlist();
-  syncStreams(); syncPolling();
+  paintWatchlist(); paintProducts();
+  syncStreams();
 }
 
+/** The ☆ / ★ of a product row: one click adds the row to the watchlist, the next removes it. */
+function toggleStar(item) {
+  if (inWatchlist(item)) dropWatch(item); else addWatchItem(item);
+}
+
+/** One row into the watchlist (the toolbar button and a product row's ☆ share this). */
+function addWatchItem(item) {
+  if (inWatchlist(item)) return;
+  if (watchlist.length >= MAX_WATCHLIST) { status(`自选最多 ${MAX_WATCHLIST} 个，先删掉一个再加。`, true); return; }
+  watchlist = addToWatchlist(watchlist, item);
+  write(MARKET_KEYS.watchlist, JSON.stringify(watchlist));
+  paintWatchlist(); paintProducts();
+  syncStreams();
+}
+
+// ---- Product list ----------------------------------------------------------
+/** The rows the second tab lists: the venue's tickers, or the six yields when the source is the treasury. */
+function productList() {
+  if (source === YIELD_SOURCE) {
+    return YIELD_INSTRUMENTS.map(({ symbol: code, name }) => {
+      const quote = quotes.get(watchKey({ source: YIELD_SOURCE, market: null, symbol: code }));
+      return { symbol: code, name, last: quote?.price, change: quote?.change };
+    });
+  }
+  return productRows;
+}
+
+function paintProducts() {
+  // 合约 / 现货 is a sub-tab of the list, and the yields have none.
+  const subTabs = $('product-markets');
+  const markets = marketsOf(source);
+  subTabs.hidden = markets.length === 0;
+  subTabs.replaceChildren(...MARKETS.filter(entry => markets.includes(entry.id)).map(entry => {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'product-market';
+    button.textContent = entry.label;
+    button.setAttribute('aria-pressed', String(entry.id === listMarket));
+    button.onclick = () => {
+      if (listMarket === entry.id) return;
+      listMarket = entry.id;
+      write(MARKET_KEYS.listMarket, listMarket);
+      productShown = PRODUCT_PAGE;
+      paintProducts();
+      loadProducts();
+    };
+    return button;
+  }));
+  const search = $('product-search');
+  if (search.value !== productQuery) search.value = productQuery;
+  search.placeholder = isYieldSource(source) ? '搜索，如 10y' : '搜索，如 sol';
+
+  const rows = filterProducts(productList(), productQuery);
+  const shown = rows.slice(0, productShown);
+  const box = $('product-list');
+  box.replaceChildren(...shown.map(row => productRow(row)));
+  const more = $('product-more');
+  more.hidden = rows.length <= shown.length;
+  more.textContent = `显示更多（还有 ${(rows.length - shown.length).toLocaleString()} 个）`;
+  const count = $('product-count');
+  count.textContent = rows.length
+    ? `${filterProducts(productList(), productQuery).length.toLocaleString()} 个 USDT 产品`
+      + (productError ? ' · 报价刷新失败，稍后重试' : '')
+    : (productError ? '报价刷新失败，稍后重试' : (isYieldSource(source) ? '' : '正在读取产品列表…'));
+}
+
+function productRow(row) {
+  const item = watchItem({ source, market: isYieldSource(source) ? null : listMarket, symbol: row.symbol });
+  const element = document.createElement('div');
+  element.className = 'watch-row product-row';
+  const button = document.createElement('button');
+  button.type = 'button'; button.className = 'watch-main';
+  button.setAttribute('aria-label', `看 ${row.symbol} 的行情`);
+  const name = document.createElement('strong');
+  name.textContent = row.name ?? instrumentName(source, row.symbol);
+  const quote = document.createElement('span');
+  quote.className = 'watch-quote';
+  const price = document.createElement('span'); price.className = 'watch-last';
+  const change = document.createElement('span'); change.className = 'watch-change';
+  const yields = isYieldSource(source);
+  price.textContent = Number.isFinite(row.last) ? (yields ? fmtYield(row.last) : fmtPrice(row.last)) : '—';
+  change.textContent = Number.isFinite(row.change) ? (yields ? signedPoints(row.change) : signedPercent(row.change)) : '';
+  change.className = `watch-change${row.change > 0 ? ' up' : row.change < 0 ? ' down' : ''}`;
+  quote.append(price, change);
+  button.append(name, quote);
+  button.onclick = () => openSelection(source, isYieldSource(source) ? null : listMarket, row.symbol);
+  const star = document.createElement('button');
+  const starred = !!item && inWatchlist(item);
+  star.type = 'button';
+  star.className = `product-star${starred ? ' on' : ''}`;
+  star.textContent = starred ? '★' : '☆';
+  star.setAttribute('aria-pressed', String(starred));
+  star.setAttribute('aria-label', starred ? `把 ${row.symbol} 从自选里删掉` : `把 ${row.symbol} 加入自选`);
+  star.onclick = event => { event.stopPropagation(); if (item) toggleStar(item); };
+  element.append(button, star);
+  return element;
+}
+
+/** The rows the product list needs to be able to draw: which venue, which market. */
+const productRequest = () => ({
+  source,
+  market: isYieldSource(source) ? null : listMarket,
+  key: `${source}|${isYieldSource(source) ? '' : listMarket}`,
+});
+
+async function loadProducts() {
+  if (asideTab !== 'products' || document.hidden) return;
+  const request = productRequest();
+  if (request.source === YIELD_SOURCE) { paintProducts(); refreshYieldQuotes(); return; }
+  // Another venue or market than the rows on screen: they are not this list any more, so nothing is shown until the
+  // answer lands (a stale Binance list under an OKX heading would be worse than an empty one for a second).
+  if (request.key !== productVenue) { productRows = []; productVenue = request.key; productError = ''; }
+  try {
+    const rows = await fetchProducts(request.source, request.market);
+    if (request.key !== productRequest().key) return; // the tab moved to another venue meanwhile
+    productRows = rows;
+    productError = '';
+  } catch (error) {
+    productError = error.message;
+  }
+  paintProducts();
+}
+
+/** One venue's product list: the direct REST read for Binance / OKX, Jesse's proxy for Deepcoin. */
+async function fetchProducts(sourceId, marketId) {
+  if (sourceId === DEEPCOIN_SOURCE) {
+    return proxyTickerRows(await post(PROXY_TICKERS, { source: DEEPCOIN_SOURCE, market: marketId }));
+  }
+  const response = await fetch(tickersUrlFor(sourceId, marketId));
+  if (!response.ok) throw new Error(`${sourceLabel(sourceId)} 产品列表请求失败（HTTP ${response.status}），稍后再试。`);
+  return tickerRows(sourceId, marketId, await response.json());
+}
+
+// ---- Prices and streams ----------------------------------------------------
 function paintLastPrice() {
-  const quote = quotes.get(watchKey({ source, symbol }));
+  const quote = quotes.get(watchKey({ source, market, symbol }));
   const drawn = panels.filter(panel => !panel.empty).at(-1)?.candles.at(-1)?.close;
   const price = Number.isFinite(livePrice) ? livePrice : quote?.price ?? drawn;
   if (source === YIELD_SOURCE) {
@@ -671,7 +839,6 @@ function paintLastPrice() {
     : symbol;
 }
 
-// ---- Live streams ----------------------------------------------------------
 // The last traded price as a light red dashed line with an axis label on every chart (the finder's own line).
 function paintLivePrice() {
   const title = source === YIELD_SOURCE ? '最新' : '实时';
@@ -693,7 +860,7 @@ function paintYieldPrice() {
   const last = panels.filter(panel => !panel.empty).at(-1)?.candles.at(-1);
   // A daily-only instrument with no 1D panel on screen has no candle to read: the watchlist's own value is the newest
   // number there is, so the line and the stamp come from that instead.
-  const quote = quotes.get(watchKey({ source, symbol }));
+  const quote = quotes.get(watchKey({ source, market, symbol }));
   livePrice = last ? last.close : quote?.price ?? null;
   yieldFetchedAt = last ? last.time : (quote?.time ?? 0);
   paintLivePrice();
@@ -718,62 +885,133 @@ function paintLiveNote() {
   if (klineState === 'reconnecting') parts.push('形成中的 K 线重连中');
   if (quotesReconnecting()) parts.push('自选报价重连中');
   note.hidden = false;
-  note.textContent = parts.length ? parts.join(' · ') : (livePrice === null ? '等待第一次推送' : '实时');
+  if (parts.length) { note.textContent = parts.join(' · '); return; }
+  if (source === DEEPCOIN_SOURCE) {
+    // The venue sends no CORS header: the candles come from Jesse every 3 seconds, and only the swap market's price
+    // also has a public push (its spot endpoint has no ticker cluster).
+    const how = market === 'spot' ? '每 3 秒经 Jesse 轮询' : '价格走 Deepcoin 推送、K 线每 3 秒经 Jesse 轮询';
+    note.textContent = livePrice === null ? '等待第一次轮询' : `实时 · ${how}`;
+    return;
+  }
+  note.textContent = livePrice === null ? '等待第一次推送' : '实时';
+}
+
+/** The kline socket of the current source: a descriptor with a key (so a redundant resubscribe is skipped) and an
+ *  `open` that returns its stop(). Binance and OKX only; Deepcoin and the yields have no candle stream. */
+function klineStreamFor() {
+  if (source === BINANCE_SOURCE) {
+    const url = klineStreamUrl(exchangeOf(source, market), symbol, timeframes);
+    return url ? { key: url, open: callbacks => openKlines(url, callbacks) } : null;
+  }
+  if (source === OKX_SOURCE) {
+    const channels = okxCandleChannels(timeframes);
+    if (!channels.length) return null;
+    return { key: `${symbol}|${market}|${channels.join(',')}`,
+      open: callbacks => openOkxKlines(symbol, timeframes, callbacks) };
+  }
+  return null;
+}
+
+/** The last-price socket: Binance's aggTrade, OKX's tickers channel, Deepcoin's swap ticker topic. */
+function priceStreamFor() {
+  if (source === BINANCE_SOURCE) {
+    const url = streamUrl(exchangeOf(source, market), symbol);
+    return url ? { key: url, open: callbacks => openTicker(url, callbacks) } : null;
+  }
+  if (source === OKX_SOURCE) return { key: `okx|${symbol}`, open: callbacks => openOkxTicker(symbol, callbacks) };
+  if (source === DEEPCOIN_SOURCE && market !== 'spot') {
+    // The spot endpoint has no ticker cluster, so a spot chart's price comes from the 3-second candle poll instead.
+    return { key: `deepcoin|${symbol}`, open: callbacks => openDeepcoinTicker(market, symbol, callbacks) };
+  }
+  return null;
 }
 
 // One socket per job: the forming bar + the bar that just closed, the last traded price, and the watchlist's quotes.
 function syncStreams() {
-  // The yields are not pushed anywhere: every Binance socket is stopped and the poll keeps the charts fresh.
-  const exchange = exchangeOf(source);
-  const klines = exchange ? klineStreamUrl(exchange, symbol, timeframes) : null;
-  if (klines !== klineUrl) {
+  const kline = klineStreamFor();
+  if ((kline?.key ?? '') !== klineKey) {
     stopKlineStream?.(); stopKlineStream = null;
-    klineUrl = klines; klineState = '';
-    if (klines) stopKlineStream = openKlines(klines, { onKline, onState: onKlineState });
+    klineKey = kline?.key ?? ''; klineState = '';
+    if (kline) stopKlineStream = kline.open({ onKline, onState: onKlineState });
   }
-  const price = exchange ? streamUrl(exchange, symbol) : null;
-  if (price !== priceUrl) {
+  const price = priceStreamFor();
+  if ((price?.key ?? '') !== priceKey) {
     stopPriceStream?.(); stopPriceStream = null;
-    priceUrl = price; priceState = ''; livePrice = null;
+    priceKey = price?.key ?? ''; priceState = ''; livePrice = null;
     paintLivePrice(); paintLastPrice();
     if (price) {
-      stopPriceStream = openTicker(price, {
+      stopPriceStream = price.open({
         onPrice: next => { const first = livePrice === null; livePrice = next; paintLivePrice(); paintLastPrice(); if (first) paintLiveNote(); },
         onState: state => { priceState = state; paintLiveNote(); },
       });
     }
   }
   syncQuoteStreams();
+  syncCryptoPoll();
+  syncTickerPolling();
   paintLiveNote();
 }
 
-// The watchlist's `@miniTicker` quotes, one socket per venue: the stream lives on both Binance markets, on two hosts,
-// and a row belongs to the venue of its source. The yield rows have no stream and come from the poll instead.
+/**
+ * The watchlist's quotes. Binance pushes them on one `@miniTicker` combined stream per venue, OKX on one socket that
+ * carries every watched instrument. Deepcoin has no CORS and its spot socket has no ticker cluster, so those rows
+ * come from the 10-second REST read of the venue's ticker list (see pollTickers). The yield rows come from the poll.
+ */
 function syncQuoteStreams() {
-  const wanted = new Map();
-  for (const item of [...watchlist, { source, symbol }]) {
-    const exchange = exchangeOf(item.source);
-    if (!exchange) continue;
-    if (!wanted.has(exchange)) wanted.set(exchange, []);
-    wanted.get(exchange).push(item.symbol);
-  }
-  const urls = new Map([...wanted].map(([exchange, symbols]) => [exchange, miniTickerStreamUrl(symbols, exchange)]));
-  for (const [exchange, socket] of [...quoteSockets]) {
-    if (urls.get(exchange) === socket.url) continue;
+  const specs = quoteSocketSpecs();
+  for (const [name, socket] of [...quoteSockets]) {
+    if (specs.get(name)?.key === socket.key) continue;
     socket.stop?.();
-    quoteSockets.delete(exchange);
+    quoteSockets.delete(name);
   }
-  for (const [exchange, url] of urls) {
-    if (!url || quoteSockets.has(exchange)) continue;
-    const venue = exchange === exchangeOf(SPOT_SOURCE) ? SPOT_SOURCE : PERP_SOURCE;
-    const socket = { url, state: '', stop: null };
-    socket.stop = openMessages(url, {
-      onMessage: message => onQuoteMessage(message, venue),
+  for (const [name, spec] of specs) {
+    if (quoteSockets.has(name)) continue;
+    const socket = { key: spec.key, state: '', stop: null };
+    socket.stop = spec.open({
+      onQuote: quote => {
+        quotes.set(watchKey({ source: quote.source, market: quote.market, symbol: quote.symbol }),
+          { symbol: quote.symbol, price: quote.price, change: quote.change });
+        paintQuotes();
+      },
       onState: state => { socket.state = state; paintLiveNote(); },
     });
-    quoteSockets.set(exchange, socket);
+    quoteSockets.set(name, socket);
   }
   paintLiveNote();
+}
+
+function quoteSocketSpecs() {
+  const specs = new Map();
+  const binance = new Map(), okx = new Map();
+  const add = item => {
+    if (item.source === BINANCE_SOURCE) {
+      const exchange = exchangeOf(item.source, item.market);
+      if (!exchange) return;
+      if (!binance.has(exchange)) binance.set(exchange, { market: item.market ?? 'swap', symbols: [] });
+      binance.get(exchange).symbols.push(item.symbol);
+    } else if (item.source === OKX_SOURCE) {
+      okx.set(item.symbol, item.market ?? 'swap');
+    }
+  };
+  for (const item of watchlist) add(item);
+  add({ source, market, symbol });
+
+  for (const [exchange, { market: venueMarket, symbols }] of binance) {
+    const url = miniTickerStreamUrl(symbols, exchange);
+    if (!url) continue;
+    specs.set(`binance|${exchange}`, { key: url, open: ({ onQuote, onState }) => openMessages(url, { onState,
+      onMessage: message => {
+        const quote = parseMiniTicker(message);
+        if (quote) onQuote({ ...quote, source: BINANCE_SOURCE, market: venueMarket });
+      } }) });
+  }
+  if (okx.size) {
+    const instIds = [...okx.keys()];
+    specs.set('okx', { key: `${instIds.join(',')}`, open: ({ onQuote, onState }) => openOkxTickers(instIds, { onState,
+      onQuote: quote => onQuote({ source: OKX_SOURCE, market: okx.get(quote.symbol) ?? 'swap', symbol: quote.symbol,
+        price: quote.price, change: quote.change }) }) });
+  }
+  return specs;
 }
 
 function onKline(candle) {
@@ -795,17 +1033,94 @@ function onKlineState(state) {
   if (state === 'connected' && dropped) refreshAll();
 }
 
-function onQuoteMessage(message, venue) {
-  const quote = parseMiniTicker(message);
-  if (!quote) return;
-  quotes.set(watchKey({ source: venue, symbol: quote.symbol }), quote);
+// ---- Polling ---------------------------------------------------------------
+// Deepcoin: every 3 seconds ask the proxy for the newest two bars of every panel and hand them to the same routines a
+// socket would call, so the forming bar keeps moving and a bar that closed lands in the history. `forming` and
+// `closed` are both display-only here (the panel's own candles are updated by appendClosed / paintForming).
+function syncCryptoPoll() {
+  const wanted = source === DEEPCOIN_SOURCE;
+  if (wanted && !cryptoPollTimer) cryptoPollTimer = setInterval(pollDeepcoin, CRYPTO_POLL_MS);
+  if (!wanted && cryptoPollTimer) { clearInterval(cryptoPollTimer); cryptoPollTimer = null; }
+}
+
+async function pollDeepcoin() {
+  if (document.hidden || cryptoPollBusy || source !== DEEPCOIN_SOURCE) return;
+  cryptoPollBusy = true;
+  const version = loadVersion;
+  try {
+    for (const panel of panels.filter(item => !item.empty)) {
+      if (version !== loadVersion) break;
+      const { closed, forming } = await fetchCandles(source, market, symbol, panel.tf, { limit: 2 });
+      const newest = closed.at(-1);
+      const lastClosed = panel.candles.at(-1)?.time ?? -Infinity;
+      if (newest && newest.time > lastClosed) {
+        // One or two bars arrived. More than one bar of gap means a whole bar was missed (the tab was busy or the
+        // poll failed): the page of bars is refetched and merged instead of a hole being left in the overlay lines.
+        if (newest.time > lastClosed + panel.interval * 60) refreshPanel(panel, version);
+        else appendClosed(panel, candleOf(newest));
+      }
+      if (forming) paintForming(panel, forming);
+      // No ticker socket for this market (spot): the newest close is the price line.
+      if (!priceKey && (forming || newest)) {
+        livePrice = (forming ?? newest).close;
+        paintLivePrice(); paintLastPrice();
+      }
+    }
+  } catch { /* the next tick tries again; the header keeps the last state */ }
+  finally { cryptoPollBusy = false; }
+}
+
+// The product list and the Deepcoin watchlist quotes share one 10-second ticker read: every 10 seconds while the
+// list is open (the venue's REST list, not a socket per product), and for the Deepcoin rows of the watchlist.
+function syncTickerPolling() {
+  const wanted = (asideTab === 'products' && source !== YIELD_SOURCE) || deepcoinRows().length > 0;
+  if (wanted && !tickerTimer) tickerTimer = setInterval(pollTickers, TICKER_POLL_MS);
+  if (!wanted && tickerTimer) { clearInterval(tickerTimer); tickerTimer = null; }
+}
+
+const deepcoinRows = () => watchlist.filter(item => item.source === DEEPCOIN_SOURCE);
+
+async function pollTickers() {
+  if (document.hidden || tickerBusy) return;
+  tickerBusy = true;
+  try {
+    if (asideTab === 'products' && source !== YIELD_SOURCE) await loadProducts();
+    await refreshDeepcoinQuotes();
+  } catch { /* the next tick tries again; the list keeps what it has */ }
+  finally { tickerBusy = false; paintProducts(); }
+}
+
+/** Deepcoin quotes of the rows that have no socket: one ticker read per market present in the watchlist. */
+async function refreshDeepcoinQuotes() {
+  const markets = new Set(deepcoinRows().map(item => item.market ?? 'swap'));
+  if (asideTab === 'products' && source === DEEPCOIN_SOURCE && listMarket) markets.add(listMarket);
+  for (const venueMarket of markets) {
+    let rows;
+    try { rows = await fetchProducts(DEEPCOIN_SOURCE, venueMarket); } catch { continue; }
+    const bySymbol = new Map(rows.map(row => [row.symbol, row]));
+    for (const item of deepcoinRows()) {
+      if ((item.market ?? 'swap') !== venueMarket) continue;
+      const row = bySymbol.get(item.symbol);
+      if (!row) continue;
+      quotes.set(watchKey(item), { symbol: item.symbol, price: row.last, change: row.change });
+    }
+    if (venueMarket === listMarket && source === DEEPCOIN_SOURCE && asideTab === 'products') {
+      productRows = rows;
+      productVenue = `${source}|${listMarket}`;
+    }
+  }
   paintQuotes();
 }
 
-// ---- Polling (the yields) --------------------------------------------------
-// Every 60 seconds ask Jesse for the newest bars of the panels on screen and for the value of every yield row in the
-// watchlist. A hidden page does not poll (a background tab would keep asking for nothing) and coming back polls once.
+// Every 60 seconds ask Jesse for the newest bars of the yield panels on screen and for the value of every yield row in
+// the watchlist (and of the six products, while that list is open). A hidden page does not poll and coming back polls
+// once.
 const yieldRows = () => watchlist.filter(item => item.source === YIELD_SOURCE);
+const yieldSymbolsToQuote = () => {
+  const symbols = new Set(yieldRows().map(item => item.symbol));
+  if (asideTab === 'products' && source === YIELD_SOURCE) for (const code of YIELD_INSTRUMENTS) symbols.add(code.symbol);
+  return [...symbols];
+};
 
 function syncPolling() {
   const wanted = source === YIELD_SOURCE || yieldRows().length > 0;
@@ -822,7 +1137,7 @@ async function pollYields() {
     await Promise.all([
       ...(source === YIELD_SOURCE
         ? panels.filter(panel => !panel.empty).map(panel => refreshPanel(panel, version, { poll: true })) : []),
-      ...yieldRows().map(item => refreshYieldQuote(item.symbol)),
+      ...yieldSymbolsToQuote().map(symbolName => refreshYieldQuote(symbolName)),
     ]);
     pollError = false;
   } catch { pollError = true; }
@@ -833,13 +1148,19 @@ async function pollYields() {
   }
 }
 
+async function refreshYieldQuotes() {
+  try { await Promise.all(yieldSymbolsToQuote().map(symbolName => refreshYieldQuote(symbolName))); pollError = false; }
+  catch { pollError = true; }
+  paintLiveNote();
+}
+
 // The watchlist value of one yield row: the daily series is enough, a change is against yesterday's close. The
 // failure goes to the poll, which reports it in the header instead of leaving a row that silently never updates.
 async function refreshYieldQuote(symbolName) {
-  const { closed } = await fetchCandles(YIELD_SOURCE, symbolName, '1D', { range: '1mo' });
+  const { closed } = await fetchCandles(YIELD_SOURCE, null, symbolName, '1D', { range: '1mo' });
   const quote = yieldQuote(closed);
   if (!quote) return;
-  quotes.set(watchKey({ source: YIELD_SOURCE, symbol: symbolName }), quote);
+  quotes.set(watchKey({ source: YIELD_SOURCE, market: null, symbol: symbolName }), quote);
   paintQuotes();
 }
 
@@ -891,29 +1212,39 @@ function onVisibility() {
   const away = hiddenAt ? Date.now() - hiddenAt : 0;
   hiddenAt = 0;
   // The sockets keep the newest bars, but a background tab may have been cut or throttled long enough to leave a
-  // hole: refetch the newest bars of every timeframe when it was away for over a minute. The yields are polled
-  // anyway; coming back asks once immediately.
+  // hole: refetch the newest bars of every timeframe when it was away for over a minute. The proxied sources are
+  // polled anyway; coming back asks once immediately.
   if (away > HIDDEN_REFRESH_MS) {
     if (source === YIELD_SOURCE) pollYields();
     else refreshAll();
   }
+  if (asideTab === 'products') loadProducts();
 }
 
 function start() {
   paintClock();
   setInterval(paintClock, 1000);
-  paintSource(); paintTimeframes(); paintHeight(); paintWatchlist();
+  paintSource(); paintTimeframes(); paintHeight(); paintWatchlist(); paintAside();
+  for (const button of document.querySelectorAll('.aside-tab')) {
+    button.onclick = () => setAsideTab(button.dataset.tab);
+  }
+  $('product-search').oninput = () => {
+    productQuery = $('product-search').value;
+    productShown = PRODUCT_PAGE;
+    paintProducts();
+  };
+  $('product-more').onclick = () => { productShown += PRODUCT_PAGE; paintProducts(); };
   $('m-form').onsubmit = event => {
     event.preventDefault();
-    openSymbol(source === YIELD_SOURCE ? $('m-yield').value : $('m-symbol').value);
+    openSelection(source, market, source === YIELD_SOURCE ? $('m-yield').value : $('m-symbol').value);
   };
   $('m-add').onclick = () => {
-    if (source === YIELD_SOURCE && !normalizeYieldSymbol(symbol)) {
+    if (isYieldSource(source) && !normalizeYieldSymbol(symbol)) {
       status('请先选一个美债品种。', true);
       return;
     }
-    if (source !== YIELD_SOURCE && !normalizeSymbol(symbol)) {
-      status('请输入币种，例如 btc、BTCUSDT、BTC-USDT。', true);
+    if (!isYieldSource(source) && !symbolOf(source, market, symbol)) {
+      status('请输入币种，例如 btc、BTC-USDT、BTC-USDT-SWAP。', true);
       return;
     }
     status('');
@@ -921,7 +1252,6 @@ function start() {
   };
   document.addEventListener('visibilitychange', onVisibility);
   render();
-  syncPolling();
+  syncPolling(); syncTickerPolling();
 }
-
 start();
