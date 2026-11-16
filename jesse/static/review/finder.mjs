@@ -1,18 +1,18 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261115b';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261115b';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261115b';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261115b';
-import { calculateIndicator } from './indicators.mjs?v=20261115b';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261115b';
-import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261115b';
+import { t as createChart } from './lightweight-charts.mjs?v=20261115c';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261115c';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261115c';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261115c';
+import { calculateIndicator } from './indicators.mjs?v=20261115c';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261115c';
+import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261115c';
 import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone, barSnapshot,
-  nextTickDelay, newKeys, atRightEdge, shiftRange } from './finder-data.mjs?v=20261115b';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261115b';
+  nextTickDelay, newKeys, atRightEdge, shiftRange } from './finder-data.mjs?v=20261115c';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261115c';
 import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS,
-  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261115b';
+  barKey, barNoteOf, barLabel, barMarkers } from './labels.mjs?v=20261115c';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -1095,7 +1095,7 @@ async function importLatest() {
   $('f-import').disabled = true;
   try {
     const id = crypto.randomUUID();
-    await post('/candles/import', { id, exchange: form.exchange, symbol: form.symbol, start_date: importStartDate(Date.now()) });
+    await post('/candles/import', { id, exchange: form.exchange, symbol: form.symbol, start_date: importStartDate(Date.now(), result?.last_candle_time) });
     for (;;) {
       status('正在更新 K 线数据…');
       await new Promise(resolve => setTimeout(resolve, 2000));
@@ -1273,7 +1273,7 @@ async function applyLive({ data, factor, params, version }) {
 // swallow every later minute. Each round uses its own id, so the running one is cancelled on timeout.
 async function importRound() {
   const id = crypto.randomUUID();
-  await post('/candles/import', { id, exchange: form.exchange, symbol: form.symbol, start_date: importStartDate(Date.now()) });
+  await post('/candles/import', { id, exchange: form.exchange, symbol: form.symbol, start_date: importStartDate(Date.now(), result?.last_candle_time) });
   for (let attempt = 0; attempt < LIVE_IMPORT_TRIES; attempt++) {
     await sleep(LIVE_POLL_MS);
     const state = await post('/candles/import-status', { id });

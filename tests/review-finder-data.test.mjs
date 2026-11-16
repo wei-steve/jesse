@@ -61,6 +61,10 @@ test('runBody: recent mode has no finish; custom mode converts UTC fields', () =
 test('importStartDate is yesterday in UTC', () => {
   assert.equal(importStartDate(Date.UTC(2026, 9, 27, 0, 5)), '2026-10-26');
   assert.equal(importStartDate(Date.UTC(2026, 10, 1, 23, 59)), '2026-10-31');
+  // A database days behind starts from its newest candle's day, so no hole is left.
+  assert.equal(importStartDate(Date.UTC(2026, 10, 15, 3, 0), Date.UTC(2026, 9, 27, 20, 29) / 1000), '2026-10-27');
+  // A newest candle from today never pushes the start past yesterday.
+  assert.equal(importStartDate(Date.UTC(2026, 10, 15, 3, 0), Date.UTC(2026, 10, 15, 2, 0) / 1000), '2026-11-14');
 });
 
 test('rideExtra writes only changes, timed at the last 1m candle of the bar, and feeds rides.mjs', () => {

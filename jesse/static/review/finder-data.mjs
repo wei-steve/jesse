@@ -1,9 +1,9 @@
 // Pure helpers of the factor finder page (finder.mjs): request building, saved form, and turning the
 // `/factors/run` answer into the same step series the signal mode of the review page uses (rides.mjs).
 // Nothing here knows what a factor does; the page only draws the numbers the factor file returns.
-import { timeframeMinutes } from './settings.mjs?v=20261115b';
-import { LIMIT_RULES, LIMIT_DEFAULTS, atr14 } from './limit-rules.mjs?v=20261115b';
-import { sma } from './data.mjs?v=20261115b';
+import { timeframeMinutes } from './settings.mjs?v=20261115c';
+import { LIMIT_RULES, LIMIT_DEFAULTS, atr14 } from './limit-rules.mjs?v=20261115c';
+import { sma } from './data.mjs?v=20261115c';
 
 export const FORM_KEY = 'jesse.finder.form.v1';
 // 「实时」fires a few seconds after every UTC minute: by then the minute that just closed is in the database, and a
@@ -88,8 +88,13 @@ export function runBody(form, factor, params, timeframes, nowMs) {
 }
 
 // POST /candles/import wants a date strictly before today: yesterday (UTC).
-export function importStartDate(nowMs) {
-  const d = new Date(nowMs - 86400000);
+// The day the import starts from: yesterday, or the day of the newest candle already in the database when that is
+// older — otherwise a database that is days behind would be left with a hole between its newest candle and yesterday
+// (2026-11-15: the data stopped on 10-27 and 「更新到最新」/实时 only fetched the last day). `lastSeconds` optional.
+export function importStartDate(nowMs, lastSeconds = null) {
+  const yesterday = nowMs - 86400000;
+  const from = Number.isFinite(lastSeconds) ? Math.min(yesterday, lastSeconds * 1000) : yesterday;
+  const d = new Date(from);
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 }
 
