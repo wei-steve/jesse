@@ -1,4 +1,5 @@
 import json
+import os
 from hashlib import sha256
 
 import pytest
@@ -290,3 +291,125 @@ def test_rejects_an_unknown_kind_even_with_a_bar_key(client, project):
     # The note is capped like every other note.
     assert bar_note(client, note='n' * 900).status_code == 200
     assert len(rows(project)[-1]['note']) == review_controller.MAX_LABEL_NOTE
+
+
+# ---- 备注本 (label books) --------------------------------------------------
+# The marks of one notebook live in storage/labels/<book>.jsonl. `finder-labels` is the default and the file every
+# page wrote before books existed, so nothing old changes; a named book has to be created before anything is written
+# into it, which is what keeps a typo from scattering rows into a fresh file.
+
+def create_book(client, name):
+    return client.post('/review/label-books/create', json={'name': name}, headers=HEADERS)
+
+
+def book_file(project, name=review_controller.DEFAULT_BOOK):
+    return project / 'storage' / 'labels' / f'{name}.jsonl'
+
+
+def list_books(client):
+    response = client.post('/review/label-books', json={}, headers=HEADERS)
+    assert response.status_code == 200
+    return response.json()
+
+
+def test_the_default_book_is_the_file_the_pages_always_wrote(client, project):
+    label(client)  # no book at all: an older page / script
+    label(client, book='finder-labels')
+    assert len(rows(project)) == 2
+    # The book is the file name, so it is not stored inside the row (nothing rewrites the old format).
+    assert 'book' not in rows(project)[0]
+    # Reading without a book reads the same rows as reading the default by name.
+    assert labels(client).json() == labels(client, book='finder-labels').json()
+
+
+def test_a_named_book_keeps_its_rows_apart(client, project):
+    assert create_book(client, '趋势实验').json() == {'ok': True, 'name': '趋势实验'}
+    assert book_file(project, '趋势实验').read_text(encoding='utf-8') == ''
+    label(client, book='趋势实验', note='新的本')
+    assert labels(client, book='趋势实验').json()['labels'][KEY]['note'] == '新的本'
+    # The default book knows nothing about it, and a row of the default book never shows up in the named one.
+    assert labels(client).json() == {'labels': {}, 'bars': {}}
+    assert create_book(client, 'candles').status_code == 200
+    bar_note(client, book='candles')
+    assert list(labels(client, book='candles').json()['bars']) == [BAR_KEY]
+    assert labels(client).json()['bars'] == {}
+    # Only the rows of the book that was written exist on disk.
+    assert [json.loads(line)['note'] for line in book_file(project, '趋势实验').read_text(encoding='utf-8').splitlines()] == ['新的本']
+    assert not book_file(project).exists()
+
+
+def test_a_book_name_is_a_plain_file_name(client, project):
+    for name in ('../x', 'a/b', '.', 'a.b', 'a b', '', '   ', 'x' * 41, 'a|b'):
+        response = label(client, book=name)
+        assert response.status_code == 400, name
+        assert '备注本名字' in response.json()['error'], name
+    # A 40-character name and a Chinese one are fine (the limit is the server's, and the file stays in the folder).
+    long_name = 'x' * 40
+    assert create_book(client, long_name).status_code == 200
+    assert create_book(client, '中文备注本').status_code == 200
+    assert book_file(project, long_name).exists()
+    # Nothing above wrote a row, and the bad names never created a file anywhere.
+    assert not book_file(project).exists()
+    assert sorted(path.name for path in (project / 'storage' / 'labels').iterdir()) == [f'{long_name}.jsonl',
+                                                                                       '中文备注本.jsonl']
+
+
+def test_writing_to_a_missing_book_is_a_404(client, project):
+    response = label(client, book='还没建')
+    assert response.status_code == 404
+    assert response.json()['error'] == '备注本不存在，先新建'
+    assert not (project / 'storage' / 'labels').exists()
+    # The default book is created by its first write: that is what every page did before books existed.
+    assert label(client).status_code == 200
+    assert book_file(project).exists()
+
+
+def test_reading_a_missing_book_is_empty_not_an_error(client, project):
+    assert labels(client, book='还没建').json() == {'labels': {}, 'bars': {}}
+    assert not (project / 'storage' / 'labels').exists()
+
+
+def test_label_books_lists_rows_and_the_most_recently_written_first(client, project):
+    # Only the default book exists: it is listed even before its first write, so a page always has a book to show.
+    assert list_books(client) == {'books': [{'name': 'finder-labels', 'rows': 0, 'updated': 0}],
+                                  'default': 'finder-labels'}
+    create_book(client, 'old')
+    create_book(client, 'new')
+    label(client, book='old')
+    label(client, book='old')
+    label(client, book='new')
+    label(client, note='默认本')
+    # The mtimes are set by hand: "most recent first" must not depend on how fast the test runs.
+    os.utime(book_file(project, 'old'), (1763000000, 1763000000))
+    os.utime(book_file(project, 'new'), (1763000300, 1763000300))
+    os.utime(book_file(project), (1763000600, 1763000600))
+    data = list_books(client)
+    assert data['default'] == 'finder-labels'
+    assert data['books'] == [
+        {'name': 'finder-labels', 'rows': 1, 'updated': 1763000600},
+        {'name': 'new', 'rows': 1, 'updated': 1763000300},
+        {'name': 'old', 'rows': 2, 'updated': 1763000000},
+    ]
+    # A hand-copied file the API would refuse is not a book (it cannot be selected, so it must not be listed).
+    (project / 'storage' / 'labels' / 'bad name.jsonl').write_text('', encoding='utf-8')
+    (project / 'storage' / 'labels' / 'notes.txt').write_text('', encoding='utf-8')
+    assert [book['name'] for book in list_books(client)['books']] == ['finder-labels', 'new', 'old']
+
+
+def test_creating_an_existing_book_is_a_409_and_never_truncates(client, project):
+    assert create_book(client, 'dup').status_code == 200
+    label(client, book='dup', note='别丢')
+    response = create_book(client, 'dup')
+    assert response.status_code == 409
+    assert '已存在' in response.json()['error']
+    # The rows of the book that was already there are untouched.
+    assert labels(client, book='dup').json()['labels'][KEY]['note'] == '别丢'
+    # The default name can be created too (an explicit empty default book), and is then a duplicate as well.
+    assert create_book(client, 'finder-labels').status_code == 200
+    assert create_book(client, 'finder-labels').status_code == 409
+
+
+def test_label_book_endpoints_require_auth(client, project):
+    assert client.post('/review/label-books', json={}).status_code == 401
+    assert client.post('/review/label-books/create', json={'name': 'x'}).status_code == 401
+    assert not (project / 'storage' / 'labels').exists()

@@ -32,7 +32,14 @@ FOLDER = os.path.join("storage", "screenshots")
 # list, and the person analysing the factor reads the file instead of a screenshot per signal. Append-only JSONL
 # in the project folder, so a mark never rewrites history and the newest row per `key` is the current mark.
 LABELS_FOLDER = os.path.join('storage', 'labels')
-LABELS_FILE = 'finder-labels.jsonl'
+# A "备注本" (label book) is one `<name>.jsonl` in that folder: the same rows, several notebooks, so a new question
+# starts clean without losing last week's marks. `finder-labels` is the default and the file every page (and script)
+# wrote before books existed, so old marks keep working without a migration.
+DEFAULT_BOOK = 'finder-labels'
+BOOK_SUFFIX = '.jsonl'
+# A plain file name: letters, digits, `_`, `-` and CJK (a Chinese book name is fine). No `/`, `.` or space, so a name
+# can never climb out of storage/labels/ or name a file the folder does not expect.
+BOOK_NAME = re.compile(r'^[A-Za-z0-9_\-\u4e00-\u9fff]{1,40}$')
 # `factor|exchange|symbol|tf|start|dir`, built by the page (labels.mjs). 200 is far above any real key and keeps a
 # garbage key from bloating the file.
 MAX_KEY = 200
@@ -116,6 +123,8 @@ def save_screenshot(request_json: ScreenshotRequestJson) -> JSONResponse:
 
 class LabelRequestJson(BaseModel):
     key: str
+    # Which book the row belongs to. Missing = the default, so an older page / script keeps writing where it always did.
+    book: Optional[str] = None
     # Required for trend / order (good / bad / clear), ignored for note rows, which only carry the text.
     label: Optional[str] = None
     # trend / order / note; missing means trend, so a page (or script) written before the split still works.
@@ -145,11 +154,37 @@ class LabelsRequestJson(BaseModel):
     factor: Optional[str] = None
     exchange: Optional[str] = None
     symbol: Optional[str] = None
+    # Missing = the default book (see LabelRequestJson.book).
+    book: Optional[str] = None
 
 
-def labels_path() -> str:
-    """storage/labels/finder-labels.jsonl under the cwd of `jesse run`, like the screenshots folder."""
-    return os.path.join(os.getcwd(), LABELS_FOLDER, LABELS_FILE)
+class LabelBookRequestJson(BaseModel):
+    name: str
+
+
+def labels_folder() -> str:
+    """storage/labels/ under the cwd of `jesse run`, like the screenshots folder."""
+    return os.path.join(os.getcwd(), LABELS_FOLDER)
+
+
+def labels_path(book: str = DEFAULT_BOOK) -> str:
+    """storage/labels/<book>.jsonl of the project `jesse run` was started in."""
+    return os.path.join(labels_folder(), f'{book}{BOOK_SUFFIX}')
+
+
+def resolve_book(value: Optional[str]) -> Union[str, JSONResponse]:
+    """The book a request names (`finder-labels` when the field is absent), or the 400 answer for an impossible name.
+
+    An empty name is refused: it is not the same as not naming a book (the pages send the default explicitly), and a
+    file called `.jsonl` is never a notebook anyone meant to write.
+    """
+    if value is None:
+        return DEFAULT_BOOK
+    name = value.strip()
+    if not BOOK_NAME.match(name):
+        return JSONResponse({'error': '备注本名字只能用中英文、数字、_ 和 -（1–40 字，不能含 / . 空格）'},
+                            status_code=400)
+    return name
 
 
 def label_kind(row: dict) -> str:
@@ -191,6 +226,13 @@ def save_label(request_json: LabelRequestJson) -> JSONResponse:
         return JSONResponse({'error': 'key 不能为空'}, status_code=400)
     if len(key) > MAX_KEY:
         return JSONResponse({'error': f'key 太长（上限 {MAX_KEY} 字符）'}, status_code=400)
+    book = resolve_book(request_json.book)
+    if isinstance(book, JSONResponse):
+        return book
+    # Only the default book is created by its first write (that is where every older page writes); a named book has to
+    # be created first (POST /review/label-books/create), so a typo can never scatter rows into a fresh file.
+    if book != DEFAULT_BOOK and not os.path.isfile(labels_path(book)):
+        return JSONResponse({'error': '备注本不存在，先新建'}, status_code=404)
 
     record = request_json.model_dump(exclude_none=True)
     record['key'] = key
@@ -209,11 +251,14 @@ def save_label(request_json: LabelRequestJson) -> JSONResponse:
     # UTC ISO, same stamp style as the rest of this controller. Only appended fields are added; nothing is rewritten.
     record['saved_at'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
+    # The book is the file name, so it is not repeated inside every row (the file itself says which book it is).
+    record.pop('book', None)
+
     line = json.dumps(record, ensure_ascii=False)
     if len(line.encode('utf-8')) > MAX_RECORD_BYTES:
         return JSONResponse({'error': f'标注太大（一条上限 {MAX_RECORD_BYTES // 1024} KB）'}, status_code=413)
 
-    path = labels_path()
+    path = labels_path(book)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'a', encoding='utf-8') as file:
         file.write(line + '\n')
@@ -289,9 +334,13 @@ def bar_entry(row: dict) -> dict:
 @router.post('/labels')
 def get_labels(request_json: LabelsRequestJson) -> JSONResponse:
     """Every signal's two marks and its note, plus the note on every noted candle, as the last row per key."""
+    book = resolve_book(request_json.book)
+    if isinstance(book, JSONResponse):
+        return book
     latest = {}
     bars = {}
-    for row in read_label_rows(labels_path()):
+    # A book that is not on disk reads as empty (the same answer as a book with no rows): nothing to explain to a reader.
+    for row in read_label_rows(labels_path(book)):
         if label_kind(row) == 'bar':
             # A candle note belongs to the chart, not to a factor run: only exchange + symbol narrow it, and the key
             # already carries the timeframe and the candle time. An empty note is the "deleted" row, so it drops out.
@@ -326,3 +375,66 @@ def get_labels(request_json: LabelsRequestJson) -> JSONResponse:
     labels = {key: entry for key, entry in latest.items()
               if entry['trend'] or entry['order'] or entry['note']}
     return JSONResponse({'labels': labels, 'bars': bars})
+
+
+# ---- Label books ------------------------------------------------------------
+# Claude / the person reads the books straight off disk (`storage/labels/*.jsonl`); these two endpoints only tell the
+# pages which books exist (name + how many rows + when last written) and create an empty one. There is deliberately no
+# delete and no rename: losing a notebook to a mis-click is not recoverable, so a removal stays a manual act.
+def book_rows(path: str) -> int:
+    """How many rows one book holds: a cheap line count (a book is one JSON object per line)."""
+    try:
+        with open(path, encoding='utf-8') as file:
+            return sum(1 for line in file if line.strip())
+    except OSError:
+        return 0
+
+
+@router.post('/label-books')
+def list_label_books() -> JSONResponse:
+    """Every book of the project, the most recently written first: `{books: [{name, rows, updated}], default}`."""
+    folder = labels_folder()
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError:
+        names = []
+    books = []
+    for filename in names:
+        if not filename.endswith(BOOK_SUFFIX):
+            continue
+        name = filename[:-len(BOOK_SUFFIX)]
+        # A hand-copied file with a name the API refuses is not a book: it cannot be selected, so it cannot be written.
+        if not BOOK_NAME.match(name):
+            continue
+        path = os.path.join(folder, filename)
+        try:
+            updated = os.stat(path).st_mtime
+        except OSError:
+            continue
+        books.append({'name': name, 'rows': book_rows(path), 'updated': int(updated)})
+    # The default book is listed even before its first write: the pages show the open book in their dropdown, and the
+    # first mark creates the file (that is what every page did before books existed).
+    if not any(book['name'] == DEFAULT_BOOK for book in books):
+        books.append({'name': DEFAULT_BOOK, 'rows': 0, 'updated': 0})
+    books.sort(key=lambda book: (-book['updated'], book['name']))
+    return JSONResponse({'books': books, 'default': DEFAULT_BOOK})
+
+
+@router.post('/label-books/create')
+def create_label_book(request_json: LabelBookRequestJson) -> JSONResponse:
+    """Create one empty book. An existing name is a 409: the page switches to it instead of writing over it."""
+    name = resolve_book(request_json.name)
+    if isinstance(name, JSONResponse):
+        return name
+    os.makedirs(labels_folder(), exist_ok=True)
+    path = labels_path(name)
+    exists = JSONResponse({'error': f'备注本「{name}」已存在'}, status_code=409)
+    if os.path.exists(path):
+        return exists
+    try:
+        # 'x' refuses instead of truncating if another request created the same name in between.
+        with open(path, 'x', encoding='utf-8'):
+            pass
+    except FileExistsError:
+        return exists
+    return JSONResponse({'ok': True, 'name': name})

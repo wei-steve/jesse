@@ -1,24 +1,24 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261116n';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261116n';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261116n';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116n';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116n';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261116n';
-import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261116n';
+import { t as createChart } from './lightweight-charts.mjs?v=20261116o';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261116o';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261116o';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116o';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116o';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261116o';
+import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261116o';
 import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone,
   nextTickDelay, newKeys, atRightEdge, importId, CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT,
-  FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116n';
-import { streamUrl, openTicker, klineStreamUrl, openKlines } from './live-price.mjs?v=20261116n';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116n';
-import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS
-  } from './labels.mjs?v=20261116n';
+  FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116o';
+import { streamUrl, openTicker, klineStreamUrl, openKlines } from './live-price.mjs?v=20261116o';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116o';
+import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS,
+  bookName, readBook, withBook, writeBook, resolveBook } from './labels.mjs?v=20261116o';
 // The candle notes (double-click a bar) are the market page's too: bar-notes.mjs owns the key, the box, the 「注」
 // markers and the numbers a note carries.
-import { barLabel, barNoteBody, barNoteKey, barNoteOf, createBarNoteBox, noteMarkers, rememberNote, snapshotOf
-  } from './bar-notes.mjs?v=20261116n';
+import { barLabel, barNoteBody, barNoteKey, barNoteOf, createBarNoteBox, createBookPicker, noteMarkers, rememberNote,
+  snapshotOf } from './bar-notes.mjs?v=20261116o';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);
@@ -48,6 +48,9 @@ let labels = {}, labelFilter = 'all';
 // Candle notes of the same answer (`bars`): `key -> {note, tf, time}`, drawn as a purple 「注」 on the candle of their
 // own timeframe (labels.mjs). Kept apart from `labels` because a candle is not a signal.
 let barNotes = {};
+// The open 备注本 (`storage/labels/<book>.jsonl`, shared with the market page through localStorage) and the server's
+// list of books for the dropdown.
+let book = readBook(localStorage), books = [], bookPicker = null;
 
 try { form = restoreForm(localStorage.getItem(FORM_KEY)); } catch { form = restoreForm(null); }
 const saveForm = () => { try { localStorage.setItem(FORM_KEY, JSON.stringify(form)); } catch { /* still works for this page */ } };
@@ -675,8 +678,9 @@ function updateNav() {
 }
 
 // ---- Labels ----------------------------------------------------------------
-// Marking a signal appends one line to the project's storage/labels/finder-labels.jsonl (POST /review/label), which
-// is what the person (or Claude) reads afterwards instead of a screenshot per signal. A signal carries two marks —
+// Marking a signal appends one line to the open 备注本 (`storage/labels/<book>.jsonl`, default finder-labels.jsonl;
+// POST /review/label), which is what the person (or Claude) reads afterwards instead of a screenshot per signal. A
+// signal carries two marks —
 // `trend` (should this signal exist at all) and `order` (was the limit price / fill / exit usable) — plus one note,
 // so a “坏” says which of the two was wrong. The page keeps the current state per key in `labels` and only mirrors
 // the file; the file itself is append-only and never rewritten here.
@@ -733,11 +737,11 @@ function orderPayload(ride) {
 async function saveLabel(ride, kind, label, note) {
   const entry = entryOf(labels, ride.key);
   const text = kind === 'note' ? (note ?? '') : entry.note;
-  await post('/review/label', {
+  await post('/review/label', withBook({
     key: ride.key, ...runIdentity(), version: result?.version ?? null, params: result?.params ?? {},
     tf: ride.tf, start: ride.start, dir: ride.dir, kind, label: label ?? undefined, note: text,
     order: orderPayload(ride),
-  });
+  }, book));
   const next = { ...entry, note: text };
   if (kind !== 'note') next[kind] = label === 'clear' ? null : label;
   if (next.trend || next.order || next.note) labels[ride.key] = next;
@@ -839,7 +843,7 @@ async function submitNote() {
 // `repaint` false leaves the list to the caller (a live round paints it once, after the marks are in).
 async function loadLabels(version, repaint = true) {
   try {
-    const data = await post('/review/labels', runIdentity());
+    const data = await post('/review/labels', withBook(runIdentity(), book));
     if (version !== runVersion) return;
     labels = data.labels ?? {};
     barNotes = data.bars ?? {};
@@ -850,6 +854,54 @@ async function loadLabels(version, repaint = true) {
   // The purple squares of the candles already noted, on the charts that are already drawn.
   for (const panel of panels) paintMarkers(panel);
   if (repaint) paintRides();
+}
+
+// ---- Label books -----------------------------------------------------------
+// One notebook at a time: the marks and candle notes above live in `storage/labels/<book>.jsonl`, and the picker next
+// to the label counts switches it (2026-11-16, the user: "我有不同的备注文件，怎么切换可以继续工作？"). Both pages keep
+// the open book in one localStorage key, so switching here switches the market page too; a book that is gone from the
+// server falls back to the default with a line saying so instead of silently showing another notebook.
+function buildBookPicker() {
+  bookPicker = createBookPicker({ change: name => switchBook(name), create: name => createBook(name) });
+  $('label-book').append(bookPicker.row);
+}
+
+// The server's list (name, rows, last written) and the book this page may use.
+async function loadBooks() {
+  try { books = (await post('/review/label-books', {})).books ?? []; }
+  catch { books = []; } // an old server without books: the default one keeps working (the picker shows it alone)
+  const wanted = book;
+  const resolved = resolveBook(books, wanted);
+  book = resolved.name;
+  if (book !== wanted) writeBook(localStorage, book);
+  bookPicker?.setBooks(books, book);
+  bookPicker?.note(resolved.missing ? `备注本「${resolved.missing}」在服务器上不在了，已回到「${book}」` : '');
+  return book;
+}
+
+// Switch to another book: remember it, refresh the counts, re-read the marks of that book and repaint the list / the
+// 注 squares. Nothing is copied between books — each file is its own notebook.
+async function switchBook(name) {
+  const next = bookName(name);
+  if (next === book) return;
+  book = next;
+  writeBook(localStorage, book);
+  bookPicker?.setBooks(books, book);
+  await loadBooks();
+  await loadLabels(runVersion);
+  status(`已切换到备注本「${book}」`);
+}
+
+// 新建: the picker has already checked the name (plain file name, not taken). An existing name is the server's 409.
+async function createBook(name) {
+  try { await post('/review/label-books/create', { name }); }
+  catch (error) { bookPicker?.say(error.message); return; }
+  bookPicker?.hideForm();
+  book = name;
+  writeBook(localStorage, book);
+  status(`已新建并切换到备注本「${name}」`);
+  await loadBooks();
+  await loadLabels(runVersion);
 }
 
 // ---- Candle notes ----------------------------------------------------------
@@ -900,7 +952,8 @@ async function submitBarNote(panel) {
   const identity = runIdentity();
   const key = barNoteKey(identity, panel.tf, time);
   try {
-    await post('/review/label', barNoteBody({ form: identity, tf: panel.tf, time, text, bar: barPayload(panel, time),
+    await post('/review/label', barNoteBody({ form: identity, tf: panel.tf, time, text, book,
+      bar: barPayload(panel, time),
       extra: { version: result?.version ?? null, params: result?.params ?? {}, signal: selectedRide?.key ?? undefined } }));
   } catch (error) { panel.noteBox.say(error.message); return; }
   barNotes = rememberNote(barNotes, key, text, panel.tf, time);
@@ -1511,7 +1564,8 @@ function flushLive() {
 async function start() {
   try { token = JSON.parse(localStorage.getItem('main') ?? '{}').authToken; } catch { token = null; }
   if (!token) throw new Error('请先在同一地址的 Jesse 页面登录，再刷新此页。localhost 与 127.0.0.1 的登录状态不同。');
-  paintForm(); paintHeight(); paintLimit(); buildLabelFilter();
+  paintForm(); paintHeight(); paintLimit(); buildLabelFilter(); buildBookPicker();
+  await loadBooks();
   // g / b / f / v mark the selected signal (and step on once both marks are in), 0 clears both, n writes the note;
   // ← → / k j walk the list. The note box has its own keys.
   document.addEventListener('keydown', onKeydown);
