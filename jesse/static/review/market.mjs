@@ -7,26 +7,31 @@
 // yields have no push at all: CNBC's one-minute series and its quote are polled every 15 seconds.
 // The chart behaviour (range linking, price zoom, snapshots) and the overlays (the review page's display settings)
 // are reused from the review/finder modules instead of being reimplemented.
-import { t as createChart } from './lightweight-charts.mjs?v=20261116k';
-import { linkTimeRanges } from './data.mjs?v=20261116k';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261116k';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116k';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116k';
+import { t as createChart } from './lightweight-charts.mjs?v=20261116l';
+import { linkTimeRanges } from './data.mjs?v=20261116l';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261116l';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116l';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116l';
 import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages, okxCandleChannels, openOkxKlines,
-  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261116k';
-import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116k';
-import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116k';
+  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261116l';
+import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116l';
+import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116l';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, MARKETS, MARKET_SOURCES, OKX_SOURCE, YIELD_SOURCE, YIELD_INSTRUMENTS,
   DEFAULT_YIELD_SYMBOL, YIELD_POLL_RANGE, aggregateCandles, candleRequest, cnbcSymbolOf, exchangeOf, instrumentName,
   isYieldSource, marketLabel, marketsOf, mergeYieldBars, mergeYieldDailyClose, normalizeMarket, normalizeYieldSymbol,
   parseCnbcBars, parseCnbcQuote, parseMarketCandles, restoreSource, sessionIndicator, sessionTail, signedPoints,
-  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261116k';
+  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261116l';
 import { MARKET_KEYS, MARKET_TIMEFRAMES, MAX_BARS, MAX_WATCHLIST, PRODUCT_PAGE, PROXY_CANDLES,
   PROXY_TICKERS, aggregateAnswer, addToWatchlist, cnbcChartUrl, cnbcQuoteUrl, defaultSymbolFor, endTimeBefore,
   filterProducts, klinesUrlFor, mergeCandles, miniTickerStreamUrl, pageSizeOf, parseKlines, parseMiniTicker,
-  parseOkxCandles, proxyTickerRows, removeFromWatchlist, moveWatchItem, restoreAsideTab, restoreListMarket,
-  restoreSelection, restoreTimeframes, restoreWatchlist, sameWatchItem, shiftLogical, tickerRows, tickersUrlFor,
-  watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261116k';
+  parseOkxCandles, proxyTickerRows, removeFromWatchlist, moveWatchItem, orderTimeframes, restoreAsideTab,
+  restoreListMarket, restoreSelection, restoreTimeframes, restoreWatchlist, sameWatchItem, shiftLogical,
+  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261116l';
+// Candle notes (double-click a bar): the same box, key, 「注」 markers and stored file as the factor finder; the shared
+// module is why a note written on one page shows up on the other.
+import { barLabel, barsFor, createBarNoteBox, barNoteBody, barNoteKey, barNoteOf, filterNoteRows, noteDigest,
+  noteIdentity, noteMarkers, noteRowsFrom, noteSummary, noteTimeText, noteWhere, rememberNote, snapshotOf
+  } from './bar-notes.mjs?v=20261116l';
 
 const $ = id => document.getElementById(id);
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
@@ -99,6 +104,11 @@ const quoteSockets = new Map();
 const watchRows = new Map();
 // The product list of the venue on screen: `[{symbol, last, change, quoteVolume}]`, biggest turnover first.
 let productRows = [], productShown = PRODUCT_PAGE, productQuery = '', productError = '', productVenue = '';
+// Candle notes: `bars` of POST /review/labels for the whole label file (every source and instrument; a key carries
+// the exchange and the symbol), the box under the search field of the 备注 tab, the note a list row jumped to
+// (kept so its marker stays amber across the next 3 / 15-second update), and why the last read failed (the tab says
+// it instead of pretending there are no notes).
+let allBars = {}, noteSearch = '', chosenNote = null, noteError = '';
 
 function status(message, error = false) {
   const box = $('status');
@@ -216,8 +226,11 @@ function paintForming(panel, candle) {
   if (previous && candle.time < previous.time) return;
   // The bar that just closed is closed data now: keep it even if the stream's own `closed` message never arrives.
   if (previous && candle.time > previous.time) appendClosed(panel, candleOf(previous));
+  const startedBar = previous?.time !== candle.time;
   panel.forming = candle;
   try { panel.series.update(candleOf(candle)); } catch { return; /* chart rebuilt */ }
+  // A new forming bar can be a noted one (the 「注」 belongs to that candle's time): every tick would be too often.
+  if (startedBar) paintMarkers(panel);
   scheduleTail(panel);
 }
 
@@ -257,9 +270,13 @@ function makePanel(tf, answer) {
   card.className = 'chart-card'; card.dataset.interval = interval;
   card.innerHTML = '<div class="chart-head"><h3></h3></div><div class="chart-host"></div><div class="chart-meta"></div>';
   card.querySelector('h3').textContent = timeframeLabel(interval);
+  // The double-click box at the top of this card (a note on one candle of this timeframe), hidden until used.
+  // bar-notes.mjs owns it, so the finder's box and this one behave exactly alike.
+  const noteBox = createBarNoteBox({ submit: () => submitBarNote(panel), close: () => closeBarNote(panel) });
+  card.insertBefore(noteBox.row, card.querySelector('.chart-host'));
   $('charts').append(card);
   const host = card.querySelector('.chart-host');
-  const panel = { tf, interval, card, host, empty: false, note: answer.note ?? '',
+  const panel = { tf, interval, card, host, noteBox, noteTime: null, empty: false, note: answer.note ?? '',
     candles: answer.closed, closes: new Map(answer.closed.map(candle => [candle.time, candle.close])),
     byTime: new Map(answer.closed.map(candle => [candle.time, candle])),
     overlaySeries: [], overlayGroups: [], forming: answer.forming, tailTimer: null,
@@ -281,6 +298,7 @@ function makePanel(tf, answer) {
   enablePriceZoom(panel.chart, panel.series, host);
   drawOverlay(panel);
   if (panel.forming) { try { panel.series.update(candleOf(panel.forming)); } catch { /* chart not ready */ } paintIndicatorTail(panel, panel.forming); }
+  paintMarkers(panel);
   paintMeta(panel);
   addSnapshotButton(card, () => snapshotPanel(panel));
   addMaximizeButton(card);
@@ -298,6 +316,12 @@ function makePanel(tf, answer) {
   });
   panel.chart.subscribeCrosshairMove(event => syncCrosshair(panel, typeof event.time === 'number' ? event.time : null,
     event.point ? panel.series.coordinateToPrice(event.point.y) : null));
+  // Double-clicking a candle opens this card's note box. A click on the scales, past the last candle, or on a bar that
+  // is not there (a gap in a session market) has no candle and opens nothing; a single click is left alone.
+  panel.chart.subscribeDblClick(param => {
+    const time = barTimeAt(panel, param);
+    if (time !== null) openBarNote(panel, time);
+  });
   // Dragged to the left edge: pull the page of bars before the oldest one. `sized` guards the first, unsized layout,
   // which reports a range from bar 0 and would fetch history nobody asked for.
   panel.chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
@@ -327,22 +351,34 @@ function destroyPanels() {
   panels = []; pointerPanel = null; $('charts').replaceChildren();
 }
 
+// The line under a chart: the text, plus the note of the candle under the pointer in the finder's purple, so a 「注」
+// can be read in full without opening the box.
+function paintMetaText(box, text, barNote = '') {
+  box.replaceChildren(document.createTextNode(text));
+  if (!barNote) return;
+  const span = document.createElement('span');
+  span.className = 'bar-note-text';
+  span.textContent = ` · 注：${barNote}`;
+  box.append(span);
+}
+
 // The candle under the pointer (or the newest one) in words, under the chart.
 function paintMeta(panel, time = null) {
   const box = panel.card.querySelector('.chart-meta');
   const note = panel.note ? ` · ${panel.note}` : '';
   if (panel.empty || !panel.candles.length) { box.textContent = panel.note; return; }
   const candle = time === null ? null : panel.byTime.get(time) ?? (panel.forming?.time === time ? panel.forming : null);
+  const barNote = time === null ? '' : barNoteOf(panelNotes(), noteKeyAt(panel, time));
   if (!candle) {
     const last = panel.forming ?? panel.candles.at(-1);
-    box.textContent = `${panel.candles.length.toLocaleString()} 根 K 线 · 最新 ${stamp(last.time)} UTC · 收 ${fmtPrice(last.close)}`
-      + (panel.forming ? '（形成中）' : '') + note;
+    paintMetaText(box, `${panel.candles.length.toLocaleString()} 根 K 线 · 最新 ${stamp(last.time)} UTC · 收 ${fmtPrice(last.close)}`
+      + (panel.forming ? '（形成中）' : '') + note, barNote);
     return;
   }
   const change = candle.open > 0 ? (candle.close - candle.open) / candle.open : null;
-  box.textContent = `${stamp(candle.time)} UTC${panel.forming?.time === candle.time ? '（形成中）' : ''}`
+  paintMetaText(box, `${stamp(candle.time)} UTC${panel.forming?.time === candle.time ? '（形成中）' : ''}`
     + ` · 开 ${fmtPrice(candle.open)} · 高 ${fmtPrice(candle.high)} · 低 ${fmtPrice(candle.low)} · 收 ${fmtPrice(candle.close)}`
-    + (Number.isFinite(change) ? ` · ${signedPercent(change)}` : '') + note;
+    + (Number.isFinite(change) ? ` · ${signedPercent(change)}` : '') + note, barNote);
 }
 
 // `price` is the price under the pointer: every other chart puts its horizontal line at that same price, and falls
@@ -473,6 +509,8 @@ function setBars(panel, next) {
     try { panel.series.update(candleOf(panel.forming)); } catch { /* chart rebuilt */ }
     paintIndicatorTail(panel, panel.forming);
   }
+  // After the forming bar is back on the data set: a note can sit on that bar, and a marker needs its candle.
+  paintMarkers(panel);
   paintMeta(panel);
   if (!logical || !Number.isFinite(first)) return;
   const index = panel.candles.findIndex(candle => candle.time === first);
@@ -586,6 +624,8 @@ async function openSelection(nextSource, nextMarket, input) {
     return false;
   }
   if (version !== loadVersion) return false;
+  // The highlighted note of a 备注 row belonged to the instrument that was on screen.
+  chosenNote = null;
   if (same) { paintSource(); await render(); return true; }
   source = nextSource; market = wantedMarket; symbol = next;
   // The product list's sub-tab stays on the market it showed, unless this source has no such market.
@@ -596,6 +636,8 @@ async function openSelection(nextSource, nextMarket, input) {
   syncStreams(); syncPolling();
   if (asideTab === 'products') loadProducts();
   await render();
+  // The notes are the whole label file; read again so a note written elsewhere (the finder, a restart) is drawn.
+  loadNotes();
   return true;
 }
 
@@ -651,15 +693,19 @@ function paintAside() {
   }
   $('watchlist').hidden = asideTab !== 'watch';
   $('products').hidden = asideTab !== 'products';
+  $('notes').hidden = asideTab !== 'notes';
   if (asideTab === 'products') paintProducts();
+  if (asideTab === 'notes') paintNoteList();
 }
 
 function setAsideTab(tab) {
-  asideTab = tab === 'products' ? 'products' : 'watch';
+  asideTab = tab === 'products' ? 'products' : tab === 'notes' ? 'notes' : 'watch';
   write(MARKET_KEYS.aside, asideTab);
   paintAside();
   syncTickerPolling();
   if (asideTab === 'products') loadProducts();
+  // The list is read from the file again when its tab is opened: a note may have been written on the finder since.
+  if (asideTab === 'notes') loadNotes();
 }
 
 // ---- Watchlist -------------------------------------------------------------
@@ -1271,6 +1317,161 @@ async function refreshYieldQuotes() {
   if (asideTab === 'products' && source === YIELD_SOURCE) paintProducts();
 }
 
+// ---- Candle notes ----------------------------------------------------------
+// The finder's candle notes on the market page too (2026-11-16): double-click any candle of any chart, write one line,
+// and it is stored as a `kind=bar` row of the same project file as the signal marks (POST /review/label). The key
+// names the exchange and the symbol the finder's way (`Binance Perpetual Futures` + `BTC-USDT`), so one candle is one
+// note on both pages; bar-notes.mjs owns the key, the box, the 「注」 markers and the snapshot a note carries.
+
+const noteId = () => noteIdentity(source, market, symbol);
+const panelNotes = () => barsFor(allBars, noteId());
+const noteKeyAt = (panel, time) => barNoteKey(noteId(), panel.tf, time);
+// The forming bar is a candle too: it can be noted, its snapshot taken mid-bar.
+const hasBar = (panel, time) => !!panel && (panel.closes.has(time) || panel.forming?.time === time);
+
+// The purple 「注」 squares of one chart (only its own timeframe, only candles that are drawn), the jumped-to one amber.
+function paintMarkers(panel) {
+  if (!panel?.series) return;
+  const chosen = chosenNote && chosenNote.tf === panel.tf ? chosenNote.time : null;
+  panel.series.setMarkers(noteMarkers(panelNotes(), panel.tf, time => hasBar(panel, time), chosen));
+}
+
+// Without a Jesse login the note calls cannot run at all (unlike the Binance / OKX / CNBC charts), so a failure says
+// what to do instead of the proxy's own wording.
+const noteErrorText = error => (tokenOf() ? error.message
+  : '备注存在 Jesse 的项目文件里：先在同一地址的 Jesse 页面登录，再刷新此页。');
+
+// Every candle note of the label file: the charts draw their own instrument's, the 备注 tab lists them all.
+async function loadNotes() {
+  try {
+    const data = await post('/review/labels', {});
+    allBars = data.bars ?? {};
+    noteError = '';
+  } catch (error) {
+    noteError = noteErrorText(error);
+    if (asideTab === 'notes') paintNoteList();
+    return; /* the charts keep the notes they have; the next read tries again */
+  }
+  for (const panel of panels) paintMarkers(panel);
+  if (asideTab === 'notes') paintNoteList();
+}
+
+// The 备注 tab: `品种 · 来源 · 周期 · K 线时间 UTC` and the first 40 characters of the text, newest candle first; a row
+// jumps to the chart that holds that candle. Long lists are cut off and narrowed with the search field instead.
+const NOTE_ROWS_SHOWN = 200;
+
+function paintNoteList() {
+  const all = noteRowsFrom(allBars);
+  const rows = filterNoteRows(all, noteSearch);
+  const box = $('note-list');
+  const count = rows.length === all.length ? `${all.length}` : `${rows.length} / ${all.length}`;
+  $('note-count').textContent = `${count} 条备注`;
+  box.replaceChildren(...rows.slice(0, NOTE_ROWS_SHOWN).map(row => {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'note-row'; button.title = row.note;
+    const head = document.createElement('strong');
+    head.textContent = `${row.symbol} · ${noteWhere(row)} · ${row.tf} · ${noteTimeText(row.time)} UTC`;
+    const text = document.createElement('small');
+    text.textContent = noteDigest(row.note);
+    button.append(head, text);
+    button.onclick = () => jumpToNote(row);
+    return button;
+  }));
+  const message = rows.length ? (rows.length > NOTE_ROWS_SHOWN ? `只显示最新的 ${NOTE_ROWS_SHOWN} 条，用上面的搜索缩小范围。` : '')
+    : (noteError ? `读不到备注：${noteError}`
+      : (all.length ? '没有匹配的备注。' : '还没有备注：双击图上任意 K 线，写下你的想法。'));
+  if (!message) return;
+  const hint = document.createElement('p');
+  hint.className = 'notes-empty';
+  hint.textContent = message;
+  box.append(hint);
+}
+
+// The candle a double-click landed on. The library reports the candle under the pointer; `logical` covers a click a
+// few pixels outside it. A click on the price / time scale, past the last candle, or on a bar that is not there (the
+// night / weekend gap of a yield chart) has no candle and starts nothing.
+function barTimeAt(panel, param) {
+  const pane = panel.chart.paneSize(), point = param?.point;
+  if (!point || !pane || point.x < 0 || point.y < 0 || point.x > pane.width || point.y > pane.height) return null;
+  if (typeof param.time === 'number' && hasBar(panel, param.time)) return param.time;
+  const index = Math.round(param.logical);
+  const candle = Number.isFinite(index) ? panel.candles[index] : null;
+  return candle && hasBar(panel, candle.time) ? candle.time : null;
+}
+
+function openBarNote(panel, time) {
+  // One box at a time: the box belongs to the candle it was opened on.
+  for (const other of panels) if (other !== panel) closeBarNote(other);
+  panel.noteTime = time;
+  panel.noteBox.show(`${barLabel(time, panel.tf)} 这根 K 线的看法`, barNoteOf(panelNotes(), noteKeyAt(panel, time)));
+}
+
+function closeBarNote(panel) {
+  if (!panel?.noteBox) return;
+  panel.noteBox.hide(); panel.noteTime = null;
+}
+
+// Enter in the box: one `kind=bar` row carrying the candle's numbers (a bar still forming is flagged, so the reader
+// knows the values were taken mid-bar). An empty box is the explicit "delete this note" row; Esc leaves without saving.
+async function submitBarNote(panel) {
+  const time = panel.noteTime;
+  if (time === null) return;
+  const text = panel.noteBox.value();
+  const form = noteId();
+  const key = barNoteKey(form, panel.tf, time);
+  const forming = panel.forming?.time === time;
+  const candles = forming ? [...panel.candles, panel.forming] : panel.candles;
+  // A session market (the yields) counts its indicator windows over consecutive bars, the way a trading app does.
+  const snapshot = snapshotOf(candles, time, panel.interval, isYieldSource(source));
+  try {
+    await post('/review/label', barNoteBody({ form, tf: panel.tf, time, text,
+      bar: snapshot ? { ...snapshot, ...(forming ? { forming: true } : {}) } : null }));
+  } catch (error) { panel.noteBox.say(noteErrorText(error)); return; }
+  allBars = rememberNote(allBars, key, text, panel.tf, time);
+  closeBarNote(panel);
+  paintMarkers(panel);
+  if (asideTab === 'notes') paintNoteList();
+  status(text ? `已保存 ${barLabel(time, panel.tf)} 的备注` : `已删除 ${barLabel(time, panel.tf)} 的备注`);
+}
+
+// A 备注 row: switch to its source / instrument, check its timeframe, scroll to that candle and highlight it amber
+// (the finder jumps to a signal the same way).
+async function jumpToNote(row) {
+  if (!row.target) {
+    status(`这条备注的来源「${row.exchange} · ${row.symbol}」在看行情页没有对应数据源。`, true);
+    return;
+  }
+  if (!MARKET_TIMEFRAMES.includes(row.tf)) { status(`看行情页没有 ${row.tf} 这个周期。`, true); return; }
+  if (!timeframes.includes(row.tf)) {
+    timeframes = orderTimeframes([...timeframes, row.tf]);
+    write(MARKET_KEYS.timeframes, JSON.stringify(timeframes));
+    paintTimeframes();
+  }
+  if (!await openSelection(row.target.source, row.target.market, row.target.symbol)) return;
+  const panel = panels.find(item => item.tf === row.tf && !item.empty);
+  if (!panel) { status(`${row.tf} 周期还没有拿到 K 线，跳不过去。`, true); return; }
+  if (!showNoteBar(panel, row.time)) {
+    status(`那根 ${row.tf} K 线不在已加载的历史里（每个周期最多 ${MAX_BARS} 根）。`, true);
+    return;
+  }
+  status(`已跳到 ${noteSummary(row)}`);
+}
+
+// Puts the window on one candle (about a screenful around it), shows its numbers and marks it as the chosen note.
+function showNoteBar(panel, time) {
+  const index = panel.candles.findIndex(candle => candle.time === time);
+  const position = index >= 0 ? index : panel.forming?.time === time ? panel.candles.length : -1;
+  if (position < 0) return false;
+  chosenNote = { tf: panel.tf, time };
+  const half = Math.round(VIEW_BARS / 2);
+  panel.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, position - half), to: position + half + RIGHT_PAD });
+  paintMarkers(panel);
+  const candle = panel.byTime.get(time) ?? panel.forming;
+  if (candle) { try { panel.chart.setCrosshairPosition(candle.close, time, panel.series); } catch { /* not sized yet */ } }
+  paintMeta(panel, time);
+  return true;
+}
+
 // ---- Controls --------------------------------------------------------------
 function paintTimeframes() {
   const box = $('m-timeframes');
@@ -1324,6 +1525,8 @@ function onVisibility() {
   if (source === YIELD_SOURCE) pollYields();
   else if (away > HIDDEN_REFRESH_MS) { refreshAll(); pollYields(); }
   if (asideTab === 'products') loadProducts();
+  // Notes may have been written while this page was in the background.
+  loadNotes();
 }
 
 function start() {
@@ -1339,6 +1542,15 @@ function start() {
     paintProducts();
   };
   $('product-more').onclick = () => { productShown += PRODUCT_PAGE; paintProducts(); };
+  $('note-search').oninput = () => { noteSearch = $('note-search').value; paintNoteList(); };
+  // Esc closes an open note box even when the focus moved off its input (to a chart, or a button).
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    const panel = openBarPanel();
+    if (!panel) return;
+    event.preventDefault();
+    closeBarNote(panel);
+  });
   $('m-form').onsubmit = event => {
     event.preventDefault();
     openSelection(source, market, source === YIELD_SOURCE ? $('m-yield').value : $('m-symbol').value);
@@ -1356,6 +1568,7 @@ function start() {
     addWatch();
   };
   document.addEventListener('visibilitychange', onVisibility);
+  loadNotes();
   render();
   syncPolling(); syncTickerPolling();
 }

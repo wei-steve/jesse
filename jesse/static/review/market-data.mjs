@@ -4,7 +4,7 @@
 // No DOM, no fetch, no websocket: tests/review-market-data.test.mjs runs every function in this file with node.
 import { BINANCE_SOURCE, DEFAULT_MARKET, DEFAULT_SOURCE, DEFAULT_YIELD_SYMBOLS, OKX_SOURCE, YIELD_SOURCE, MARKETS,
   aggregateCandles, candleRequest, defaultSymbolOf, migrateSource, normalizeMarket, normalizeSymbol,
-  symbolOf } from './market-sources.mjs?v=20261116k';
+  symbolOf } from './market-sources.mjs?v=20261116l';
 
 // Binance USDTⓈ-M futures, public and CORS-open (`access-control-allow-origin: *`), so the browser talks to the
 // exchange directly: any USDT perpetual can be watched, nothing has to be imported into Jesse's database and no
@@ -430,8 +430,11 @@ export function restoreTimeframes(serialized) {
   return list.length ? list : [...DEFAULT_TIMEFRAMES];
 }
 
-/** `watch` / `products`: which of the two left column tabs was open. */
-export const restoreAsideTab = serialized => (String(serialized ?? '').trim() === 'products' ? 'products' : 'watch');
+/** `watch` / `products` / `notes`: which of the left column's tabs was open. */
+export const restoreAsideTab = serialized => {
+  const raw = String(serialized ?? '').trim();
+  return raw === 'products' || raw === 'notes' ? raw : 'watch';
+};
 /** The product list's contract / spot sub-tab; a source without markets has none (null). */
 export function restoreListMarket(serialized) {
   const raw = String(serialized ?? '').trim();
