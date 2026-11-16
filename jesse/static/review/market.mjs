@@ -7,31 +7,31 @@
 // yields have no push at all: CNBC's one-minute series and its quote are polled every 15 seconds.
 // The chart behaviour (range linking, price zoom, snapshots) and the overlays (the review page's display settings)
 // are reused from the review/finder modules instead of being reimplemented.
-import { t as createChart } from './lightweight-charts.mjs?v=20261116l';
-import { linkTimeRanges } from './data.mjs?v=20261116l';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261116l';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116l';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116l';
+import { t as createChart } from './lightweight-charts.mjs?v=20261116n';
+import { linkTimeRanges } from './data.mjs?v=20261116n';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261116n';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116n';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116n';
 import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages, okxCandleChannels, openOkxKlines,
-  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261116l';
-import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116l';
-import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116l';
+  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261116n';
+import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116n';
+import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116n';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, MARKETS, MARKET_SOURCES, OKX_SOURCE, YIELD_SOURCE, YIELD_INSTRUMENTS,
   DEFAULT_YIELD_SYMBOL, YIELD_POLL_RANGE, aggregateCandles, candleRequest, cnbcSymbolOf, exchangeOf, instrumentName,
   isYieldSource, marketLabel, marketsOf, mergeYieldBars, mergeYieldDailyClose, normalizeMarket, normalizeYieldSymbol,
   parseCnbcBars, parseCnbcQuote, parseMarketCandles, restoreSource, sessionIndicator, sessionTail, signedPoints,
-  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261116l';
+  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261116n';
 import { MARKET_KEYS, MARKET_TIMEFRAMES, MAX_BARS, MAX_WATCHLIST, PRODUCT_PAGE, PROXY_CANDLES,
   PROXY_TICKERS, aggregateAnswer, addToWatchlist, cnbcChartUrl, cnbcQuoteUrl, defaultSymbolFor, endTimeBefore,
   filterProducts, klinesUrlFor, mergeCandles, miniTickerStreamUrl, pageSizeOf, parseKlines, parseMiniTicker,
   parseOkxCandles, proxyTickerRows, removeFromWatchlist, moveWatchItem, orderTimeframes, restoreAsideTab,
   restoreListMarket, restoreSelection, restoreTimeframes, restoreWatchlist, sameWatchItem, shiftLogical,
-  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261116l';
+  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261116n';
 // Candle notes (double-click a bar): the same box, key, 「注」 markers and stored file as the factor finder; the shared
 // module is why a note written on one page shows up on the other.
 import { barLabel, barsFor, createBarNoteBox, barNoteBody, barNoteKey, barNoteOf, filterNoteRows, noteDigest,
   noteIdentity, noteMarkers, noteRowsFrom, noteSummary, noteTimeText, noteWhere, rememberNote, snapshotOf
-  } from './bar-notes.mjs?v=20261116l';
+  } from './bar-notes.mjs?v=20261116n';
 
 const $ = id => document.getElementById(id);
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
@@ -1450,6 +1450,14 @@ async function jumpToNote(row) {
   if (!await openSelection(row.target.source, row.target.market, row.target.symbol)) return;
   const panel = panels.find(item => item.tf === row.tf && !item.empty);
   if (!panel) { status(`${row.tf} 周期还没有拿到 K 线，跳不过去。`, true); return; }
+  // An older note lies before the first page: load earlier pages (the same ones a drag to the left asks for) until
+  // that candle is in, the MAX_BARS cap is reached or the history ends (2026-11-16, a 15m note 20 days back failed).
+  while (panel.candles.length && panel.candles[0].time > row.time && !panel.noMore && panel.candles.length < MAX_BARS) {
+    const before = panel.candles.length;
+    status(`正在往前加载 ${row.tf} K 线，找 ${noteSummary(row)}…`);
+    await loadEarlier(panel);
+    if (panel.candles.length === before) break; // a failed page or a page already loading: stop instead of spinning
+  }
   if (!showNoteBar(panel, row.time)) {
     status(`那根 ${row.tf} K 线不在已加载的历史里（每个周期最多 ${MAX_BARS} 根）。`, true);
     return;
@@ -1546,7 +1554,8 @@ function start() {
   // Esc closes an open note box even when the focus moved off its input (to a chart, or a button).
   document.addEventListener('keydown', event => {
     if (event.key !== 'Escape') return;
-    const panel = openBarPanel();
+    // The chart whose note box is open (noteTime is set while it is), if any.
+    const panel = panels.find(item => item.noteTime !== null && item.noteTime !== undefined);
     if (!panel) return;
     event.preventDefault();
     closeBarNote(panel);
