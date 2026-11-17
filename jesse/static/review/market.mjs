@@ -7,44 +7,46 @@
 // yields have no push at all: CNBC's one-minute series and its quote are polled every 15 seconds.
 // The chart behaviour (range linking, price zoom, snapshots) and the overlays (the review page's display settings)
 // are reused from the review/finder modules instead of being reimplemented.
-import { t as createChart } from './lightweight-charts.mjs?v=20261117l';
-import { linkTimeRanges } from './data.mjs?v=20261117l';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261117l';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261117l';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261117l';
+import { t as createChart } from './lightweight-charts.mjs?v=20261117m';
+import { linkTimeRanges } from './data.mjs?v=20261117m';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261117m';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261117m';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261117m';
 import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages, okxCandleChannels, openOkxKlines,
-  openOkxTicker, openOkxTickers, openDeepcoinTicker, openDeepcoinTickers } from './live-price.mjs?v=20261117l';
-import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117l';
-import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261117l';
+  openOkxTicker, openOkxTickers, openDeepcoinTicker, openDeepcoinTickers } from './live-price.mjs?v=20261117m';
+import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117m';
+import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261117m';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, MARKETS, MARKET_SOURCES, OKX_SOURCE, YIELD_SOURCE, YIELD_INSTRUMENTS,
   DEFAULT_YIELD_SYMBOL, YIELD_POLL_RANGE, aggregateCandles, candleRequest, cnbcSymbolOf, exchangeOf, instrumentName,
   isYieldSource, marketLabel, marketsOf, mergeYieldBars, mergeYieldDailyClose, normalizeMarket, normalizeYieldSymbol,
   parseCnbcBars, parseCnbcQuote, parseMarketCandles, restoreSource, sessionIndicator, sessionTail, signedPoints,
-  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261117l';
+  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261117m';
 import { MARKET_KEYS, MARKET_TIMEFRAMES, MAX_BARS, MAX_WATCHLIST, PRODUCT_PAGE, PROXY_CANDLES,
   PROXY_TICKERS, aggregateAnswer, addToWatchlist, cnbcChartUrl, cnbcQuoteUrl, defaultSymbolFor, endTimeBefore,
   filterProducts, klinesUrlFor, mergeCandles, miniTickerStreamUrl, pageSizeOf, parseKlines, parseMiniTicker,
   parseOkxCandles, proxyTickerRows, removeFromWatchlist, moveWatchItem, orderTimeframes, restoreAsideTab,
   restoreListMarket, restoreSelection, restoreTimeframes, restoreWatchlist, sameWatchItem, shiftLogical,
-  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261117l';
+  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261117m';
 // Candle notes (double-click a bar): the same box, key, 「注」 markers and stored file as the factor finder; the shared
 // module is why a note written on one page shows up on the other.
 import { barLabel, barsFor, createBarNoteBox, createBookPicker, barNoteBody, barNoteKey, barNoteOf, filterNoteRows,
   noteDigest, noteIdentity, noteMarkers, noteRowsFrom, noteSummary, noteTimeText, noteWhere, rememberNote, snapshotOf
-  } from './bar-notes.mjs?v=20261117l';
+  } from './bar-notes.mjs?v=20261117m';
 // The open 备注本 (`storage/labels/<book>.jsonl`): the same notebook as the factor finder, kept in one localStorage key.
-import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261117l';
+import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261117m';
 // The owner's own Deepcoin fills (T-59): 「我的成交」 marks his 开多 / 平多 / 开空 / 平空 on the candles of any crypto
 // source. The instrument mapping, the per-candle buckets, the markers and their line under the chart are pure functions
 // in market-fills.mjs; this page owns the request and the polling.
 import { FILLS_ENDPOINT, FILLS_KEY, FILLS_NOT_CONFIGURED, FILLS_POLL_MS, FILLS_WAIT_ENDPOINT, applyFillsWait,
   bucketFills, configuredOf, fillGroupsText, fillLabelsFit, fillsHave, fillsProgressText, fillsRequest, fillsStatusLine,
   fillsStreamText, fillsWaitBackoff, fillsWaitBody, mergeFillRows, mergeMarkers, parseFills }
-  from './market-fills.mjs?v=20261117l';
+  from './market-fills.mjs?v=20261117m';
 // The 价位 marks (T-62): one small triangle / circle per order at its own average price, drawn as a series primitive so
 // a mark sits on the price instead of under the candle, and switched on / off per timeframe (1h / 4h / 1D start off).
 import { FILL_PRICES_KEY, FillPricesPrimitive, fillArrowMarkers, fillPriceMarksOn, orderMarks, orderMarksText,
-  readFillPrices, toggleFillPrices } from './fill-prices.mjs?v=20261117l';
+  readFillPrices, toggleFillPrices } from './fill-prices.mjs?v=20261117m';
+// Current-candle close countdown (T-64): sits on the price axis right below the 「实时」 label.
+import { CountdownPrimitive } from './bar-countdown.mjs?v=20261117m';
 
 const $ = id => document.getElementById(id);
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
@@ -354,6 +356,9 @@ function makePanel(tf, answer) {
   // Empty until paintFills hands it this panel's orders; detached with the panel in destroyPanels.
   panel.fillPrimitive = new FillPricesPrimitive();
   panel.series.attachPrimitive(panel.fillPrimitive);
+  // Bar-close countdown (T-64): axis label directly below the 「实时」 price label, updated every second.
+  panel.countdownPrimitive = new CountdownPrimitive({ intervalMinutes: interval, color: LIVE_PRICE });
+  panel.series.attachPrimitive(panel.countdownPrimitive);
   enablePriceZoom(panel.chart, panel.series, host);
   drawOverlay(panel);
   if (panel.forming) { try { panel.series.update(candleOf(panel.forming)); } catch { /* chart not ready */ } paintIndicatorTail(panel, panel.forming); }
@@ -415,6 +420,8 @@ function destroyPanels() {
     panel.observer?.disconnect();
     try { if (panel.fillPrimitive) panel.series?.detachPrimitive(panel.fillPrimitive); } catch { /* already gone */ }
     panel.fillPrimitive = null;
+    try { if (panel.countdownPrimitive) panel.series?.detachPrimitive(panel.countdownPrimitive); } catch { /* already gone */ }
+    panel.countdownPrimitive = null;
     try { panel.chart?.remove(); } catch { /* already gone */ }
   }
   panels = []; pointerPanel = null; $('charts').replaceChildren();
@@ -1069,8 +1076,10 @@ function paintLastPrice() {
 // The last traded price as a light red dashed line with an axis label on every chart (the finder's own line).
 function paintLivePrice() {
   const title = '实时';
+  const countdownPrice = source === YIELD_SOURCE ? null : livePrice;
   for (const panel of panels) {
     if (panel.empty || !panel.series) continue;
+    panel.countdownPrimitive?.setPrice(countdownPrice);
     if (livePrice === null) {
       if (panel.livePriceLine) { try { panel.series.removePriceLine(panel.livePriceLine); } catch { /* chart rebuilt */ } }
       panel.livePriceLine = null;
@@ -1954,6 +1963,7 @@ function onVisibility() {
 function start() {
   paintClock();
   setInterval(paintClock, 1000);
+  setInterval(() => { if (!document.hidden) for (const panel of panels) panel.countdownPrimitive?.tick(); }, 1000);
   paintSource(); paintTimeframes(); paintHeight(); paintWatchlist(); paintAside(); paintFillsToggle();
   buildBookPicker();
   loadBooks();
