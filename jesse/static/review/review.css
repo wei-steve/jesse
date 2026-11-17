@@ -67,6 +67,10 @@ main[hidden]{display:none}
 .chart-grid.has-maximized>.chart-card:not(.maximized){display:none}
 .chart-grid.has-maximized>.chart-card.maximized .chart-host{height:max(260px,calc(100vh - 130px))}
 .chart-head h3 .maximize-btn{margin-left:4px}
+/* 价位 (T-62): the per-timeframe switch next to 截图 / 放大, pressed the way the other toggles look. */
+.chart-head h3 .fill-prices-btn{margin-left:4px}
+.chart-head h3 .snapshot-btn[aria-pressed=true]{background:#edf3ff;border-color:#315cd0;color:#315cd0}
+.chart-head h3 .snapshot-btn:disabled{background:#fff;border-color:#dce3ee;color:#283a54}
 
 /* Signal labels (labels.mjs, POST /review/label): counts + filter + shortcut line above the list, the 势 / 挂 marks
    in every row, and the one-line note box opened with `n`. */

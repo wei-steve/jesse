@@ -7,39 +7,43 @@
 // yields have no push at all: CNBC's one-minute series and its quote are polled every 15 seconds.
 // The chart behaviour (range linking, price zoom, snapshots) and the overlays (the review page's display settings)
 // are reused from the review/finder modules instead of being reimplemented.
-import { t as createChart } from './lightweight-charts.mjs?v=20261117e';
-import { linkTimeRanges } from './data.mjs?v=20261117e';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261117e';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261117e';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261117e';
+import { t as createChart } from './lightweight-charts.mjs?v=20261117f';
+import { linkTimeRanges } from './data.mjs?v=20261117f';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261117f';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261117f';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261117f';
 import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages, okxCandleChannels, openOkxKlines,
-  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261117e';
-import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117e';
-import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261117e';
+  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261117f';
+import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117f';
+import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261117f';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, MARKETS, MARKET_SOURCES, OKX_SOURCE, YIELD_SOURCE, YIELD_INSTRUMENTS,
   DEFAULT_YIELD_SYMBOL, YIELD_POLL_RANGE, aggregateCandles, candleRequest, cnbcSymbolOf, exchangeOf, instrumentName,
   isYieldSource, marketLabel, marketsOf, mergeYieldBars, mergeYieldDailyClose, normalizeMarket, normalizeYieldSymbol,
   parseCnbcBars, parseCnbcQuote, parseMarketCandles, restoreSource, sessionIndicator, sessionTail, signedPoints,
-  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261117e';
+  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261117f';
 import { MARKET_KEYS, MARKET_TIMEFRAMES, MAX_BARS, MAX_WATCHLIST, PRODUCT_PAGE, PROXY_CANDLES,
   PROXY_TICKERS, aggregateAnswer, addToWatchlist, cnbcChartUrl, cnbcQuoteUrl, defaultSymbolFor, endTimeBefore,
   filterProducts, klinesUrlFor, mergeCandles, miniTickerStreamUrl, pageSizeOf, parseKlines, parseMiniTicker,
   parseOkxCandles, proxyTickerRows, removeFromWatchlist, moveWatchItem, orderTimeframes, restoreAsideTab,
   restoreListMarket, restoreSelection, restoreTimeframes, restoreWatchlist, sameWatchItem, shiftLogical,
-  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261117e';
+  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261117f';
 // Candle notes (double-click a bar): the same box, key, 「注」 markers and stored file as the factor finder; the shared
 // module is why a note written on one page shows up on the other.
 import { barLabel, barsFor, createBarNoteBox, createBookPicker, barNoteBody, barNoteKey, barNoteOf, filterNoteRows,
   noteDigest, noteIdentity, noteMarkers, noteRowsFrom, noteSummary, noteTimeText, noteWhere, rememberNote, snapshotOf
-  } from './bar-notes.mjs?v=20261117e';
+  } from './bar-notes.mjs?v=20261117f';
 // The open 备注本 (`storage/labels/<book>.jsonl`): the same notebook as the factor finder, kept in one localStorage key.
-import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261117e';
+import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261117f';
 // The owner's own Deepcoin fills (T-59): 「我的成交」 marks his 开多 / 平多 / 开空 / 平空 on the candles of any crypto
 // source. The instrument mapping, the per-candle buckets, the markers and their line under the chart are pure functions
 // in market-fills.mjs; this page owns the request and the polling.
 import { FILLS_ENDPOINT, FILLS_KEY, FILLS_NOT_CONFIGURED, FILLS_POLL_MS, bucketFills, configuredOf, fillGroupsText,
-  fillLabelsFit, fillMarkers, fillsHave, fillsProgressText, fillsRequest, mergeFillRows, mergeMarkers,
-  parseFills } from './market-fills.mjs?v=20261117e';
+  fillLabelsFit, fillsHave, fillsProgressText, fillsRequest, mergeFillRows, mergeMarkers,
+  parseFills } from './market-fills.mjs?v=20261117f';
+// The 价位 marks (T-62): one small triangle / circle per order at its own average price, drawn as a series primitive so
+// a mark sits on the price instead of under the candle, and switched on / off per timeframe (1h / 4h / 1D start off).
+import { FILL_PRICES_KEY, FillPricesPrimitive, fillArrowMarkers, fillPriceMarksOn, orderMarks, orderMarksText,
+  readFillPrices, toggleFillPrices } from './fill-prices.mjs?v=20261117f';
 
 const $ = id => document.getElementById(id);
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
@@ -126,6 +130,9 @@ let tickerTimer = null, tickerBusy = false;
 // screen (oldest first), the left edge of the window they were asked for, and the 30-second poll.
 let fillsOn = read(FILLS_KEY) !== '0';
 let fillRows = [], fillsBegin = null, fillsTimer = null, fillsNoticeShown = false;
+// 价位 (T-62): which timeframes draw one mark per order at its price, `{tf: boolean}` in localStorage
+// `jesse.market.fillPrices.v1`; a timeframe not in there takes its default (1m…30m on, 1h / 4h / 1D off).
+let fillPrices = readFillPrices(read(FILL_PRICES_KEY));
 // The 「正在补历史」 line this page last put in the shared status box ('' when the fill line is not there), so a poll that
 // finds the store caught up can take its own line away without wiping another feature's message.
 let fillsStatus = '';
@@ -331,6 +338,10 @@ function makePanel(tf, answer) {
   panel.series = panel.chart.addCandlestickSeries({ upColor: UP, downColor: DOWN, wickUpColor: UP, wickDownColor: DOWN,
     borderVisible: false, lastValueVisible: false, priceLineVisible: false });
   panel.series.setData(panel.candles);
+  // 价位 (T-62): the marks live in a primitive on this series (the arrows of setMarkers cannot be placed at a price).
+  // Empty until paintFills hands it this panel's orders; detached with the panel in destroyPanels.
+  panel.fillPrimitive = new FillPricesPrimitive();
+  panel.series.attachPrimitive(panel.fillPrimitive);
   enablePriceZoom(panel.chart, panel.series, host);
   drawOverlay(panel);
   if (panel.forming) { try { panel.series.update(candleOf(panel.forming)); } catch { /* chart not ready */ } paintIndicatorTail(panel, panel.forming); }
@@ -338,6 +349,7 @@ function makePanel(tf, answer) {
   paintMeta(panel);
   addSnapshotButton(card, () => snapshotPanel(panel));
   addMaximizeButton(card);
+  addFillPricesButton(panel);
   // The pointer's x goes along, so the other charts line up at the moment under it (see linkTimeRanges).
   const pointerX = event => event.clientX - host.getBoundingClientRect().left;
   for (const name of ['pointerdown', 'wheel']) host.addEventListener(name, event => rangeLink?.activate(panel, pointerX(event)), { capture: true, passive: true });
@@ -389,6 +401,8 @@ function destroyPanels() {
   for (const panel of panels) {
     clearTimeout(panel.tailTimer);
     panel.observer?.disconnect();
+    try { if (panel.fillPrimitive) panel.series?.detachPrimitive(panel.fillPrimitive); } catch { /* already gone */ }
+    panel.fillPrimitive = null;
     try { panel.chart?.remove(); } catch { /* already gone */ }
   }
   panels = []; pointerPanel = null; $('charts').replaceChildren();
@@ -413,7 +427,10 @@ function paintMeta(panel, time = null) {
   const candle = time === null ? null : panel.byTime.get(time) ?? (panel.forming?.time === time ? panel.forming : null);
   const barNote = time === null ? '' : barNoteOf(panelNotes(), noteKeyAt(panel, time));
   // The owner's own fills of that candle (T-59), after the candle's numbers: 「开多 2 笔 均价 … 数量 … 手续费 …」.
-  const fills = time === null ? '' : fillGroupsText(fillGroupsAt(panel, time));
+  // …and, while this chart draws the 价位 marks, one phrase per order instead of the per-action sums (T-62): the
+  // mark's own price is what the owner wants to read there (「开多 64,320.5 ×300（3 笔）」).
+  const fills = time === null ? '' : (fillPriceMarksOn(fillsOn, fillPrices, panel.tf)
+    ? orderMarksText(fillPriceMarksAt(panel, time)) : fillGroupsText(fillGroupsAt(panel, time)));
   const trades = fills ? ` · ${fills}` : '';
   if (!candle) {
     const last = panel.forming ?? panel.candles.at(-1);
@@ -1392,7 +1409,10 @@ function paintMarkers(panel) {
   const chosen = chosenNote && chosenNote.tf === panel.tf ? chosenNote.time : null;
   panel.series.setMarkers(mergeMarkers(
     noteMarkers(panelNotes(), panel.tf, time => hasBar(panel, time), chosen),
-    fillMarkers(panel.fillBuckets ?? [], time => hasBar(panel, time), { labels: fillLabelsOn(panel) })));
+    // The arrows are the coarse view of the fills: a chart that draws the 价位 marks has none (T-62), and 我的成交
+    // switched off takes them all away.
+    fillArrowMarkers(panel.fillBuckets ?? [], time => hasBar(panel, time), { labels: fillLabelsOn(panel) },
+      { on: fillsOn, pricesOn: fillPriceMarksOn(fillsOn, fillPrices, panel.tf) })));
 }
 
 // Whether this chart is zoomed in enough for the fill arrows to carry text (each candle FILL_LABEL_PX wide or more).
@@ -1444,13 +1464,55 @@ function fillsWindowStart() {
 /** The groups of one candle (`[{label, count, price, size, fee, feeCcy}]`), [] when nothing traded in it. */
 const fillGroupsAt = (panel, time) => (panel.fillBuckets ?? []).find(bucket => bucket.time === time)?.groups ?? [];
 
-/** Re-bucket the fills into every panel's own timeframe, then redraw the markers and the line under each chart. */
+/** The order marks of one candle (`[{time, price, action, open, count, …}]`), [] when no order traded in it. */
+const fillPriceMarksAt = (panel, time) => (panel.orderMarks ?? []).filter(mark => mark.time === time);
+
+/** Re-bucket the fills into every panel's own timeframe, then redraw the marks, the arrows and the line under each chart. */
 function paintFills() {
   for (const panel of panels) {
     panel.fillBuckets = fillsOn ? bucketFills(fillRows, panel.interval) : [];
+    // One mark per order, at its own average price, for every timeframe: the page only draws the timeframes whose
+    // 价位 switch is on (the marks are still cheap to group, and the line under the chart needs them).
+    panel.orderMarks = fillsOn ? orderMarks(fillRows, panel.interval) : [];
+    paintFillPrices(panel);
     paintMarkers(panel);
     paintMeta(panel);
   }
+}
+
+/**
+ * The 价位 marks of one chart and the state of its 「价位」 button: the primitive gets the orders while both switches
+ * (我的成交 and this timeframe) are on and nothing otherwise; the button mirrors the timeframe's own switch and is
+ * disabled while 我的成交 is off.
+ */
+function paintFillPrices(panel) {
+  const on = fillPriceMarksOn(fillsOn, fillPrices, panel.tf);
+  const button = panel.fillPricesButton;
+  if (button) {
+    button.setAttribute('aria-pressed', on ? 'true' : 'false');
+    button.disabled = !fillsOn;
+    button.title = fillsOn
+      ? `${on ? '隐藏' : '显示'}这张图每个订单的成交价位（${panel.tf} 周期单独记住）`
+      : '先勾上「我的成交」';
+  }
+  panel.fillPrimitive?.setMarks(on ? (panel.orderMarks ?? []) : []);
+}
+
+/** 「价位」 on one chart card: flips this timeframe's switch, remembered per browser (and mirrored by T-58). */
+function addFillPricesButton(panel) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'snapshot-btn fill-prices-btn';
+  button.textContent = '价位';
+  button.setAttribute('aria-label', '在这张图的成交价上画小记号');
+  button.onclick = () => {
+    fillPrices = toggleFillPrices(fillPrices, panel.tf);
+    write(FILL_PRICES_KEY, JSON.stringify(fillPrices));
+    paintFills();
+  };
+  (panel.card.querySelector('.chart-head h3') ?? panel.card.querySelector('.chart-head') ?? panel.card).append(button);
+  panel.fillPricesButton = button;
+  paintFillPrices(panel);
 }
 
 function clearFills() {
