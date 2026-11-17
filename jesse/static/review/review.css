@@ -114,7 +114,7 @@ main[hidden]{display:none}
 
 /* Market page (market.html): the watchlist in a narrow left column, the multi-timeframe chart grid on the right.
    The charts reuse the finder's card grid, cards and snapshots; only the sidebar rows and the controls are new. */
-.market main{grid-template-columns:190px minmax(0,1fr)}
+.market main{grid-template-columns:240px minmax(0,1fr)}
 .market-controls .market-last{font-weight:600;color:#2b3a52;font-variant-numeric:tabular-nums}
 /* 我的成交 (T-59): the checkbox next to 图高 that draws the owner's own Deepcoin fills on the crypto charts. */
 .market-fills input{accent-color:#315cd0}
@@ -158,7 +158,7 @@ main[hidden]{display:none}
 .watch-del{border:0;background:transparent;color:#b0bcce;padding:0 6px;font-size:14px;line-height:1}
 .watch-del:hover{color:#c73f58;background:transparent}
 .market .chart-meta{font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-@media(max-width:950px){.market main{grid-template-columns:165px minmax(0,1fr)}}
+@media(max-width:950px){.market main{grid-template-columns:215px minmax(0,1fr)}}
 @media(max-width:700px){.market main{grid-template-columns:1fr}#watchlist{flex-direction:row;overflow-x:auto;max-height:none}.watch-row{min-width:126px}#products{max-height:none}#notes{max-height:none}}
 /* The market page lists (自选 / product list) set display:flex, which would override the hidden attribute and leave
    both lists stacked (2026-11-16): hidden always wins there. */
@@ -191,3 +191,11 @@ main[hidden]{display:none}
 .book-note{color:#9a7a20;font-size:11px;line-height:1.4}
 .book-note:empty{display:none}
 #notes .book-slot{padding:0}
+
+/* Watchlist rows, two lines (2026-11-17): small venue tag on top; name left, price and change right in fixed columns. */
+.watch-main .watch-tag{align-self:flex-start;margin-left:0;font-size:10px;color:#6c7b91;background:transparent;padding:0;vertical-align:0}
+.watch-line{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:baseline;gap:6px;width:100%;font-variant-numeric:tabular-nums}
+.watch-line strong{font-size:13px;letter-spacing:.02em;white-space:nowrap}
+.watch-line .watch-last{font-size:13px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.watch-line .watch-change{font-size:12px;text-align:right;white-space:nowrap;min-width:46px}
+.watch-row{min-width:190px}
