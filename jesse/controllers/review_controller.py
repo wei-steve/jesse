@@ -323,12 +323,18 @@ class MarketFillsRequestJson(BaseModel):
     """The owner's own Deepcoin fills of one instrument, for the 看行情 page's 「我的成交」 markers.
 
     `symbol` is the pair the product list shows (`BTC-USDT`); the `swap` market maps it to `BTC-USDT-SWAP` server-side.
-    Times are seconds, like every other time this page sends.
+    Times are seconds, like every other time this page sends. `have_from` / `have_to` are the range the page already has
+    (T-61): both or neither, and with them the answer is only the increment.
+
+    The two have fields also take text so a bad value is the service's own Chinese 400 (「必须是秒数」) instead of a
+    validation error phrased for a Python caller.
     """
     market: str
     symbol: str
     begin: Union[int, float]
     end: Optional[Union[int, float]] = None
+    have_from: Optional[Union[int, float, str]] = None
+    have_to: Optional[Union[int, float, str]] = None
 
 
 @router.post('/market/fills')
@@ -343,10 +349,14 @@ def market_fills(request_json: MarketFillsRequestJson) -> JSONResponse:
     The fills are stored in the project folder (`storage/deepcoin-fills/<instId>.json`), so a request only pulls what is
     new and answers with `covered_from` / `complete` saying how much of the asked window the store covers. A venue that
     refuses the request still answers 200 with the stored fills plus an `error`: the markers of earlier reads are drawn.
+
+    A page that already has the fills of a range sends `have_from` / `have_to` and gets only the increment of that range
+    (new fills, plus the older ones a backfill just pulled) with `partial: true`, so the 30-second poll no longer carries
+    the whole history to the browser.
     """
     try:
         answer = deepcoin_private.read_fills(request_json.market, request_json.symbol, request_json.begin,
-                                             request_json.end)
+                                             request_json.end, request_json.have_from, request_json.have_to)
     except deepcoin_private.DeepcoinError as error:
         return JSONResponse({'error': str(error)}, status_code=error.status_code)
     return JSONResponse(answer)

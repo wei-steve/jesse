@@ -237,7 +237,7 @@ def test_the_timestamp_is_iso_utc_with_milliseconds():
 def test_swap_maps_to_the_perpetual_and_spot_to_the_pair():
     swap = deepcoin_private.resolve_request('swap', 'btc-usdt', 1794835200)
     assert swap == {'market': 'swap', 'instType': 'SWAP', 'symbol': 'BTC-USDT', 'instId': 'BTC-USDT-SWAP',
-                    'begin': 1794835200, 'end': None}
+                    'begin': 1794835200, 'end': None, 'have_from': None, 'have_to': None}
     spot = deepcoin_private.resolve_request('spot', 'BTC-USDT', 1794835200, 1794841200)
     assert spot['instType'] == 'SPOT' and spot['instId'] == 'BTC-USDT' and spot['end'] == 1794841200
     # The page may name the perpetual itself; the market still decides.
@@ -553,6 +553,149 @@ def test_the_store_keeps_one_copy_of_a_fill():
     # A venue row without a trade id is still identified by its own numbers, so it is not duplicated either.
     anonymous = deepcoin_private.parse_fills([dict(FILLS[1], tradeId='')], 'BTC-USDT-SWAP')[0]
     assert len(deepcoin_private.merge_fills([anonymous], [dict(anonymous)])) == 1
+
+
+# --- The increment a page that already drew a range asks for (T-61) ------------------------------------------------
+
+def spaced_fills(times, inst_id='BTC-USDT-SWAP'):
+    """Fills at exactly `times` (seconds), oldest first: what a store of spread-out trades looks like."""
+    rows = [{'instType': 'SWAP', 'instId': inst_id, 'tradeId': f't{time}', 'billId': str(index + 1), 'ordId': '7001',
+             'fillPx': '64000', 'fillSz': '1', 'side': 'buy', 'posSide': 'long', 'execType': 'T',
+             'feeCcy': 'USDT', 'fee': '0.01', 'ts': str(time * 1000)}
+            for index, time in enumerate(times)]
+    return deepcoin_private.parse_fills(rows, inst_id)
+
+
+def spaced_store(times, inst_id='BTC-USDT-SWAP'):
+    """A complete store (`history_end`) of fills at `times`, as an earlier sync would have left it."""
+    fills = spaced_fills(times, inst_id)
+    return {**deepcoin_private.empty_store(), 'fills': fills, 'newest_bill': str(len(times)),
+            'oldest_bill': '1', 'history_end': True}
+
+
+# 10 minutes apart, so 'a fill inside the 2-minute overlap' really is a distinct one.
+SPACED_TIMES = [1794000000 + index * 600 for index in range(7)]
+
+
+def answer_for(store, begin, end=None, have_from=None, have_to=None):
+    """The store's answer for one request, without a venue, a credential or a file."""
+    request = deepcoin_private.resolve_request('swap', 'BTC-USDT', begin, end, have_from, have_to)
+    return deepcoin_private.store_answer(store, request)
+
+
+def times_of(answer):
+    return [fill['time'] for fill in answer['fills']]
+
+
+def test_without_a_have_range_the_answer_is_the_whole_window():
+    store = spaced_store(SPACED_TIMES)
+    answer = answer_for(store, SPACED_TIMES[0])
+    assert answer['partial'] is False
+    assert times_of(answer) == SPACED_TIMES
+    # begin / end keep cutting the window exactly as before (the have range only narrows what is left of it).
+    window = answer_for(store, SPACED_TIMES[1], SPACED_TIMES[4])
+    assert window['partial'] is False
+    assert times_of(window) == SPACED_TIMES[1:5]
+
+
+def test_a_have_range_answers_new_fills_and_older_history_only():
+    store = spaced_store(SPACED_TIMES)
+    answer = answer_for(store, SPACED_TIMES[0], have_from=SPACED_TIMES[2], have_to=SPACED_TIMES[4])
+    assert answer['partial'] is True
+    # Older than the page's oldest (the backfill just pulled them) or newer than its newest edge minus the overlap.
+    # A fill at exactly `have_from` is already drawn and is not sent again.
+    assert times_of(answer) == SPACED_TIMES[:2] + SPACED_TIMES[4:]
+    # The 2-minute overlap re-sends the edge the page may have missed because of clock skew: 1794002340 == have_to - 60.
+    overlap = answer_for(store, SPACED_TIMES[0], have_from=SPACED_TIMES[2], have_to=SPACED_TIMES[4] + 60)
+    assert times_of(overlap) == SPACED_TIMES[:2] + SPACED_TIMES[4:]
+    # Nothing newer and nothing older than the page's range: only the newest edge is re-sent (a page de-duplicates it).
+    caught_up = answer_for(store, SPACED_TIMES[0], have_from=SPACED_TIMES[0], have_to=SPACED_TIMES[-1])
+    assert caught_up['partial'] is True and times_of(caught_up) == [SPACED_TIMES[-1]]
+    # How much of the window the store covers is about the store, not about the increment.
+    assert caught_up['complete'] is True and caught_up['history_end'] is True
+
+
+def test_a_have_range_still_respects_begin_and_end():
+    store = spaced_store(SPACED_TIMES)
+    # The window starts at the third fill: the two older ones are outside it even though they are older than have_from.
+    # The one at have_from itself is already on the page; the third fill is older than have_from and inside `begin`.
+    answer = answer_for(store, SPACED_TIMES[2], have_from=SPACED_TIMES[3], have_to=SPACED_TIMES[5])
+    assert times_of(answer) == [SPACED_TIMES[2]] + SPACED_TIMES[5:]
+    # An end inside the page's range leaves nothing newer than it, so only the older part of the window can come back.
+    closed = answer_for(store, SPACED_TIMES[0], SPACED_TIMES[3], have_from=SPACED_TIMES[2], have_to=SPACED_TIMES[5])
+    assert times_of(closed) == SPACED_TIMES[:2]
+    assert closed['partial'] is True and closed['begin'] == SPACED_TIMES[0]
+
+
+def test_a_half_a_have_range_or_a_broken_one_is_a_readable_400():
+    store = spaced_store(SPACED_TIMES)
+    cases = [
+        {'have_from': SPACED_TIMES[2]},
+        {'have_to': SPACED_TIMES[2]},
+        {'have_from': 'yesterday', 'have_to': SPACED_TIMES[2]},
+        {'have_from': SPACED_TIMES[0], 'have_to': 'yesterday'},
+        {'have_from': 0, 'have_to': SPACED_TIMES[2]},
+        {'have_from': -60, 'have_to': SPACED_TIMES[2]},
+        {'have_from': SPACED_TIMES[0], 'have_to': -60},
+        {'have_from': True, 'have_to': SPACED_TIMES[2]},
+    ]
+    for case in cases:
+        with pytest.raises(deepcoin_private.DeepcoinError) as error:
+            answer_for(store, SPACED_TIMES[0], **case)
+        assert error.value.status_code == 400, case
+        assert any(word in str(error.value) for word in ('秒数', '正数', '一起给')), str(error.value)
+
+
+def test_the_route_passes_the_have_range_through(client, configured, monkeypatch):
+    times = [1794835200 + index * 600 for index in range(40)]
+    rows = [{'instType': 'SWAP', 'instId': 'BTC-USDT-SWAP', 'tradeId': f'row{time}', 'billId': str(index + 1),
+             'ordId': '7001', 'fillPx': '64000', 'fillSz': '1', 'side': 'buy', 'posSide': 'long', 'ts': str(time * 1000)}
+            for index, time in enumerate(times)]
+    venue = FakeVenue(rows)
+    monkeypatch.setattr(deepcoin_private, 'fetch_page', venue)
+    whole = ask(client, begin=times[0])
+    assert whole.status_code == 200 and whole.json()['partial'] is False
+    assert len(whole.json()['fills']) == 40
+    # The second poll names the range the page already has: the fills older than it and the newer ones, never the rest.
+    increment = ask(client, begin=times[0], have_from=times[3], have_to=times[5])
+    assert increment.status_code == 200
+    body = increment.json()
+    assert body['partial'] is True
+    assert [fill['time'] for fill in body['fills']] == times[:3] + times[5:]
+    # A wider window (an older begin) is sent with the same have range: the store answers the older part it has.
+    deepcoin_private.clear_cache()
+    older = ask(client, begin=times[0] - 3600, have_from=times[3], have_to=times[5])
+    assert [fill['time'] for fill in older.json()['fills']] == times[:3] + times[5:]
+    # A bad have range is still a 400 at the route, before any venue request.
+    assert ask(client, have_from=times[0]).status_code == 400
+    assert ask(client, have_from='yesterday', have_to=times[5]).status_code == 400
+
+
+def test_a_sync_that_changes_nothing_does_not_rewrite_the_store(configured, monkeypatch):
+    venue = FakeVenue(venue_rows(30))
+    monkeypatch.setattr(deepcoin_private, 'fetch_page', venue)
+    writes = []
+    real_write = deepcoin_private.write_store
+
+    def counting_write(inst_id, store, folder=None):
+        writes.append(inst_id)
+        return real_write(inst_id, store, folder)
+
+    monkeypatch.setattr(deepcoin_private, 'write_store', counting_write)
+    first = read_swap()
+    assert len(first['fills']) == 30 and writes == ['BTC-USDT-SWAP']
+    written = store_path().read_text(encoding='utf-8')
+    # The next poll finds the newest page it already has: nothing new, no backfill (the account history is complete),
+    # so the file is left exactly as it was instead of being rewritten every 30 seconds.
+    read_swap()
+    assert len(writes) == 1
+    assert store_path().read_text(encoding='utf-8') == written
+    assert json.loads(written)['updated'] == json.loads(store_path().read_text(encoding='utf-8'))['updated']
+    # A fill that really arrived is written (and pulls the older history along, if the window asks for it).
+    venue.add(venue_rows(3, first_bill=31, first_ts=1794000030))
+    answer = read_swap()
+    assert len(answer['fills']) == 33 and len(writes) == 2
+    assert len(deepcoin_private.read_store('BTC-USDT-SWAP')['fills']) == 33
 
 
 # --- Errors -------------------------------------------------------------------------------------------------------

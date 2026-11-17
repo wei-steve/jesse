@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, OKX_SOURCE, YIELD_SOURCE } from '../jesse/static/review/market-sources.mjs';
 import { BAR_NOTE_COLOR } from '../jesse/static/review/labels.mjs';
 import { BUY_MARKER_COLOR, FILLS_BACKFILLING, FILLS_BACKFILLING_EMPTY, FILLS_KEY, FILLS_NOT_CONFIGURED,
-  SELL_MARKER_COLOR, bucketFills, configuredOf, fillAction, fillGroupText, fillGroupsText, fillMarkers, fillsBase,
-  fillsInstrument, fillsProgressText, fillsRequest, fillsStamp, mergeMarkers, parseFills }
+  SELL_MARKER_COLOR, bucketFills, configuredOf, fillAction, fillGroupText, fillGroupsText, fillKey, fillMarkers,
+  fillsBase, fillsHave, fillsInstrument, fillsProgressText, fillsRequest, fillsStamp, mergeFillRows, mergeMarkers,
+  parseFills }
   from '../jesse/static/review/market-fills.mjs';
 
 // The owner's fills are private: every number here is invented, and the shape is the one the Jesse route returns
@@ -215,4 +216,59 @@ test('a window the store still misses says how far back it got, a complete one s
   // The error of a refused request is a separate field, not the progress line (the page shows it instead).
   assert.equal(fillsProgressText({ configured: true, complete: false, covered_from: 1794839700,
     error: 'Deepcoin 请求失败（HTTP 429），稍后再试' }), '我的成交：正在补历史，已到 2026-11-16 14:35 UTC');
+});
+
+// --- 只传新增 (T-61) -----------------------------------------------------------------------------------------------
+
+test('the range the page already has is its oldest and newest fill, and nothing when it has none', () => {
+  assert.deepEqual(fillsHave(FILLS), { from: 1794839700, to: 1794840300 });
+  // A page without fills (the first read, or just after switching instrument) has no range to name.
+  assert.equal(fillsHave([]), null);
+  assert.equal(fillsHave(null), null);
+  // A row that is not a fill never moves an edge.
+  assert.deepEqual(fillsHave([{ time: 'x' }, { time: 0 }, null, { time: 1794839700 }]),
+    { from: 1794839700, to: 1794839700 });
+});
+
+test('the identity of a fill is its trade id, or its own numbers when the venue sent none', () => {
+  assert.equal(fillKey(FILLS[0]), '9001');
+  assert.equal(fillKey({ ...FILLS[0], tradeId: '' }), '7001|1794839700|64320.5|200');
+  assert.equal(fillKey({ ...FILLS[0], tradeId: '' }), fillKey({ ...FILLS[0], tradeId: '' }));
+});
+
+test('an increment is merged into what is drawn: one row per fill, oldest first, never older than the window', () => {
+  const backfilled = { ...FILLS[0], tradeId: '8900', time: 1794839650 };
+  const rows = mergeFillRows(FILLS, [
+    { ...FILLS[2] }, // an overlap edge the backend re-sends
+    backfilled, // history the backfill just pulled
+    { ...FILLS[1], fee: 0.05 }, // the same fill again, with a corrected fee
+  ], 1794839600);
+  assert.deepEqual(rows.map(fill => fill.tradeId), ['8900', '9001', '9002', '9003']);
+  assert.equal(rows.find(fill => fill.tradeId === '9002').fee, 0.05);
+  // A fill older than the window start cannot be drawn, so it is not kept (the page would show a mark off-screen).
+  assert.deepEqual(mergeFillRows(FILLS, [backfilled], 1794839700).map(fill => fill.tradeId), ['9001', '9002', '9003']);
+  // Without a window start (no begin yet) nothing is cut.
+  assert.equal(mergeFillRows([], FILLS).length, 3);
+  // The same increment twice is the same list: a re-sent page does not double a marker.
+  const once = mergeFillRows(FILLS, [backfilled], 1794839600);
+  assert.deepEqual(mergeFillRows(once, [backfilled], 1794839600), once);
+  // Rows without trade ids still de-duplicate by their own numbers, and junk is dropped.
+  const anonymous = { ...FILLS[0], tradeId: '' };
+  assert.equal(mergeFillRows([anonymous], [{ ...anonymous }]).length, 1);
+  assert.deepEqual(mergeFillRows(null, [null, 'nope', { time: 1794839700, price: 0, size: 1 }]), []);
+});
+
+test('the second read sends the range it already has; a first read and a switch send none', () => {
+  assert.deepEqual(fillsRequest(BINANCE_SOURCE, 'swap', 'BTCUSDT', 1794835200, null, fillsHave(FILLS)),
+    { market: 'swap', symbol: 'BTC-USDT', begin: 1794835200, have_from: 1794839700, have_to: 1794840300 });
+  // The first read of a page, and the read after switching instrument / market, have no fills yet (`fillRows` is
+  // reset when the instrument changes): the whole window is asked for, so nothing is missing between fills.
+  assert.deepEqual(fillsRequest(BINANCE_SOURCE, 'swap', 'BTCUSDT', 1794835200, null, fillsHave([])),
+    { market: 'swap', symbol: 'BTC-USDT', begin: 1794835200 });
+  // A have range that is half given / impossible is left out instead of being sent (the route refuses half a range).
+  for (const have of [{ from: 1794839700 }, { to: 1794840300 }, { from: 0, to: 1794840300 },
+    { from: 1794840300, to: 1794839700 }, { from: 'x', to: 1794840300 }]) {
+    assert.deepEqual(fillsRequest(BINANCE_SOURCE, 'swap', 'BTCUSDT', 1794835200, null, have),
+      { market: 'swap', symbol: 'BTC-USDT', begin: 1794835200 });
+  }
 });
