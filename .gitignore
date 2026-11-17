@@ -103,6 +103,8 @@ celerybeat.pid
 
 # Environments
 .env
+# The owner's private Deepcoin key (T-59) lives in .env.deepcoin; no .env.* file is ever committed.
+.env.*
 .venv
 env/
 venv/

@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from jesse.services import market_sources
+from jesse.services import deepcoin_private, market_sources
 from jesse.services.auth import require_auth
 
 router = APIRouter(prefix="/review", tags=["Review"], dependencies=[Depends(require_auth)])
@@ -315,6 +315,35 @@ def market_tickers(request_json: MarketTickersJson) -> JSONResponse:
     try:
         answer = market_sources.read_tickers(request_json.source, request_json.market)
     except market_sources.MarketSourceError as error:
+        return JSONResponse({'error': str(error)}, status_code=error.status_code)
+    return JSONResponse(answer)
+
+
+class MarketFillsRequestJson(BaseModel):
+    """The owner's own Deepcoin fills of one instrument, for the 看行情 page's 「我的成交」 markers.
+
+    `symbol` is the pair the product list shows (`BTC-USDT`); the `swap` market maps it to `BTC-USDT-SWAP` server-side.
+    Times are seconds, like every other time this page sends.
+    """
+    market: str
+    symbol: str
+    begin: Union[int, float]
+    end: Optional[Union[int, float]] = None
+
+
+@router.post('/market/fills')
+def market_fills(request_json: MarketFillsRequestJson) -> JSONResponse:
+    """The owner's Deepcoin fills of one instrument, oldest first, or `{configured: false, fills: []}`.
+
+    Deepcoin's trade endpoint is signed with an API key and sends no CORS headers, so the browser cannot read it. The
+    key lives in the project's `.env.deepcoin` and is read per request in jesse/services/deepcoin_private.py; it never
+    reaches this answer, a log line or an error message. An unconfigured project is a 200 with `configured: false`: the
+    chart has nothing to draw, which is not a failure.
+    """
+    try:
+        answer = deepcoin_private.read_fills(request_json.market, request_json.symbol, request_json.begin,
+                                             request_json.end)
+    except deepcoin_private.DeepcoinError as error:
         return JSONResponse({'error': str(error)}, status_code=error.status_code)
     return JSONResponse(answer)
 
