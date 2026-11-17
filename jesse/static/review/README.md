@@ -223,6 +223,18 @@ def compute(candles_by_tf: dict, params: dict) -> dict:
 - **Claude 怎么读**：直接读 `storage/labels/*.jsonl`——默认 `finder-labels.jsonl`，其余按文件名就是本名。也可以用 `POST /review/labels`（加 `book`，缺省默认本）；不存在的本读取返回空（不会报错），写入返回 404「备注本不存在，先新建」。
 - **接口**：`POST /review/label-books`（无参数）→ `{books: [{name, rows, updated}], default: 'finder-labels'}`，`rows` = 行数，`updated` = 最后写入的秒级时间戳，按最近修改倒序；默认本即使还没写过也会列出来（`rows: 0, updated: 0`，第一次写入就建文件）。`POST /review/label-books/create {name}` → 新建空文件 `{ok: true, name}`；已存在返回 409。两个接口都需要登录。
 
+## 页面设置存在服务器（换网址 / 换电脑 / 换浏览器不丢）
+
+三个页面（`index.html` 复盘页、`finder.html` 因子查找器、`market.html` 看行情）的设置原来只在浏览器的 localStorage 里，而 localStorage 是按**来源（origin）**分开的：Mac 的局域网地址一变（192.168.1.94 → 192.168.1.153），或者在另一台电脑上打开，就是新的 origin = 全部回到默认（自选、指标、查找器表单都要重新勾）。现在这些设置同时存在项目目录（`jesse run` 的 cwd）下的 `storage/review-prefs.json`，任何地址 / 电脑 / 浏览器打开都一样。
+
+- **同步范围**：所有以 `jesse.` 开头的 localStorage key——复盘页指标与显示设置（`jesse.review.display.v1`）、看行情页的 `jesse.market.*`（自选、品种、数据源、周期、左栏标签）和 `jesse.market.viewBars`、因子查找器表单 `jesse.finder.form.v1`、图高 `jesse.finder.chartHeight.v2`、备注本 `jesse.labels.book`。以后页面新加的 `jesse.` key 自动跟着同步，不用再改同步代码；`main`（dashboard 登录 token）和其他 key **不同步**，只留在浏览器里。
+- **文件格式**：`{key: {value, updated}}`，`value` 就是 localStorage 里的字符串（页面自己的 JSON），`updated` 是最后一次写入的秒级时间戳。写入是**原子**的（同目录临时文件 + `os.replace`），并用进程内锁包住“读文件 → 改 → 写文件”，两个页面同时保存也不会互相覆盖；文件损坏 / 手改成不认识的内容时按空处理，不报错。
+- **打开页面时**（`prefs-sync.mjs` 的 `loadPrefs()`，三个页面的内联加载器在 `import(主模块)` **之前** `await` 它）：从 `localStorage.main` 取登录 token（和截图 / 代理接口同样的读法），`POST /review/prefs` 读服务器那份；没有 token（没登录过）或 3 秒内没答复 / 请求失败就**静默跳过**，页面照常用本地设置。
+- **合并规则**：服务器有的 key **以服务器为准**写进 localStorage（所以新地址打开就是上次的设置）；服务器没有、本地有的 `jesse.` key **上传**（所以一个早就有设置的浏览器第一次打开这个功能时，会把它已有的设置补传上去，不用手动搬）。
+- **之后的写入**：包一层 `Storage.prototype.setItem` / `removeItem`（只对 `localStorage` 本身和 `jesse.` 开头的 key 生效；包原型是因为给 localStorage 实例赋值 `setItem` 会变成存一个叫 `setItem` 的 key，而且这样不用改页面里几十处写入点），变化先攒起来，**防抖 800ms** 后一次批量 `POST /review/prefs/save {items}`；页面 `visibilitychange` 变 hidden 或 `pagehide` 时立刻发（`fetch(..., {keepalive:true})`，不等防抖）。同步失败不弹窗，只在 console 记一行，不影响页面。
+- **接口**（`jesse/controllers/review_controller.py`，与截图 / 标注同一个 router，同样要登录）：`POST /review/prefs` → `{prefs: {key: value}, updated: {key: 秒}}`，文件不存在返回空；`POST /review/prefs/save {items: {key: value | null}}` → `{ok: true, saved, removed}`，`null` = 删除该 key。key 必须匹配 `^jesse\.[A-Za-z0-9_.\-]{1,80}$`（`main`、`jesse/../x`、空、超长都 400），一个 value（UTF-8）不超过 256 KB，一次最多 50 个，不合法整批 400 并给中文错误。
+- **测试**：`tests/test_review_prefs.py`（后端：空读、写读、null 删除、key / value / 数量校验、原子写后是合法 JSON、坏文件按空处理）和 `tests/review-prefs-sync.test.mjs`（合并纯函数、防抖批量、只拦 `jesse.` key）。
+
 ## 截图与标注
 
 给两个页面（`index.html` 复盘页、`finder.html` 因子查找器）用，方便把图发给 Claude 讨论：截图 → 简单画几笔 → 一键存到 Mac 上的固定文件夹。手机上（iPad、iPhone 经 Tailscale 打开）也能用。

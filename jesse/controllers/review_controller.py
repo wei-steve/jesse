@@ -3,6 +3,8 @@ import binascii
 import json
 import os
 import re
+import tempfile
+import threading
 from datetime import datetime, timezone
 from typing import Optional, Union
 
@@ -438,3 +440,144 @@ def create_label_book(request_json: LabelBookRequestJson) -> JSONResponse:
     except FileExistsError:
         return exists
     return JSONResponse({'ok': True, 'name': name})
+
+
+# ---- Page settings (localStorage `jesse.*` keys) -----------------------------
+class PrefsSaveJson(BaseModel):
+    """One batch of settings: `{key: value}` writes a key, `{key: null}` forgets it.
+
+    The values are typed loosely on purpose: a body of the wrong shape must answer 400 with a Chinese message (like
+    every other endpoint of this router), not pydantic's 422.
+    """
+    items: dict = {}
+
+
+# The review pages keep their display settings in localStorage, which is per browser *and per origin*: moving Jesse to
+# another LAN address (or opening it from another computer) meant every setting was back at its default. The keys are
+# now mirrored into one file in the project folder (`jesse run`'s cwd), so any address / computer / browser opens with
+# the same watchlist, indicators and form. Everything the pages store under a `jesse.` prefix is mirrored as-is (new
+# keys need no change here); the dashboard's `main` token and every other key stay in the browser only.
+PREFS_FILE = os.path.join('storage', 'review-prefs.json')
+# `jesse.` + 1-80 characters: the keys the pages build today (`jesse.review.display.v1`, `jesse.market.watchlist.v1`, …).
+# The character set cannot climb out of anything (no `/`, no `..` path trick) and keeps the file's keys recognisable.
+PREF_KEY = re.compile(r'^jesse\.[A-Za-z0-9_.\-]{1,80}$')
+# One setting is a serialised localStorage value (a display config, a watchlist, a form). 256 KB is far above the
+# largest of them and refuses a body that would only fill the project's disk.
+MAX_PREF_VALUE_BYTES = 256 * 1024
+# A page writes its settings a handful at a time; 50 in one batch is already generous.
+MAX_PREF_ITEMS = 50
+# The read-modify-write of the file must not interleave: two tabs saving a key at the same time would otherwise drop
+# one of them. One process serves the pages, so a thread lock is enough.
+PREFS_LOCK = threading.Lock()
+
+
+def prefs_path() -> str:
+    """storage/review-prefs.json of the project `jesse run` was started in (same cwd as the screenshots / labels)."""
+    return os.path.join(os.getcwd(), PREFS_FILE)
+
+
+def prefs_seconds() -> int:
+    """Seconds since the epoch, the unit every timestamp of these pages uses."""
+    return int(datetime.now(timezone.utc).timestamp())
+
+
+def clean_prefs(data) -> dict:
+    """`{key: {value, updated}}` from whatever the file holds: anything unusable is dropped instead of raising.
+
+    The file can be hand-edited (as every other storage file of a Jesse project can), so a broken key, a value that is
+    not a string, or an old shape must not break the pages: those entries simply do not exist.
+    """
+    if not isinstance(data, dict):
+        return {}
+    prefs = {}
+    for key, entry in data.items():
+        if not isinstance(key, str) or not PREF_KEY.match(key) or not isinstance(entry, dict):
+            continue
+        value = entry.get('value')
+        if not isinstance(value, str) or len(value.encode('utf-8')) > MAX_PREF_VALUE_BYTES:
+            continue
+        updated = entry.get('updated')
+        if not isinstance(updated, (int, float)) or isinstance(updated, bool):
+            updated = 0
+        prefs[key] = {'value': value, 'updated': int(updated)}
+    return prefs
+
+
+def read_prefs() -> dict:
+    """Every stored setting, `{}` when the file does not exist (or cannot be read as JSON)."""
+    try:
+        with open(prefs_path(), encoding='utf-8') as file:
+            return clean_prefs(json.load(file))
+    except (OSError, ValueError):
+        return {}
+
+
+def write_prefs(prefs: dict) -> None:
+    """Replace the file atomically (temp file in the same folder, then `os.replace`).
+
+    A crash or a full disk leaves either the old file or the new one, never a half-written JSON that would lose every
+    setting; the temp file is removed if the write fails.
+    """
+    path = prefs_path()
+    folder = os.path.dirname(path)
+    os.makedirs(folder, exist_ok=True)
+    handle, temp_path = tempfile.mkstemp(prefix='review-prefs-', suffix='.tmp', dir=folder)
+    try:
+        with os.fdopen(handle, 'w', encoding='utf-8') as file:
+            json.dump(prefs, file, ensure_ascii=False, sort_keys=True, indent=1)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temp_path, path)
+    except BaseException:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+        raise
+
+
+@router.post('/prefs')
+def get_prefs() -> JSONResponse:
+    """Every mirror of the pages' `jesse.*` localStorage keys: `{prefs: {key: value}, updated: {key: seconds}}`.
+
+    A project that never synced reads as empty (the same answer as a project with no settings), so the first page
+    open has nothing to explain.
+    """
+    prefs = read_prefs()
+    return JSONResponse({'prefs': {key: entry['value'] for key, entry in prefs.items()},
+                         'updated': {key: entry['updated'] for key, entry in prefs.items()}})
+
+
+@router.post('/prefs/save')
+def save_prefs(request_json: PrefsSaveJson) -> JSONResponse:
+    """Write one batch of settings; `null` forgets a key. The whole batch is refused (400) on one bad item."""
+    items = request_json.items or {}
+    if len(items) > MAX_PREF_ITEMS:
+        return JSONResponse({'error': f'一次最多保存 {MAX_PREF_ITEMS} 个设置（收到 {len(items)} 个）'}, status_code=400)
+    for key, value in items.items():
+        if not isinstance(key, str) or not PREF_KEY.match(key):
+            return JSONResponse({'error': '设置名不合法：必须以 jesse. 开头，后面只能是字母、数字、_ . -（共 1–80 字符）'},
+                                status_code=400)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            return JSONResponse({'error': f'设置值必须是字符串（删除请用 null）：{key}'}, status_code=400)
+        if len(value.encode('utf-8')) > MAX_PREF_VALUE_BYTES:
+            return JSONResponse({'error': f'设置值太大（单个上限 {MAX_PREF_VALUE_BYTES // 1024} KB）：{key}'},
+                                status_code=400)
+
+    with PREFS_LOCK:
+        prefs = read_prefs()
+        updated = prefs_seconds()
+        saved = removed = 0
+        for key, value in items.items():
+            if value is None:
+                # Nothing to delete is not an error: another tab may have removed the key already.
+                removed += 1 if prefs.pop(key, None) is not None else 0
+                continue
+            prefs[key] = {'value': value, 'updated': updated}
+            saved += 1
+        # Nothing changed on disk: a delete of a key that does not exist writes no file (and creates no storage/).
+        if saved or removed:
+            write_prefs(prefs)
+    return JSONResponse({'ok': True, 'saved': saved, 'removed': removed})
