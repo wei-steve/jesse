@@ -1,9 +1,9 @@
 // Pure helpers of the factor finder page (finder.mjs): request building, saved form, and turning the
 // `/factors/run` answer into the same step series the signal mode of the review page uses (rides.mjs).
 // Nothing here knows what a factor does; the page only draws the numbers the factor file returns.
-import { timeframeMinutes } from './settings.mjs?v=20261117n';
-import { LIMIT_RULES, LIMIT_DEFAULTS, atr14 } from './limit-rules.mjs?v=20261117n';
-import { sma } from './data.mjs?v=20261117n';
+import { timeframeMinutes } from './settings.mjs?v=20261117o';
+import { LIMIT_RULES, LIMIT_DEFAULTS, atr14 } from './limit-rules.mjs?v=20261117o';
+import { sma } from './data.mjs?v=20261117o';
 
 export const FORM_KEY = 'jesse.finder.form.v1';
 // Chart height is a per-browser display choice, shared by the finder and the market page (one key, one list).

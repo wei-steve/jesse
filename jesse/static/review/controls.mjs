@@ -1,39 +1,19 @@
-import { TIMEFRAMES, INDICATORS, MA_LINE_COUNT, STORAGE_KEY, timeframeLabel, configuredIntervals, chooseIntervals, validateIndicator } from './settings.mjs?v=20261117n';
-import { indicatorTitle } from './indicators.mjs?v=20261117n';
+import { TIMEFRAMES, INDICATORS, MA_LINE_COUNT, STORAGE_KEY, timeframeLabel, configuredIntervals, chooseIntervals, validateIndicator } from './settings.mjs?v=20261117o';
+import { indicatorTitle } from './indicators.mjs?v=20261117o';
 
 const $ = id => document.getElementById(id);
 const parameterLabels = { period: '周期', deviation: '标准差倍数', fast: '快线周期', slow: '慢线周期', signal: '信号周期' };
 
-export function mountControls(form, route, preferences, changed) {
-  const configured = configuredIntervals(form, route);
-  if (!preferences.intervals) preferences.intervals = chooseIntervals(configured.length ? configured : [1]);
+export function mountIndicatorEditor(preferences, { storageKey = STORAGE_KEY, changed = () => {}, types = null } = {}) {
+  const allowedTypes = (Array.isArray(types) && types.length ? types : Object.keys(INDICATORS))
+    .filter(type => Object.hasOwn(INDICATORS, type));
   let editing = null;
   function message(text) { $('settings-message').textContent = text; }
   function save() {
     message('');
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences)); }
+    try { localStorage.setItem(storageKey, JSON.stringify(preferences)); }
     catch { message('浏览器无法保存设置；当前页面仍可使用。'); }
     changed();
-  }
-  function periods() {
-    $('timeframe-list').replaceChildren();
-    for (const interval of TIMEFRAMES) {
-      const label = document.createElement('label');
-      const input = document.createElement('input');
-      input.type = 'checkbox'; input.checked = preferences.intervals.includes(interval);
-      input.setAttribute('aria-label', `显示 ${timeframeLabel(interval)} 周期`);
-      input.onchange = () => {
-        const next = input.checked ? [...preferences.intervals, interval] : preferences.intervals.filter(n => n !== interval);
-        if (!next.length) { input.checked = true; message('请至少保留 1 个显示周期。'); return; }
-        preferences.intervals = next.sort((a, b) => a - b); save();
-      };
-      label.append(input, document.createTextNode(timeframeLabel(interval)));
-      if (configured.includes(interval)) {
-        const badge = document.createElement('small'); badge.textContent = '策略'; label.append(badge);
-      }
-      $('timeframe-list').append(label);
-    }
-    $('timeframe-note').textContent = `策略配置：${configured.map(timeframeLabel).join(' / ') || '未找到可展示周期'}。可选固定周期 1m–1D；数据不足时会提示。`;
   }
   function maFields(config) {
     const mode = document.createElement('label'); mode.textContent = '均线算法';
@@ -87,6 +67,7 @@ export function mountControls(form, route, preferences, changed) {
       const name = document.createElement('strong'); name.textContent = `${INDICATORS[config.type].pane === 'main' ? '主图' : '附图'} · ${indicatorTitle(config)}`;
       const edit = document.createElement('button'); edit.type = 'button'; edit.textContent = '编辑';
       edit.setAttribute('aria-label', `编辑 ${indicatorTitle(config)}`);
+      edit.disabled = !allowedTypes.includes(config.type);
       edit.onclick = () => { editing = index; fields(config); };
       const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '移除';
       remove.setAttribute('aria-label', `移除 ${indicatorTitle(config)}`);
@@ -96,7 +77,8 @@ export function mountControls(form, route, preferences, changed) {
     if (!preferences.indicators.length) $('indicator-list').textContent = '当前仅显示 K 线与成交点，尚未添加指标。';
   }
   $('indicator-type').replaceChildren();
-  for (const [type, definition] of Object.entries(INDICATORS)) {
+  for (const type of allowedTypes) {
+    const definition = INDICATORS[type];
     const option = document.createElement('option'); option.value = type;
     option.textContent = `${definition.pane === 'main' ? '主图' : '附图'} · ${definition.label}`; $('indicator-type').append(option);
   }
@@ -119,8 +101,37 @@ export function mountControls(form, route, preferences, changed) {
     } catch (error) { message(error.message); }
   };
   $('cancel-indicator').onclick = () => { editing = null; fields(validateIndicator({ type: $('indicator-type').value })); message(''); };
-  $('strategy-periods').onclick = () => { preferences.intervals = chooseIntervals(configured.length ? configured : [1]); periods(); save(); };
+  fields(validateIndicator({ type: allowedTypes[0] ?? 'MAGROUP' }));
+  list();
+  return { save, message };
+}
+
+export function mountControls(form, route, preferences, changed) {
+  const configured = configuredIntervals(form, route);
+  if (!preferences.intervals) preferences.intervals = chooseIntervals(configured.length ? configured : [1]);
+  const editor = mountIndicatorEditor(preferences, { storageKey: STORAGE_KEY, changed });
+  function periods() {
+    $('timeframe-list').replaceChildren();
+    for (const interval of TIMEFRAMES) {
+      const label = document.createElement('label');
+      const input = document.createElement('input');
+      input.type = 'checkbox'; input.checked = preferences.intervals.includes(interval);
+      input.setAttribute('aria-label', `显示 ${timeframeLabel(interval)} 周期`);
+      input.onchange = () => {
+        const next = input.checked ? [...preferences.intervals, interval] : preferences.intervals.filter(n => n !== interval);
+        if (!next.length) { input.checked = true; editor.message('请至少保留 1 个显示周期。'); return; }
+        preferences.intervals = next.sort((a, b) => a - b); editor.save();
+      };
+      label.append(input, document.createTextNode(timeframeLabel(interval)));
+      if (configured.includes(interval)) {
+        const badge = document.createElement('small'); badge.textContent = '策略'; label.append(badge);
+      }
+      $('timeframe-list').append(label);
+    }
+    $('timeframe-note').textContent = `策略配置：${configured.map(timeframeLabel).join(' / ') || '未找到可展示周期'}。可选固定周期 1m–1D；数据不足时会提示。`;
+  }
+  $('strategy-periods').onclick = () => { preferences.intervals = chooseIntervals(configured.length ? configured : [1]); periods(); editor.save(); };
   $('open-settings').onclick = () => { $('display-settings').open = !$('display-settings').open; };
   $('display-settings').ontoggle = () => $('open-settings').setAttribute('aria-expanded', String($('display-settings').open));
-  periods(); fields(validateIndicator({ type: 'MAGROUP' })); list();
+  periods();
 }

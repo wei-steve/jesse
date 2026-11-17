@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { timeframeMinutes, configuredIntervals, chooseIntervals, validateIndicator, restorePreferences } from '../jesse/static/review/settings.mjs';
+import { MARKET_STORAGE_KEY, timeframeMinutes, configuredIntervals, chooseIntervals, validateIndicator, restorePreferences, marketPreferences } from '../jesse/static/review/settings.mjs';
 
 test('parses fixed Jesse minute/hour/day periods without confusing months with minutes', () => {
   assert.equal(timeframeMinutes('45m'), 45);
@@ -75,4 +75,26 @@ test('showValues defaults to off and only an explicit true turns it on', () => {
   assert.equal(restorePreferences(JSON.stringify({ version: 1, showValues: 'yes' })).showValues, false);
   const round = restorePreferences(JSON.stringify({ ...restorePreferences(null), showValues: true }));
   assert.equal(round.showValues, true);
+});
+
+test('marketPreferences uses market key when valid, seeds from review key when missing/invalid, and falls back to defaults', () => {
+  assert.equal(MARKET_STORAGE_KEY, 'jesse.market.display.v1');
+  const marketRaw = JSON.stringify({ version: 1, indicators: [{ type: 'BOLL', period: 20, deviation: 2, color: '#5488c9' }] });
+  const reviewRaw = JSON.stringify({ version: 1, indicators: [{ type: 'SMA', period: 10, color: '#dd9a23' }] });
+
+  const existing = marketPreferences(marketRaw, reviewRaw);
+  assert.equal(existing.seeded, false);
+  assert.deepEqual(existing.preferences.indicators.map(i => i.type), ['BOLL']);
+
+  const seededFromMissing = marketPreferences(null, reviewRaw);
+  assert.equal(seededFromMissing.seeded, true);
+  assert.deepEqual(seededFromMissing.preferences.indicators.map(i => i.type), ['SMA']);
+
+  const seededFromInvalid = marketPreferences('{bad json', reviewRaw);
+  assert.equal(seededFromInvalid.seeded, true);
+  assert.deepEqual(seededFromInvalid.preferences.indicators.map(i => i.type), ['SMA']);
+
+  const bothMissing = marketPreferences(null, null);
+  assert.equal(bothMissing.seeded, true);
+  assert.deepEqual(bothMissing.preferences.indicators.map(i => i.type), ['MAGROUP']);
 });
