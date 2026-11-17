@@ -5,15 +5,21 @@
 // runs every function here with node. The instrument mapping is the interesting part: the fills belong to the owner's
 // Deepcoin account, but a BTC trade is the same trade whichever venue the chart is showing, so Binance's `BTCUSDT`,
 // OKX's `BTC-USDT-SWAP` and Deepcoin's own ids all name the same `{market, symbol}` of the private endpoint.
-import { BINANCE_SOURCE, DEEPCOIN_SOURCE, OKX_SOURCE } from './market-sources.mjs?v=20261117a';
+import { BINANCE_SOURCE, DEEPCOIN_SOURCE, OKX_SOURCE } from './market-sources.mjs?v=20261117b';
 
 // The 「我的成交」 checkbox: on unless the owner turned it off, so the markers are there when the keys are filled in.
 export const FILLS_KEY = 'jesse.market.fills.v1';
-// The page polls every 30 seconds; the backend caches one answer for 15, so two tabs still cost one request.
+// The page polls every 30 seconds; the backend answers two callers within 5 seconds from its store, so a second tab (or a
+// window that just grew left) costs no request at the venue.
 export const FILLS_POLL_MS = 30000;
 export const FILLS_ENDPOINT = '/review/market/fills';
 // Shown once in the page's status line when `.env.deepcoin` is missing / incomplete.
 export const FILLS_NOT_CONFIGURED = '未配置 Deepcoin API：在 jesse-project/.env.deepcoin 填三项后刷新';
+// Shown while the backend's store still walks into the past (T-60): the fills it already has are drawn, and the next
+// 30-second poll continues where this one stopped. `<date>` is the oldest fill the store has, so the line says how far
+// back the markers are trustworthy.
+export const FILLS_BACKFILLING = '我的成交：正在补历史，已到 ';
+export const FILLS_BACKFILLING_EMPTY = '我的成交：正在补历史…';
 // 买绿卖红, the same two colours as the candles (market.mjs UP / DOWN): a buy arrow below the candle (green, up), a sell
 // arrow above it (red, down), so a marker never sits on top of the candle's own body.
 export const BUY_MARKER_COLOR = '#16a082';
@@ -77,6 +83,25 @@ export function parseFills(payload) {
 
 /** Whether the answer says the project has the three credentials (an unconfigured project sends no fills at all). */
 export const configuredOf = payload => payload?.configured === true;
+
+/** UTC `2026-11-17 08:30` of a second stamp, the same shape the charts use for a candle time ('' when it is not one). */
+export function fillsStamp(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value <= 0) return '';
+  const date = new Date(value * 1000);
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 16).replace('T', ' ');
+}
+
+/**
+ * The status line while the store still misses history, '' when it does not (`complete` is absent on an older backend,
+ * which is not a reason to nag). `covered_from` is the oldest stored fill in seconds, so the line tells the owner how far
+ * back the markers go; without it the line still says that a backfill is running.
+ */
+export function fillsProgressText(payload) {
+  if (payload?.configured !== true || payload?.complete !== false) return '';
+  const stamp = fillsStamp(payload.covered_from);
+  return stamp ? `${FILLS_BACKFILLING}${stamp} UTC` : FILLS_BACKFILLING_EMPTY;
+}
 
 // 方向 + 开平 of one fill, in the order a bar lists its groups: 开多 / 平多 / 开空 / 平空, then a fill without posSide.
 const ACTIONS = [

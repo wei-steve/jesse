@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, OKX_SOURCE, YIELD_SOURCE } from '../jesse/static/review/market-sources.mjs';
 import { BAR_NOTE_COLOR } from '../jesse/static/review/labels.mjs';
-import { BUY_MARKER_COLOR, FILLS_KEY, FILLS_NOT_CONFIGURED, SELL_MARKER_COLOR, bucketFills, configuredOf,
-  fillAction, fillGroupText, fillGroupsText, fillMarkers, fillsBase, fillsInstrument, fillsRequest, mergeMarkers,
-  parseFills } from '../jesse/static/review/market-fills.mjs';
+import { BUY_MARKER_COLOR, FILLS_BACKFILLING, FILLS_BACKFILLING_EMPTY, FILLS_KEY, FILLS_NOT_CONFIGURED,
+  SELL_MARKER_COLOR, bucketFills, configuredOf, fillAction, fillGroupText, fillGroupsText, fillMarkers, fillsBase,
+  fillsInstrument, fillsProgressText, fillsRequest, fillsStamp, mergeMarkers, parseFills }
+  from '../jesse/static/review/market-fills.mjs';
 
 // The owner's fills are private: every number here is invented, and the shape is the one the Jesse route returns
 // (`{configured, fills}`), which is itself the venue's `data` row parsed down to what the chart draws.
@@ -189,4 +190,29 @@ test('the line under the chart reads the group out in full', () => {
   ]), '开多 1 笔 均价 10 数量 1 手续费 0 USDT · 平多 3 笔 均价 12.5 数量 4 手续费 0.5 USDT');
   assert.equal(fillGroupsText([]), '');
   assert.equal(fillGroupsText(undefined), '');
+});
+
+// --- 正在补历史 (T-60) ----------------------------------------------------------------------------------
+
+test('a window the store still misses says how far back it got, a complete one says nothing', () => {
+  assert.equal(FILLS_BACKFILLING, '我的成交：正在补历史，已到 ');
+  // `covered_from` is the oldest stored fill (seconds), named the way the charts name a candle time.
+  assert.equal(fillsProgressText({ configured: true, complete: false, covered_from: 1794839700 }),
+    '我的成交：正在补历史，已到 2026-11-16 14:35 UTC');
+  assert.equal(fillsStamp(1794000900), '2026-11-06 21:35');
+  // A store with nothing to point at yet (the first sync failed, or it has no fills) still says a backfill is running.
+  assert.equal(fillsProgressText({ configured: true, complete: false, covered_from: null }), FILLS_BACKFILLING_EMPTY);
+  assert.equal(fillsProgressText({ configured: true, complete: false }), FILLS_BACKFILLING_EMPTY);
+  // Nothing is missing (or the answer is unconfigured / from a backend that has no store yet): no line at all.
+  assert.equal(fillsProgressText({ configured: true, complete: true, covered_from: 1794839700 }), '');
+  assert.equal(fillsProgressText({ configured: true, fills: [] }), '');
+  assert.equal(fillsProgressText({ configured: false, fills: [], complete: false }), '');
+  assert.equal(fillsProgressText(null), '');
+  // A stamp that is not a time is not turned into 1970.
+  assert.equal(fillsStamp(0), '');
+  assert.equal(fillsStamp('yesterday'), '');
+  assert.equal(fillsStamp(null), '');
+  // The error of a refused request is a separate field, not the progress line (the page shows it instead).
+  assert.equal(fillsProgressText({ configured: true, complete: false, covered_from: 1794839700,
+    error: 'Deepcoin 请求失败（HTTP 429），稍后再试' }), '我的成交：正在补历史，已到 2026-11-16 14:35 UTC');
 });
