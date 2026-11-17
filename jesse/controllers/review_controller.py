@@ -339,6 +339,10 @@ def market_fills(request_json: MarketFillsRequestJson) -> JSONResponse:
     key lives in the project's `.env.deepcoin` and is read per request in jesse/services/deepcoin_private.py; it never
     reaches this answer, a log line or an error message. An unconfigured project is a 200 with `configured: false`: the
     chart has nothing to draw, which is not a failure.
+
+    The fills are stored in the project folder (`storage/deepcoin-fills/<instId>.json`), so a request only pulls what is
+    new and answers with `covered_from` / `complete` saying how much of the asked window the store covers. A venue that
+    refuses the request still answers 200 with the stored fills plus an `error`: the markers of earlier reads are drawn.
     """
     try:
         answer = deepcoin_private.read_fills(request_json.market, request_json.symbol, request_json.begin,

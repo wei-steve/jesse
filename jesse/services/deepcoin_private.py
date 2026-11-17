@@ -11,15 +11,24 @@ so the owner can paste them in without restarting Jesse. The file is parsed here
 written into `os.environ` or into a module-level variable: the values exist only while one request is being built, and
 they never reach the browser, a log line or an exception message (`_scrub` is the last line of defence).
 
+The fills are kept on disk, one JSON file per instrument in `<cwd>/storage/deepcoin-fills/`, and a request only pulls
+what the store does not have yet: the fills newer than the newest stored bill first (usually a single page), then a
+little of the history when the chart's window reaches further back than the oldest stored fill. A store that is still
+walking backwards answers with `complete: false` and the oldest fill it has (`covered_from`), so the page can say where
+it is while it keeps drawing what is already there.
+
 Everything that decides what a request means and what comes back is a pure function (`parse_env`, `sign`,
-`resolve_request`, `fills_query`, `parse_fills`, `page_oldest_bill`), so `tests/test_deepcoin_private.py` runs without a
-network and without any real key. `fetch_page` / `read_fills` are the only ones that go out; one answer is cached for
-15 seconds, because the page polls every 30 seconds and two tabs must not double the venue's load.
+`resolve_request`, `fills_query`, `parse_fills`, `page_oldest_bill`, `merge_fills`, `store_answer`), so
+`tests/test_deepcoin_private.py` runs without a network and without any real key. `fetch_page` is the only function that
+goes out; a sync within 5 seconds of the previous one answers from the store alone, because the page polls every 30
+seconds, asks again when its window grows left, and two tabs must not double the venue's load.
 """
 import base64
 import hmac
+import json
 import math
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -36,13 +45,22 @@ ENV_FILE = '.env.deepcoin'
 ENV_KEYS = ('DEEPCOIN_API_KEY', 'DEEPCOIN_API_SECRET', 'DEEPCOIN_API_PASSPHRASE')
 # `instType` of the venue, per market of the page.
 MARKET_TYPES = {'swap': 'SWAP', 'spot': 'SPOT'}
-# The venue's own page size (its maximum) and how far back one answer may page. 20 pages of 100 fills is more than a
-# day of active trading on one instrument, and it bounds the work a single request can cause.
+# Where the store lives, relative to the cwd of `jesse run` like storage/labels and storage/screenshots. One file per
+# instrument: `resolve_request` has already forced the id through the symbol whitelist, so it is a plain file name.
+STORE_FOLDER = os.path.join('storage', 'deepcoin-fills')
+# The venue's own page size (its maximum).
 PAGE_LIMIT = 100
+# How far one sync may walk towards the newest stored fill: 20 pages of 100 fills is more than a day of active trading
+# on one instrument, and it bounds the work a single request can cause. It is also where a store too old to be joined up
+# is started over (see sync_store).
 MAX_PAGES = 20
+# How much history one request adds: 10 pages per poll, so a months-old chart fills in over the next few polls instead
+# of in one slow request the venue might rate-limit.
+BACKFILL_PAGES = 10
+# A sync this soon after the previous one is answered from the store: the page polls every 30 seconds and asks again
+# when its window grows left, so this only ever merges callers (two tabs, a reload) into one venue request.
+SYNC_TTL = 5.0
 TIMEOUT = 10
-CACHE_TTL = 15.0
-CACHE_MAX = 64
 # Deepcoin's edge refuses requests' own User-Agent the way its public endpoints do (see market_sources), so the private
 # calls go out with the bare browser token. It says nothing about the owner; the key is in the headers.
 USER_AGENT = market_sources.DEEPCOIN_FALLBACK_USER_AGENT
@@ -174,8 +192,10 @@ def fills_query(inst_type: str, inst_id: str, begin: Optional[int] = None, end: 
                 older_than: Optional[str] = None, limit: int = PAGE_LIMIT) -> str:
     """The query string of one page (without `?`). The venue counts milliseconds, the page seconds.
 
-    The first page carries the whole window; an older page is asked for by `after` (the oldest billId already loaded)
-    alone, so the venue never has to combine the two filters.
+    Without `older_than` and without `begin` this is the newest page of the instrument, which is what a sync starts
+    from: the store wants every fill since the last poll, not only the part of the history the chart shows. An older
+    page is asked for by `after` (the oldest billId already loaded) alone, so the venue never has to combine the two
+    filters.
     """
     params = [('instType', inst_type), ('instId', inst_id)]
     if older_than:
@@ -183,7 +203,7 @@ def fills_query(inst_type: str, inst_id: str, begin: Optional[int] = None, end: 
         # real read-only key): `before=<billId>` returns the newest page again, `after=<billId>` returns the fills
         # older than that bill. So the older-page cursor goes out as `after`.
         params.append(('after', str(older_than)))
-    else:
+    elif begin is not None:
         params.append(('begin', str(int(begin) * 1000)))
         if end:
             params.append(('end', str(int(end) * 1000)))
@@ -268,11 +288,28 @@ def page_oldest_bill(rows) -> Optional[str]:
         return bills[-1]
 
 
-def page_oldest_time(rows) -> Optional[int]:
-    """The oldest `ts` (milliseconds) of one page, or None when no row says one."""
-    times = [_number(row.get('ts')) for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
-    known = [time_ for time_ in times if time_ is not None and time_ > 0]
-    return int(min(known)) if known else None
+def page_bills(rows) -> list:
+    """The numeric `billId`s of one page: the only ids that can page (`after=`) and be compared as cursors."""
+    return [number for number in (_bill_number((row or {}).get('billId'))
+                                  for row in rows if isinstance(row, dict)) if number is not None]
+
+
+def _bill_number(value) -> Optional[int]:
+    """A bill id as a comparable integer, or None for null / '' / text."""
+    text = str(value).strip() if value is not None and not isinstance(value, bool) else ''
+    return int(text) if text.isdigit() else None
+
+
+def _bill_text(value) -> Optional[str]:
+    """A bill cursor as text (`after=` value), or None when it is not a number."""
+    number = _bill_number(value)
+    return None if number is None else str(number)
+
+
+def bill_cursor(values, pick) -> Optional[str]:
+    """The highest / lowest numeric bill id of `values` (each may be None or garbage), as text, or None for none."""
+    numbers = [number for number in (_bill_number(value) for value in values) if number is not None]
+    return str(pick(numbers)) if numbers else None
 
 
 # --- The requests -------------------------------------------------------------------------------------------------
@@ -317,61 +354,266 @@ def fetch_page(credentials: dict, query: str) -> list:
     return data if isinstance(data, list) else []
 
 
-def fetch_fills(request: dict, credentials: dict) -> list:
-    """Every fill of one resolved request: the first page carries the window, older pages page by `after` (see fills_query).
-
-    Paging stops on the venue's own end (a page shorter than the page size), on a page whose oldest fill is already
-    before `begin`, on a page that does not move the cursor, and after MAX_PAGES — whichever comes first, so one old
-    chart can never walk the whole account history.
-    """
-    rows = []
-    older_than = None
-    for _ in range(MAX_PAGES):
-        page = fetch_page(credentials, fills_query(request['instType'], request['instId'], request['begin'],
-                                                   request['end'], older_than=older_than))
-        rows.extend(page)
-        if len(page) < PAGE_LIMIT:
-            break
-        oldest_time = page_oldest_time(page)
-        if oldest_time is not None and oldest_time < request['begin'] * 1000:
-            break
-        oldest = page_oldest_bill(page)
-        if not oldest or oldest == older_than:
-            break
-        older_than = oldest
-    return parse_fills(rows, request['instId'], request['begin'], request['end'])
+# --- The local store ----------------------------------------------------------------------------------------------
+# The fills live in the project folder (`<cwd>/storage/deepcoin-fills/<instId>.json`), one JSON object per instrument:
+# `{fills: [parsed fills, oldest first], newest_bill, oldest_bill, history_end, updated}`. The two bill cursors are the
+# paging anchors of that file: `newest_bill` is where a sync of the new fills can stop, `oldest_bill` where the next walk
+# into the past starts. They are kept beside the fills because a fill (the parsed row the page draws) carries no billId.
+# A sync writes the file through a temp file + os.replace, so a reader never sees half a store.
 
 
-# (market, instId, begin // 60, end // 60) -> (monotonic stamp, answer). The page polls every 30 seconds and rounds its
-# range to the minute, so a second tab within 15 seconds costs no request.
-_CACHE = {}
+def store_path(inst_id: str, folder: Optional[str] = None) -> str:
+    """`<folder>/storage/deepcoin-fills/<instId>.json` of one instrument."""
+    return os.path.join(folder or os.getcwd(), STORE_FOLDER, f'{inst_id}.json')
+
+
+def empty_store() -> dict:
+    """A store of an instrument nothing was read for yet."""
+    return {'fills': [], 'newest_bill': None, 'oldest_bill': None, 'history_end': False, 'updated': 0}
+
+
+# One lock per instrument: two instruments sync in parallel, one instrument never does in two threads at once.
+_LOCKS = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def store_lock(inst_id: str) -> threading.Lock:
+    """The one lock of one instrument (created on first use; the whitelist bounds how many there can be)."""
+    with _LOCKS_GUARD:
+        return _LOCKS.setdefault(inst_id, threading.Lock())
+
+
+# instId -> monotonic stamp of the last attempt to reach the venue (a failed one too: a rate-limited venue is not
+# hammered). See SYNC_TTL.
+_SYNCED = {}
 
 
 def clear_cache() -> None:
-    """Drop the cached answers (tests, and a manual retry that must not replay an old failure)."""
-    _CACHE.clear()
+    """Forget the recent-sync marks (tests, and a manual retry that must not wait out the 5 seconds)."""
+    _SYNCED.clear()
+
+
+def read_store(inst_id: str, folder: Optional[str] = None) -> dict:
+    """The store of one instrument, or an empty one when the file is missing / unreadable / edited into nonsense.
+
+    A broken file is the same answer as no file: the next sync starts over instead of failing the page, and a hand-edited
+    row that cannot be drawn is dropped one by one (the rest of the file is still good).
+    """
+    try:
+        with open(store_path(inst_id, folder), encoding='utf-8') as file:
+            data = json.load(file)
+    except (OSError, ValueError):
+        return empty_store()
+    if not isinstance(data, dict):
+        return empty_store()
+    store = empty_store()
+    store['fills'] = merge_fills(stored_fills(data.get('fills')))
+    store['newest_bill'] = _bill_text(data.get('newest_bill'))
+    store['oldest_bill'] = _bill_text(data.get('oldest_bill'))
+    store['history_end'] = data.get('history_end') is True
+    store['updated'] = data.get('updated') if isinstance(data.get('updated'), int) \
+        and not isinstance(data.get('updated'), bool) else 0
+    return store
+
+
+def stored_fills(fills) -> list:
+    """The fills of a store file that can still be drawn: a hand-edited row without numbers or a side is dropped."""
+    rows = []
+    for fill in fills if isinstance(fills, list) else []:
+        if not isinstance(fill, dict):
+            continue
+        time_, price, size = _number(fill.get('time')), _number(fill.get('price')), _number(fill.get('size'))
+        side = str(fill.get('side') or '').strip().lower()
+        if time_ is None or price is None or size is None:
+            continue
+        if time_ <= 0 or price <= 0 or size <= 0 or side not in ('buy', 'sell'):
+            continue
+        rows.append({**fill, 'time': int(time_), 'price': price, 'size': size, 'side': side,
+                     'tradeId': str(fill.get('tradeId') or '')})
+    return rows
+
+
+def write_store(inst_id: str, store: dict, folder: Optional[str] = None) -> None:
+    """The store as one JSON file: a temp file in the same folder, then `os.replace`, so the file is never half-written."""
+    path = store_path(inst_id, folder)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    temp = f'{path}.{os.getpid()}-{threading.get_ident()}.tmp'
+    try:
+        with open(temp, 'w', encoding='utf-8') as file:
+            json.dump(store, file, ensure_ascii=False, sort_keys=True)
+        os.replace(temp, path)
+    finally:
+        # A failed json.dump / replace leaves the temp file behind; the real file is untouched either way.
+        if os.path.exists(temp):
+            try:
+                os.remove(temp)
+            except OSError:
+                pass
+
+
+def fill_key(fill: dict) -> str:
+    """The identity of one fill in the store: its trade id, or the row's own numbers when the venue sent none."""
+    trade_id = str(fill.get('tradeId') or '').strip()
+    if trade_id:
+        return trade_id
+    return '|'.join(str(fill.get(name) or '') for name in ('ordId', 'time', 'price', 'size', 'side'))
+
+
+def merge_fills(*lists) -> list:
+    """Every fill once (by `fill_key`), oldest first: the store's own history and whatever a sync just pulled."""
+    merged = {}
+    for fills in lists:
+        for fill in fills if isinstance(fills, list) else []:
+            if isinstance(fill, dict):
+                merged[fill_key(fill)] = fill
+    return sorted(merged.values(),
+                  key=lambda fill: (_number(fill.get('time')) or 0, str(fill.get('tradeId') or ''),
+                                    _number(fill.get('price')) or 0))
+
+
+# --- Pulling what the store misses ---------------------------------------------------------------------------------
+
+def pull_newest(inst_type: str, inst_id: str, credentials: dict, newest_bill: Optional[str],
+                pages: int = MAX_PAGES) -> dict:
+    """Walk from the newest page towards older fills until it meets `newest_bill` (the newest bill the store has).
+
+    `{'rows': [...], 'bills': [...], 'caught_up': bool, 'reached_end': bool}`: `caught_up` says the pulled fills touch
+    what the store already had — either the walk met a fill the store knows (a bill id ≤ `newest_bill`), or the venue
+    itself ran out (`reached_end`, a page shorter than the page size) — so nothing in between is missing. The first page
+    is asked for without a window: the store wants every fill since the last poll, not only the chart's candles.
+    """
+    rows, bills = [], []
+    anchor = _bill_number(newest_bill)
+    older_than = None
+    caught_up = reached_end = False
+    for _ in range(max(1, int(pages))):
+        page = fetch_page(credentials, fills_query(inst_type, inst_id, older_than=older_than))
+        rows.extend(page)
+        bills.extend(page_bills(page))
+        oldest = _bill_number(page_oldest_bill(page))
+        if len(page) < PAGE_LIMIT:
+            # The venue has nothing older to give: the account's fills start here.
+            caught_up = reached_end = True
+            break
+        if anchor is not None and oldest is not None and oldest <= anchor:
+            caught_up = True
+            break
+        oldest_bill = page_oldest_bill(page)
+        if not oldest_bill or oldest_bill == older_than:
+            # A full page without bill ids (or one that does not move the cursor): asking again repeats it.
+            break
+        older_than = oldest_bill
+    return {'rows': rows, 'bills': bills, 'caught_up': caught_up, 'reached_end': reached_end}
+
+
+def pull_older(inst_type: str, inst_id: str, credentials: dict, oldest_bill: Optional[str],
+               pages: int = BACKFILL_PAGES) -> dict:
+    """Walk further into the past from `oldest_bill` (the oldest bill the store has), at most `pages` pages.
+
+    `{'rows', 'bills', 'reached_end'}`: `reached_end` is the venue saying nothing older exists (a short or empty page),
+    which is what turns the store's `history_end` on. A slow walk is the point — an old chart is filled in over the next
+    few polls instead of in one request that the venue might rate-limit.
+    """
+    rows, bills = [], []
+    cursor = _bill_text(oldest_bill)
+    reached_end = False
+    for _ in range(max(1, int(pages))):
+        if not cursor:
+            break
+        page = fetch_page(credentials, fills_query(inst_type, inst_id, older_than=cursor))
+        rows.extend(page)
+        bills.extend(page_bills(page))
+        if len(page) < PAGE_LIMIT:
+            reached_end = True
+            break
+        oldest = page_oldest_bill(page)
+        if not oldest or oldest == cursor:
+            break
+        cursor = oldest
+    return {'rows': rows, 'bills': bills, 'reached_end': reached_end}
+
+
+def sync_store(store: dict, request: dict, credentials: dict) -> dict:
+    """The store after one sync: what is new since the last poll, then a little of the history the chart asked for.
+
+    Raises DeepcoinError when the venue refuses (a rate limit, a refused key). The caller answers with the store it
+    already had, so the markers of earlier reads stay on the chart; nothing is written on a failure.
+    """
+    inst_type, inst_id = request['instType'], request['instId']
+    newest = pull_newest(inst_type, inst_id, credentials, store['newest_bill'])
+    pulled = parse_fills(newest['rows'], inst_id)
+    if newest['caught_up']:
+        store['fills'] = merge_fills(store['fills'], pulled)
+        # A walk that ran into the venue's own start means the whole account history is here: nothing left to backfill.
+        store['history_end'] = store['history_end'] or newest['reached_end']
+    else:
+        # The walk did not connect to the store: MAX_PAGES pages of 100 fills and still no fill the store already had
+        # (the owner was away longer than one sync can walk), or a full page without bill ids that cannot be paged past.
+        # The pulled range then does not touch the stored one, and two disjoint ranges drawn as one continuous block of
+        # fills is worse than starting over — so the stored fills are dropped and the store becomes this walk.
+        # `history_end` starts False again: only a walk that reaches the venue's own end can turn it on.
+        store = empty_store()
+        store['fills'] = pulled
+    store['newest_bill'] = bill_cursor([store['newest_bill']] + newest['bills'], max)
+    store['oldest_bill'] = bill_cursor([store['oldest_bill']] + newest['bills'], min)
+    oldest_time = store['fills'][0]['time'] if store['fills'] else None
+    if not store['history_end'] and oldest_time is not None and request['begin'] < oldest_time:
+        older = pull_older(inst_type, inst_id, credentials, store['oldest_bill'])
+        store['fills'] = merge_fills(store['fills'], parse_fills(older['rows'], inst_id))
+        store['oldest_bill'] = bill_cursor([store['oldest_bill']] + older['bills'], min)
+        store['history_end'] = store['history_end'] or older['reached_end']
+    store['updated'] = int(time.time())
+    return store
+
+
+def store_answer(store: dict, request: dict, cached: bool = False, error: Optional[str] = None) -> dict:
+    """The answer built from the store: the fills of the requested window, and how much of that window is covered.
+
+    `covered_from` is the oldest fill the store has (seconds) — and None once `history_end` says nothing older exists, so
+    the page only shows a 「正在补历史」 line while a region really is still missing. `complete` says the window's own
+    `begin` is inside what the store has, or that no older fill exists at all.
+    """
+    begin, end = request['begin'], request['end']
+    fills = [fill for fill in store['fills']
+             if fill['time'] >= begin and (end is None or fill['time'] <= end)]
+    oldest = store['fills'][0]['time'] if store['fills'] else None
+    covered_from = None if store['history_end'] or oldest is None else oldest
+    complete = bool(store['history_end'] or (covered_from is not None and covered_from <= begin))
+    answer = {'configured': True, 'fills': fills, 'market': request['market'], 'symbol': request['symbol'],
+              'begin': begin, 'covered_from': covered_from, 'complete': complete,
+              'history_end': store['history_end'], 'fetched_at': int(time.time()), 'cached': cached}
+    if error:
+        answer['error'] = error
+    return answer
 
 
 def read_fills(market, symbol, begin, end=None) -> dict:
-    """The answer of `POST /review/market/fills`: `{configured, fills}` (plus a little of what was asked).
+    """The answer of `POST /review/market/fills`: `{configured, fills, covered_from, complete}` (plus what was asked).
 
     An unconfigured project answers `{configured: False, fills: []}` — nothing to explain to a reader, and nothing to
-    request. The credentials are read here (every call), so a filled-in file works on the next poll.
+    request. The credentials are read here (every call), so a filled-in file works on the next poll. A venue that refuses
+    the request is not a failed route: the stored fills are still returned, with an `error` saying why.
     """
     request = resolve_request(market, symbol, begin, end)
     credentials = read_credentials()
     if credentials is None:
         return {'configured': False, 'fills': []}
-    last_minute = None if request['end'] is None else request['end'] // 60
-    key = (request['market'], request['instId'], request['begin'] // 60, last_minute)
-    cached = _CACHE.get(key)
-    if cached is not None and time.monotonic() - cached[0] < CACHE_TTL:
-        return {**cached[1], 'cached': True}
-    fills = fetch_fills(request, credentials)
-    answer = {'configured': True, 'fills': fills, 'market': request['market'], 'symbol': request['symbol'],
-              'begin': request['begin'], 'fetched_at': int(time.time())}
-    if len(_CACHE) >= CACHE_MAX:
-        for stale in sorted(_CACHE, key=lambda item: _CACHE[item][0])[: len(_CACHE) - CACHE_MAX + 1]:
-            _CACHE.pop(stale, None)
-    _CACHE[key] = (time.monotonic(), answer)
-    return {**answer, 'cached': False}
+    inst_id = request['instId']
+    with store_lock(inst_id):
+        store = read_store(inst_id)
+        cached = time.monotonic() - _SYNCED.get(inst_id, -SYNC_TTL) < SYNC_TTL
+        error = None
+        if not cached:
+            try:
+                store = sync_store(store, request, credentials)
+            except DeepcoinError as failure:
+                error = str(failure)
+            else:
+                try:
+                    write_store(inst_id, store)
+                except OSError:
+                    # A project folder this process cannot write still draws this answer; the next sync starts from
+                    # whatever is on disk (a read-only volume is not a reason to lose the markers already read).
+                    pass
+            _SYNCED[inst_id] = time.monotonic()
+        return store_answer(store, request, cached=cached, error=error)

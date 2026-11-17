@@ -1,14 +1,20 @@
-"""The owner's private Deepcoin fills (T-59), with fake credentials and fake answers only: no network, no real key.
+"""The owner's private Deepcoin fills (T-59 / T-60), with fake credentials, fake venue pages and fake fills only.
 
-Every value below is invented (`test-key-0000` …). The fake `.env.deepcoin` lives in a tmp_path the test chdirs into,
-so nothing here reads the project's own file, and the tests that check "the secret never leaks" assert on these fake
-strings.
+Every value below is invented (`test-key-0000` …) and every fill is generated, so nothing here is a real trade or a real
+account. The fake `.env.deepcoin` and the store (`storage/deepcoin-fills/`) live in a tmp_path the test chdirs into, so
+nothing reads the project's own files, and the tests that check "the secret never leaks" assert on these fake strings.
+
+`FakeVenue` is the venue's fills endpoint itself: newest row first, `after=<billId>` for the older pages, a full page of
+`PAGE_LIMIT` rows until the account's history runs out. No socket is opened and nothing is signed.
 """
 import base64
 import hashlib
 import hmac
 import json
+import os
+import re
 from hashlib import sha256
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
@@ -47,7 +53,7 @@ FILLS = [
 
 @pytest.fixture(autouse=True)
 def empty_cache():
-    """Every test starts without a cached answer (the cache is process-wide)."""
+    """Every test starts without a recent-sync mark (it is process-wide)."""
     deepcoin_private.clear_cache()
     yield
     deepcoin_private.clear_cache()
@@ -55,7 +61,7 @@ def empty_cache():
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
-    """A project folder the module reads `.env.deepcoin` from (its cwd). No file unless the test writes one."""
+    """A project folder the module reads `.env.deepcoin` from and writes the store into (its cwd)."""
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
@@ -91,18 +97,63 @@ def ask(client, **body):
     return client.post('/review/market/fills', json=payload, headers=HEADERS)
 
 
-class FakeResponse:
-    """What requests.get() answers, without a socket."""
+# --- The fake venue ------------------------------------------------------------------------------------------------
 
-    def __init__(self, status, payload):
-        self.status_code = status
-        self.ok = status == 200
-        self._payload = payload
+def venue_rows(count, first_bill=1, first_ts=1794000000, inst_id='BTC-USDT-SWAP'):
+    """`count` fake fills whose bill ids and times both grow: the newest fill has the highest bill (the venue's order)."""
+    return [{'instType': 'SWAP', 'instId': inst_id, 'tradeId': f'{inst_id}-{first_bill + index}',
+             'billId': str(first_bill + index), 'ordId': '7001', 'fillPx': '64000', 'fillSz': '1',
+             'side': 'buy', 'posSide': 'long', 'execType': 'T', 'feeCcy': 'USDT', 'fee': '0.01',
+             'ts': str((first_ts + index) * 1000)}
+            for index in range(count)]
 
-    def json(self):
-        if isinstance(self._payload, Exception):
-            raise self._payload
-        return self._payload
+
+class FakeVenue:
+    """The fills endpoint of one instrument: newest row first, `after=<billId>` for the page of older fills."""
+
+    def __init__(self, rows):
+        self.rows = self._sorted(rows)
+        self.queries = []
+
+    @staticmethod
+    def _sorted(rows):
+        return sorted((dict(row) for row in rows), key=lambda row: int(row['billId']), reverse=True)
+
+    def add(self, rows):
+        """Newer fills arriving between two polls."""
+        self.rows = self._sorted(self.rows + list(rows))
+
+    def __call__(self, credentials, query):
+        self.queries.append(query)
+        match = re.search(r'(?:^|&)after=(\d+)', query)
+        after = int(match.group(1)) if match else None
+        asked = [row for row in self.rows if after is None or int(row['billId']) < after]
+        return asked[: deepcoin_private.PAGE_LIMIT]
+
+
+def store_after(count, first_bill=1, first_ts=1794000000, inst_id='BTC-USDT-SWAP'):
+    """What the store of a first read of `venue_rows(count)` looks like: its fills and its two bill cursors."""
+    rows = venue_rows(count, first_bill=first_bill, first_ts=first_ts, inst_id=inst_id)
+    return {'fills': deepcoin_private.parse_fills(rows, inst_id),
+            'newest_bill': str(first_bill + count - 1), 'oldest_bill': str(first_bill),
+            'history_end': False}
+
+
+def write_existing_store(count, first_bill=1, first_ts=1794000000, inst_id='BTC-USDT-SWAP'):
+    """A store written before the read under test (the state of a project whose page was open yesterday)."""
+    store = store_after(count, first_bill=first_bill, first_ts=first_ts, inst_id=inst_id)
+    deepcoin_private.write_store(inst_id, {**deepcoin_private.empty_store(), **store, 'updated': 5})
+    return store
+
+
+def store_path(inst_id='BTC-USDT-SWAP'):
+    return Path(deepcoin_private.store_path(inst_id))
+
+
+def read_swap(begin=1794000000, end=None):
+    """One read without the 5-second window in the way (that window has its own test)."""
+    deepcoin_private.clear_cache()
+    return deepcoin_private.read_fills('swap', 'BTC-USDT', begin, end)
 
 
 # --- The env file -------------------------------------------------------------------------------------------------
@@ -146,7 +197,6 @@ def test_the_three_values_are_read_from_the_cwd_on_every_call(configured):
                            'DEEPCOIN_API_PASSPHRASE': PASSPHRASE}
     assert deepcoin_private.is_configured() is True
     # Nothing was exported into the environment: the values only exist for the length of one call.
-    import os
     assert 'DEEPCOIN_API_KEY' not in os.environ
     # Filling the file in later works without a restart: the next call reads the new values.
     write_env(configured, DEEPCOIN_API_KEY='test-key-9999', DEEPCOIN_API_SECRET=SECRET,
@@ -213,11 +263,14 @@ def test_anything_outside_the_whitelist_is_a_readable_400():
         assert any(word in str(error.value) for word in ('只能', '不支持', '必须', '不能')), str(error.value)
 
 
-def test_the_first_page_carries_the_window_and_older_pages_only_the_cursor():
+def test_a_newest_page_has_no_window_and_an_older_page_only_the_cursor():
+    # The first page of a sync asks for nothing but the instrument and the page size: the store wants every fill since
+    # the last poll, not only the part of the history the chart shows.
+    assert deepcoin_private.fills_query('SWAP', 'BTC-USDT-SWAP') == 'instType=SWAP&instId=BTC-USDT-SWAP&limit=100'
     first = deepcoin_private.fills_query('SWAP', 'BTC-USDT-SWAP', 1794835200, 1794841200)
     assert first == 'instType=SWAP&instId=BTC-USDT-SWAP&begin=1794835200000&end=1794841200000&limit=100'
     older = deepcoin_private.fills_query('SWAP', 'BTC-USDT-SWAP', 1794835200, 1794841200, older_than='7999001')
-    # The cursor alone (sent as `after`, the venue's real older-page parameter): it never has to combine it with the window (the window is enforced locally).
+    # The cursor alone (sent as `after`, the venue's real older-page parameter): it never has to combine it with the window.
     assert older == 'instType=SWAP&instId=BTC-USDT-SWAP&after=7999001&limit=100'
 
 
@@ -276,82 +329,230 @@ def test_a_fill_without_pos_side_keeps_an_empty_one_and_broken_rows_are_dropped(
         assert deepcoin_private.parse_fills(broken) == []
 
 
-# --- Paging -------------------------------------------------------------------------------------------------------
-
-def page(count, oldest_bill, oldest_ts, inst_id='BTC-USDT-SWAP'):
-    """One page of `count` fake fills whose oldest row is at `oldest_ts` with bill `oldest_bill`."""
-    return [{'instId': inst_id, 'tradeId': f'{oldest_bill}-{index}', 'billId': str(int(oldest_bill) - index),
-             'ordId': '1', 'fillPx': '64000', 'fillSz': '1', 'side': 'buy', 'posSide': 'long',
-             'execType': 'T', 'feeCcy': 'USDT', 'fee': '0.01',
-             'ts': str(oldest_ts - index * 1000)}
-            for index in range(count)]
-
-
-def test_paging_stops_on_a_short_page(monkeypatch):
-    queries = []
-
-    def fake_page(credentials, query):
-        queries.append(query)
-        return page(3, oldest_bill=8000, oldest_ts=1794839700000)
-
-    monkeypatch.setattr(deepcoin_private, 'fetch_page', fake_page)
-    fills = deepcoin_private.fetch_fills(deepcoin_private.resolve_request('swap', 'BTC-USDT', 1794835200),
-                                         {'DEEPCOIN_API_KEY': KEY})
-    assert len(queries) == 1
-    assert 'begin=1794835200000' in queries[0]
-    assert len(fills) == 3
-
-
-def test_paging_follows_the_oldest_bill_id_until_the_page_reaches_past_begin(monkeypatch):
-    queries = []
-
-    def fake_page(credentials, query):
-        queries.append(query)
-        if len(queries) == 1:
-            return page(100, oldest_bill=8000, oldest_ts=1794839700000)
-        # A page that already runs past `begin` (1794835200): the older fills could not be drawn anyway.
-        return page(100, oldest_bill=7300, oldest_ts=1794835100000)
-
-    monkeypatch.setattr(deepcoin_private, 'fetch_page', fake_page)
-    deepcoin_private.fetch_fills(deepcoin_private.resolve_request('swap', 'BTC-USDT', 1794835200), {'KEY': KEY})
-    assert len(queries) == 2
-    # The second page asks for what is older than the oldest bill of the first, and only that.
-    assert 'after=7901' in queries[1] and 'begin=' not in queries[1] and 'end=' not in queries[1]
-
-
-def test_paging_never_runs_more_than_max_pages(monkeypatch):
-    queries = []
-
-    def fake_page(credentials, query):
-        queries.append(query)
-        # Always a full page that stays inside the window: only MAX_PAGES ends this.
-        return page(100, oldest_bill=100000 - len(queries) * 100, oldest_ts=1794839000000)
-
-    monkeypatch.setattr(deepcoin_private, 'fetch_page', fake_page)
-    deepcoin_private.fetch_fills(deepcoin_private.resolve_request('swap', 'BTC-USDT', 1794835200), {'KEY': KEY})
-    assert len(queries) == deepcoin_private.MAX_PAGES == 20
-
-
-def test_paging_stops_when_the_cursor_cannot_move(monkeypatch):
-    queries = []
-
-    def fake_page(credentials, query):
-        queries.append(query)
-        # A full page without bill ids: there is nothing to page from, so asking again would repeat the same page.
-        return page(100, oldest_bill=8000, oldest_ts=1794839000000) if len(queries) == 1 else \
-            [dict(row, billId='') for row in page(100, oldest_bill=8000, oldest_ts=1794839000000)]
-
-    monkeypatch.setattr(deepcoin_private, 'fetch_page', fake_page)
-    deepcoin_private.fetch_fills(deepcoin_private.resolve_request('swap', 'BTC-USDT', 1794835200), {'KEY': KEY})
-    assert len(queries) == 2
-
-
 def test_the_oldest_bill_of_a_page_is_its_smallest_id():
     assert deepcoin_private.page_oldest_bill([{'billId': '8002'}, {'billId': '8000'}, {'billId': '8001'}]) == '8000'
     assert deepcoin_private.page_oldest_bill([{'billId': 'a'}, {'billId': 'b'}]) == 'b'
     assert deepcoin_private.page_oldest_bill([{}, None, 'nope']) is None
-    assert deepcoin_private.page_oldest_time([{'ts': '1794839700000'}, {'ts': '1794839000000'}]) == 1794839000000
-    assert deepcoin_private.page_oldest_time([]) is None
+    # Only numeric bill ids can page or be compared as cursors.
+    assert deepcoin_private.page_bills([{'billId': '12'}, {'billId': '9'}, {'billId': 'x'}, {}, None]) == [12, 9]
+    assert deepcoin_private.page_bills([]) == []
+    assert deepcoin_private.bill_cursor(['9', '120', None, 'x'], max) == '120'
+    assert deepcoin_private.bill_cursor(['9', '120', None, 'x'], min) == '9'
+    assert deepcoin_private.bill_cursor([None, 'x'], max) is None
+
+
+# --- The store ----------------------------------------------------------------------------------------------------
+
+def test_the_first_read_stores_the_history_and_answers_it(configured, monkeypatch):
+    venue = FakeVenue(venue_rows(150))
+    monkeypatch.setattr(deepcoin_private, 'fetch_page', venue)
+    answer = read_swap()
+    # Two pages: the newest 100 fills, then the 50 that are left (a short page = the venue's own end of the account).
+    assert venue.queries == ['instType=SWAP&instId=BTC-USDT-SWAP&limit=100',
+                             'instType=SWAP&instId=BTC-USDT-SWAP&after=51&limit=100']
+    assert [fill['tradeId'] for fill in answer['fills']] == \
+        [f'BTC-USDT-SWAP-{bill}' for bill in range(1, 151)]
+    assert answer['configured'] is True and answer['cached'] is False and answer['fetched_at'] > 0
+    # Every fill of the account is stored, and there is nothing older to look for.
+    assert answer['history_end'] is True and answer['complete'] is True and answer['covered_from'] is None
+    stored = deepcoin_private.read_store('BTC-USDT-SWAP')
+    assert len(stored['fills']) == 150 and stored['history_end'] is True and stored['updated'] > 0
+    assert stored['newest_bill'] == '150' and stored['oldest_bill'] == '1'
+    data = json.loads(store_path().read_text(encoding='utf-8'))
+    assert set(data) == {'fills', 'newest_bill', 'oldest_bill', 'history_end', 'updated'}
+    # Oldest first inside the file, and no temp file left behind by the atomic write.
+    assert [fill['time'] for fill in data['fills']] == sorted(fill['time'] for fill in data['fills'])
+    assert sorted(os.listdir(store_path().parent)) == ['BTC-USDT-SWAP.json']
+
+
+def test_a_second_read_asks_one_page_and_stops_at_the_stored_bill(configured, monkeypatch):
+    rows = venue_rows(150)
+    venue = FakeVenue(rows)
+    monkeypatch.setattr(deepcoin_private, 'fetch_page', venue)
+    read_swap()
+    # 40 fills arrived since: one page of 100 still carries bill 91, which is older than the stored newest (150), so the
+    # new and the stored ranges touch and one page is all the venue is asked for.
+    venue.add(venue_rows(40, first_bill=151, first_ts=1794000150))
+    venue.queries.clear()
+    answer = read_swap()
+    assert venue.queries == ['instType=SWAP&instId=BTC-USDT-SWAP&limit=100']
+    assert len(answer['fills']) == 190
+    stored = deepcoin_private.read_store('BTC-USDT-SWAP')
+    assert stored['newest_bill'] == '190'
+    # The overlapping page (bills 91..150) is merged, not appended: one copy of every fill.
+    assert len(stored['fills']) == 190
+    assert len({fill['tradeId'] for fill in stored['fills']}) == 190
+
+
+def test_backfill_walks_ten_pages_a_poll_and_stops_there(configured, monkeypatch):
+    rows = venue_rows(2000)
+    venue = FakeVenue(rows)
+    monkeypatch.setattr(deepcoin_private, 'fetch_page', venue)
+    # A store from an earlier poll: the newest 100 fills, and a history that is not complete yet.
+    write_existing_store(100, first_bill=1901)
+    answer = read_swap(begin=1794000000)
+    # One page of new fills (the newest page already carries the stored newest bill), then BACKFILL_PAGES pages older.
+    assert len(venue.queries) == 1 + deepcoin_private.BACKFILL_PAGES == 11
+    assert 'after=' not in venue.queries[0]
+    assert [re.search(r'after=(\d+)', query).group(1) for query in venue.queries[1:]] == \
+        ['1901', '1801', '1701', '1601', '1501', '1401', '1301', '1201', '1101', '1001']
+    stored = deepcoin_private.read_store('BTC-USDT-SWAP')
+    assert len(stored['fills']) == 1100
+    assert stored['oldest_bill'] == '901' and stored['newest_bill'] == '2000'
+    # Ten pages a poll: the requested `begin` is still not reached, so the answer says how far the store goes instead.
+    assert stored['history_end'] is False
+    assert answer['complete'] is False
+    assert answer['covered_from'] == stored['fills'][0]['time'] == 1794000900
+    # The window really is not sent to the venue: it is enforced on what the store has.
+    assert all('begin=' not in query and 'end=' not in query for query in venue.queries)
+
+
+def test_a_short_page_into_the_past_marks_the_history_end(configured, monkeypatch):
+    venue = FakeVenue(venue_rows(130))
+    monkeypatch.setattr(deepcoin_private, 'fetch_page', venue)
+    # The store holds the newest 100 fills (bills 31..130) and knows nothing older.
+    write_existing_store(100, first_bill=31)
+    answer = read_swap(begin=1)
+    assert len(venue.queries) == 2
+    # 30 fills came back where 100 were asked for: the account starts there, so nothing older will ever be missing.
+    assert re.search(r'after=(\d+)', venue.queries[1]).group(1) == '31'
+    stored = deepcoin_private.read_store('BTC-USDT-SWAP')
+    assert len(stored['fills']) == 130 and stored['history_end'] is True
+    assert stored['oldest_bill'] == '1'
+    # A complete history has no edge to report, so the page never shows a 「补历史」 line for it.
+    assert answer['covered_from'] is None and answer['complete'] is True
+    assert len(answer['fills']) == 130
+
+
+def test_a_store_too_old_for_one_walk_is_started_over(configured, monkeypatch):
+    venue = FakeVenue(venue_rows(2500))
+    monkeypatch.setattr(deepcoin_private, 'fetch_page', venue)
+    stale = {**deepcoin_private.empty_store(), 'history_end': True, 'updated': 5, 'newest_bill': '10',
+             'oldest_bill': '9',
+             'fills': [{'time': 1793000000, 'price': 1.0, 'size': 1.0, 'side': 'buy', 'posSide': '',
+                        'execType': '', 'fee': 0.0, 'feeCcy': '', 'ordId': '', 'tradeId': 'stale'}]}
+    deepcoin_private.write_store('BTC-USDT-SWAP', stale)
+    answer = read_swap(begin=1794000500)
+    # 20 full pages and still no fill the store knows: the two ranges do not touch, so the old store is dropped.
+    assert len(venue.queries) == deepcoin_private.MAX_PAGES == 20
+    stored = deepcoin_private.read_store('BTC-USDT-SWAP')
+    assert [fill['tradeId'] for fill in stored['fills']].count('stale') == 0
+    # What the walk did return is kept, and the history has to be learned again.
+    assert len(stored['fills']) == 2000 and stored['history_end'] is False
+    assert stored['newest_bill'] == '2500' and stored['oldest_bill'] == '501'
+    # The dropped store does not leave a window the page would be told is complete by accident: the pulled range covers
+    # a begin newer than its own oldest fill, so this answer is complete, but only for that part.
+    assert len(answer['fills']) == 2000 and answer['complete'] is True
+    assert answer['covered_from'] == 1794000500
+
+
+def test_covered_from_and_complete_say_how_much_of_the_window_the_store_has(configured, monkeypatch):
+    venue = FakeVenue(venue_rows(2000))
+    monkeypatch.setattr(deepcoin_private, 'fetch_page', venue)
+    write_existing_store(100, first_bill=1901)
+    # A begin at the oldest stored fill: the whole window is in the store, so nothing is missing and nothing is fetched
+    # beyond the newest page.
+    inside = read_swap(begin=1794001900)
+    assert inside['complete'] is True and inside['covered_from'] == 1794001900
+    assert inside['history_end'] is False
+    # A begin far older than the store: the backfill walks ten pages and the answer points at where it got to.
+    deepcoin_private.clear_cache()
+    older = deepcoin_private.read_fills('swap', 'BTC-USDT', 1794000000)
+    assert older['complete'] is False
+    assert older['covered_from'] == 1794000900 == deepcoin_private.read_store('BTC-USDT-SWAP')['fills'][0]['time']
+
+
+def test_the_answer_is_only_the_window_the_page_asked_for(configured, monkeypatch):
+    venue = FakeVenue(venue_rows(150))
+    monkeypatch.setattr(deepcoin_private, 'fetch_page', venue)
+    answer = read_swap(begin=1794000010, end=1794000019)
+    assert [fill['time'] for fill in answer['fills']] == list(range(1794000010, 1794000020))
+    assert answer['begin'] == 1794000010
+    # The store keeps the whole account; the window is cut here, so no request carries begin / end.
+    assert all('begin=' not in query and 'end=' not in query for query in venue.queries)
+    assert len(deepcoin_private.read_store('BTC-USDT-SWAP')['fills']) == 150
+
+
+def test_each_instrument_has_its_own_file(configured, monkeypatch):
+    swap = FakeVenue(venue_rows(30))
+    monkeypatch.setattr(deepcoin_private, 'fetch_page', swap)
+    swap_answer = read_swap()
+    spot = FakeVenue(venue_rows(20, first_bill=500, inst_id='BTC-USDT'))
+    monkeypatch.setattr(deepcoin_private, 'fetch_page', spot)
+    deepcoin_private.clear_cache()
+    spot_answer = deepcoin_private.read_fills('spot', 'BTC-USDT', 1794000000)
+    # Each instrument only ever asked for its own instrument (20 fills fit in one page), and the swap store was not
+    # touched by the spot read.
+    assert spot.queries == ['instType=SPOT&instId=BTC-USDT&limit=100']
+    assert len(swap.queries) == 1
+    assert [fill['tradeId'] for fill in spot_answer['fills']] == [f'BTC-USDT-{bill}' for bill in range(500, 520)]
+    assert sorted(os.listdir(store_path().parent)) == ['BTC-USDT-SWAP.json', 'BTC-USDT.json']
+    assert len(deepcoin_private.read_store('BTC-USDT-SWAP')['fills']) == 30
+    assert len(deepcoin_private.read_store('BTC-USDT')['fills']) == 20
+    assert swap_answer['market'] == 'swap' and spot_answer['market'] == 'spot'
+
+
+def test_a_refused_request_still_answers_with_the_stored_fills(configured, monkeypatch):
+    venue = FakeVenue(venue_rows(120))
+    monkeypatch.setattr(deepcoin_private, 'fetch_page', venue)
+    first = read_swap()
+    assert len(first['fills']) == 120
+    before = store_path().read_text(encoding='utf-8')
+
+    def refused(credentials, query):
+        raise deepcoin_private.DeepcoinError('Deepcoin 请求失败（HTTP 429），稍后再试', status_code=502)
+
+    monkeypatch.setattr(deepcoin_private, 'fetch_page', refused)
+    answer = read_swap()
+    # A rate limit is not a failed page: the stored fills are still drawn, and the reason rides along in `error`.
+    assert answer['configured'] is True and len(answer['fills']) == 120
+    assert 'HTTP 429' in answer['error']
+    assert answer['complete'] is True
+    # Nothing was written on the failure: the store on disk is the one from the last good sync.
+    assert store_path().read_text(encoding='utf-8') == before
+
+
+def test_two_reads_within_five_seconds_share_one_sync(configured, monkeypatch):
+    venue = FakeVenue(venue_rows(150))
+    monkeypatch.setattr(deepcoin_private, 'fetch_page', venue)
+    first = deepcoin_private.read_fills('swap', 'BTC-USDT', 1794000000)
+    assert first['cached'] is False
+    calls = len(venue.queries)
+    # The next caller (a second tab, or the page's window growing left) is answered from the store alone.
+    second = deepcoin_private.read_fills('swap', 'BTC-USDT', 1793900000)
+    assert second['cached'] is True and len(venue.queries) == calls
+    assert second['fills'] == first['fills']
+    # Once the window has passed, the venue is asked again.
+    monkeypatch.setattr(deepcoin_private, 'SYNC_TTL', 0.0)
+    deepcoin_private.clear_cache()
+    third = deepcoin_private.read_fills('swap', 'BTC-USDT', 1794000000)
+    assert third['cached'] is False and len(venue.queries) == calls + 1
+
+
+def test_a_broken_or_hand_edited_store_file_reads_as_what_it_can(project):
+    path = store_path('BTC-USDT')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"fills": [', encoding='utf-8')
+    assert deepcoin_private.read_store('BTC-USDT') == deepcoin_private.empty_store()
+    path.write_text(json.dumps({'fills': [
+        {'time': 1794000000, 'price': 64000, 'size': 1, 'side': 'buy', 'tradeId': 'ok'},
+        {'time': 'yesterday', 'price': 64000, 'size': 1, 'side': 'buy'},
+        {'time': 1794000100, 'price': 0, 'size': 1, 'side': 'sell'},
+        {'time': 1794000200, 'price': 1, 'size': 1, 'side': 'hold'},
+        'nope',
+    ], 'newest_bill': 'x', 'oldest_bill': 1794000000, 'history_end': 'yes', 'updated': 'soon'}), encoding='utf-8')
+    store = deepcoin_private.read_store('BTC-USDT')
+    assert [fill['tradeId'] for fill in store['fills']] == ['ok']
+    assert store['newest_bill'] is None and store['oldest_bill'] == '1794000000'
+    assert store['history_end'] is False and store['updated'] == 0
+
+
+def test_the_store_keeps_one_copy_of_a_fill():
+    fill = deepcoin_private.parse_fills(FILLS[:1], 'BTC-USDT-SWAP')[0]
+    assert deepcoin_private.merge_fills([fill], [dict(fill)], [None, 'nope']) == [fill]
+    # A venue row without a trade id is still identified by its own numbers, so it is not duplicated either.
+    anonymous = deepcoin_private.parse_fills([dict(FILLS[1], tradeId='')], 'BTC-USDT-SWAP')[0]
+    assert len(deepcoin_private.merge_fills([anonymous], [dict(anonymous)])) == 1
 
 
 # --- Errors -------------------------------------------------------------------------------------------------------
@@ -410,55 +611,59 @@ def test_an_unconfigured_project_answers_configured_false_without_a_request(clie
     def never(*_args, **_kwargs):
         raise AssertionError('an unconfigured project must not reach the venue')
 
-    monkeypatch.setattr(deepcoin_private.requests, 'get', never)
+    monkeypatch.setattr(deepcoin_private, 'fetch_page', never)
     response = ask(client)
     assert response.status_code == 200
     assert response.json() == {'configured': False, 'fills': []}
+    assert not store_path().exists()
     # A whitelist failure is still a 400, configured or not.
     assert ask(client, symbol='BTCUSD').status_code == 400
 
 
-def test_the_route_returns_the_fills_of_the_whitelisted_instrument(client, configured, monkeypatch):
-    calls = []
-
-    def fake_fills(request, credentials):
-        calls.append((request, credentials))
-        return deepcoin_private.parse_fills(FILLS, request['instId'], request['begin'], request['end'])
-
-    monkeypatch.setattr(deepcoin_private, 'fetch_fills', fake_fills)
-    response = ask(client, begin=1794835200, end=1794841200)
+def test_the_route_answers_the_window_from_the_store(client, configured, monkeypatch):
+    venue = FakeVenue(venue_rows(120, first_ts=1794839700))
+    monkeypatch.setattr(deepcoin_private, 'fetch_page', venue)
+    response = ask(client)
     assert response.status_code == 200
     body = response.json()
     assert body['configured'] is True
-    assert [fill['tradeId'] for fill in body['fills']] == ['9001', '9002']
+    assert len(body['fills']) == 120
+    assert body['fills'][0]['tradeId'] == 'BTC-USDT-SWAP-1'
     assert body['market'] == 'swap' and body['symbol'] == 'BTC-USDT'
+    # 120 generated fills are the whole account, so the window is covered and there is no edge to report.
+    assert body['covered_from'] is None and body['complete'] is True and body['history_end'] is True
     assert body['cached'] is False and body['fetched_at'] > 0
-    request, credentials = calls[0]
-    assert request['instId'] == 'BTC-USDT-SWAP' and request['instType'] == 'SWAP'
-    assert credentials['DEEPCOIN_API_KEY'] == KEY
     # The answer is JSON-serialisable as sent and carries no credential anywhere.
     assert json.loads(json.dumps(body)) == body
     for secret in SECRETS:
         assert secret not in json.dumps(body, ensure_ascii=False)
-    # The same window within 15 seconds is one request (the page polls every 30 seconds, two tabs poll together).
-    second = ask(client, begin=1794835200, end=1794841200)
-    assert second.json()['cached'] is True and len(calls) == 1
-    # Another window / market is another key.
-    assert ask(client, begin=1794835200, end=1794841200, market='spot', symbol='BTC-USDT').status_code == 200
-    assert len(calls) == 2
+    # The same window within 5 seconds is one sync (the page polls every 30 seconds, two tabs poll together).
+    calls = len(venue.queries)
+    second = ask(client)
+    assert second.json()['cached'] is True and len(venue.queries) == calls
+    # Another market is another store (120 fills = two pages), not an answer from the swap store.
+    assert ask(client, market='spot', symbol='BTC-USDT').status_code == 200
+    assert [query.split('&')[1] for query in venue.queries[calls:]] == ['instId=BTC-USDT', 'instId=BTC-USDT']
 
 
-def test_a_venue_error_is_a_502_with_a_chinese_reason_and_no_credential(client, configured, monkeypatch):
-    def failing(*_args, **_kwargs):
+def test_a_refused_venue_is_an_answer_with_an_error_and_not_a_502(client, configured, monkeypatch):
+    venue = FakeVenue(venue_rows(120, first_ts=1794839700))
+    monkeypatch.setattr(deepcoin_private, 'fetch_page', venue)
+    assert ask(client).status_code == 200
+
+    def refused(credentials, query):
         raise deepcoin_private.DeepcoinError('Deepcoin 返回错误：40004 bad passphrase', status_code=502)
 
-    monkeypatch.setattr(deepcoin_private, 'fetch_fills', failing)
+    monkeypatch.setattr(deepcoin_private, 'fetch_page', refused)
+    deepcoin_private.clear_cache()
     response = ask(client)
-    assert response.status_code == 502
-    error = response.json()['error']
-    assert 'Deepcoin 返回错误：40004' in error
+    # The stored markers are still drawn; the reason is in the answer, in Chinese, without a credential.
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body['fills']) == 120
+    assert 'Deepcoin 返回错误：40004' in body['error']
     for secret in SECRETS:
-        assert secret not in error
+        assert secret not in response.text
 
 
 def test_a_missing_login_token_never_reaches_the_venue(client, configured):
@@ -466,3 +671,17 @@ def test_a_missing_login_token_never_reaches_the_venue(client, configured):
     response = client.post('/review/market/fills', json={'market': 'swap', 'symbol': 'BTC-USDT',
                                                          'begin': 1794835200})
     assert response.status_code == 401
+
+
+class FakeResponse:
+    """What requests.get() answers, without a socket."""
+
+    def __init__(self, status, payload):
+        self.status_code = status
+        self.ok = status == 200
+        self._payload = payload
+
+    def json(self):
+        if isinstance(self._payload, Exception):
+            raise self._payload
+        return self._payload
