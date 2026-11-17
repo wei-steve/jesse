@@ -25,6 +25,10 @@ async def lifespan(app):
     from jesse.services import research_jobs
     research_jobs.accept_jobs()
     yield
+    from jesse.services import deepcoin_stream
+    # The fills push is a daemon thread with its own socket: closing it here is an orderly exit (Ctrl+C never waits for
+    # it), and a listenKey is otherwise simply left to expire.
+    deepcoin_stream.shutdown()
     from jesse.services.db import database
     database.close_connection()
     from jesse.services.lsp import terminate_lsp_server

@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, OKX_SOURCE, YIELD_SOURCE } from '../jesse/static/review/market-sources.mjs';
 import { BAR_NOTE_COLOR } from '../jesse/static/review/labels.mjs';
 import { BUY_MARKER_COLOR, FILLS_BACKFILLING, FILLS_BACKFILLING_EMPTY, FILLS_KEY, FILLS_NOT_CONFIGURED,
-  SELL_MARKER_COLOR, bucketFills, configuredOf, fillLabelsFit, fillAction, fillGroupText, fillGroupsText, fillKey, fillMarkers,
-  fillsBase, fillsHave, fillsInstrument, fillsProgressText, fillsRequest, fillsStamp, mergeFillRows, mergeMarkers,
-  parseFills }
+  FILLS_POLL_MS, FILLS_STREAM_TEXT, FILLS_WAIT_BACKOFF, FILLS_WAIT_ENDPOINT,
+  SELL_MARKER_COLOR, applyFillsWait, bucketFills, configuredOf, fillLabelsFit, fillAction, fillGroupText, fillGroupsText,
+  fillKey, fillMarkers, fillsBase, fillsHave, fillsInstrument, fillsProgressText, fillsRequest, fillsStamp,
+  fillsStatusLine, fillsStreamText, fillsWaitBackoff, fillsWaitBody, fillsWaitSeq, mergeFillRows, mergeMarkers, parseFills }
   from '../jesse/static/review/market-fills.mjs';
 
 // The owner's fills are private: every number here is invented, and the shape is the one the Jesse route returns
@@ -291,4 +292,74 @@ test('the second read sends the range it already has; a first read and a switch 
     assert.deepEqual(fillsRequest(BINANCE_SOURCE, 'swap', 'BTCUSDT', 1794835200, null, have),
       { market: 'swap', symbol: 'BTC-USDT', begin: 1794835200 });
   }
+});
+
+// --- 实时推送 (T-63) -----------------------------------------------------------------------------------------------
+
+test('the history poll is now the 60-second fallback and the push has its own route', () => {
+  assert.equal(FILLS_POLL_MS, 60000);
+  assert.equal(FILLS_WAIT_ENDPOINT, '/review/market/fills/wait');
+});
+
+test('the wait asks for the perpetual only, and from the counter the page already has', () => {
+  assert.deepEqual(fillsWaitBody(BINANCE_SOURCE, 'swap', 'BTCUSDT', 7),
+    { market: 'swap', symbol: 'BTC-USDT', seq: 7 });
+  assert.deepEqual(fillsWaitBody(OKX_SOURCE, 'swap', 'ETH-USDT-SWAP', 0),
+    { market: 'swap', symbol: 'ETH-USDT', seq: 0 });
+  // A first wait (nothing drawn yet) asks from 0; junk / negative / fractional counters do not travel as-is.
+  assert.deepEqual(fillsWaitBody(DEEPCOIN_SOURCE, 'swap', 'BTC-USDT', null),
+    { market: 'swap', symbol: 'BTC-USDT', seq: 0 });
+  assert.deepEqual(fillsWaitBody(DEEPCOIN_SOURCE, 'swap', 'BTC-USDT', -4),
+    { market: 'swap', symbol: 'BTC-USDT', seq: 0 });
+  assert.deepEqual(fillsWaitBody(DEEPCOIN_SOURCE, 'swap', 'BTC-USDT', 3.9),
+    { market: 'swap', symbol: 'BTC-USDT', seq: 3 });
+  assert.deepEqual(fillsWaitBody(DEEPCOIN_SOURCE, 'swap', 'BTC-USDT', 'x'),
+    { market: 'swap', symbol: 'BTC-USDT', seq: 0 });
+  // Spot has no private push and the yields have no fills at all: no wait request.
+  assert.equal(fillsWaitBody(BINANCE_SOURCE, 'spot', 'BTCUSDT', 0), null);
+  assert.equal(fillsWaitBody(YIELD_SOURCE, null, 'US10Y', 0), null);
+});
+
+test('a failed wait is retried after 2 / 5 / 10 seconds and then every 10', () => {
+  assert.deepEqual(FILLS_WAIT_BACKOFF, [2000, 5000, 10000]);
+  assert.deepEqual([0, 1, 2, 3, 9].map(fillsWaitBackoff), [2000, 5000, 10000, 10000, 10000]);
+  // A negative / non-numeric failure count is the first failure.
+  assert.equal(fillsWaitBackoff(-1), 2000);
+  assert.equal(fillsWaitBackoff('x'), 2000);
+});
+
+test('a wait answer is merged into the drawn rows and its counter is what the next wait asks from', () => {
+  const pushed = { ...FILLS[2], time: 1794840360, tradeId: '9004' };
+  const answer = { seq: 12, stream: { state: 'live' },
+    fills: [pushed, { ...FILLS[1] }, { ...FILLS[0], tradeId: '8999', time: 1794839600 }] };
+  const merged = applyFillsWait(FILLS, answer, 1794839700);
+  // The new fill is added once, the repeated one is not doubled, and nothing older than the window start is kept.
+  assert.deepEqual(merged.rows.map(fill => fill.tradeId), ['9001', '9002', '9003', '9004']);
+  assert.equal(merged.seq, 12);
+  // A heartbeat answer (no fills, same seq) leaves the rows exactly as they were.
+  assert.deepEqual(applyFillsWait(FILLS, { seq: 12, fills: [] }, 1794839700).rows, mergeFillRows(FILLS, []));
+  // The counter falls back to 0 for an answer without one / a negative one; junk fills are dropped.
+  assert.equal(fillsWaitSeq({}), 0);
+  assert.equal(fillsWaitSeq({ seq: -2 }), 0);
+  assert.equal(fillsWaitSeq({ seq: 'yesterday' }), 0);
+  assert.equal(fillsWaitSeq({ seq: 4 }), 4);
+  assert.deepEqual(applyFillsWait([], { seq: 1, fills: [null, 'nope'] }, null).rows, []);
+});
+
+test('the status line names the push state after the backfill text', () => {
+  const backfill = fillsProgressText({ configured: true, complete: false, covered_from: 1794839700 });
+  assert.equal(fillsStatusLine(backfill, { state: 'live' }), `${backfill} · 成交实时：已连接`);
+  // Reconnecting is said the same whether the worker is still connecting or has already lost its socket.
+  assert.equal(fillsStreamText({ state: 'connecting' }), '成交实时：重连中');
+  assert.equal(fillsStreamText({ state: 'reconnecting' }), '成交实时：重连中');
+  assert.equal(fillsStreamText({ state: 'off' }), '成交实时：未连接');
+  // Nothing to say (an old backend, or a page that is not waiting) is no segment at all.
+  assert.equal(fillsStreamText(null), '');
+  assert.equal(fillsStreamText({}), '');
+  assert.equal(fillsStreamText({ state: 'weird' }), '');
+  assert.equal(FILLS_STREAM_TEXT.live, '成交实时：已连接');
+  // The whole line: either half may be missing, and both missing is the empty line that clears it.
+  assert.equal(fillsStatusLine('', { state: 'live' }), '成交实时：已连接');
+  assert.equal(fillsStatusLine(backfill, null), backfill);
+  assert.equal(fillsStatusLine('', null), '');
 });
