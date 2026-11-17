@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>看行情 · Jesse</title>
   <link rel="icon" href="/favicon.ico">
-  <link rel="stylesheet" href="./review.css?v=20261117n">
+  <link rel="stylesheet" href="./review.css?v=20261117o">
 </head>
 <body class="market">
   <header>
@@ -26,8 +26,25 @@
     <label>图高 <select id="m-height" aria-label="K 线图高度"></select></label>
     <!-- 我的成交 (T-59): the owner's own Deepcoin fills, marked on every crypto chart (contract <-> SWAP, spot <-> SPOT). -->
     <label class="market-fills" title="在 K 线上标出你在 Deepcoin 的成交（需要项目的 .env.deepcoin）"><input id="m-fills" type="checkbox"> 我的成交</label>
+    <button id="open-settings" type="button" aria-controls="display-settings" aria-expanded="false">指标</button>
     <span id="m-live-note" class="live-note" hidden></span>
   </form>
+  <details id="display-settings" class="display-settings">
+    <summary>指标设置 <span>看盘页只显示主图指标（均线、布林带），独立保存</span></summary>
+    <section aria-label="指标设置">
+      <div class="settings-heading"><h2>添加主图指标</h2><span>看盘页只显示主图指标（均线、布林带）</span></div>
+      <form id="indicator-form" class="indicator-form">
+        <label>指标 <select id="indicator-type" aria-label="指标类型"></select></label>
+        <div id="indicator-params" class="indicator-params"></div>
+        <label>颜色 <input id="indicator-color" aria-label="指标颜色" type="color" value="#dd9a23"></label>
+        <button id="save-indicator" type="submit">添加指标</button>
+        <button id="cancel-indicator" type="button" hidden>取消编辑</button>
+      </form>
+      <div id="indicator-list" class="indicator-list" aria-label="已添加指标"></div>
+      <p>参数为当前 K 线周期的根数，例如 EMA20 在 1h 图上表示 20 根小时 K 线。设置独立保存在当前浏览器。</p>
+    </section>
+    <p id="settings-message" role="status"></p>
+  </details>
   <div id="status" role="status" hidden></div>
   <main id="market-main">
     <aside>
@@ -65,7 +82,7 @@
   <script type="module">
     // REVIEW_VERSION: change it (and every "?v=" in the .mjs imports and the stylesheet link) whenever
     // any file in this folder changes. tests/review-version.test.mjs checks that they all match.
-    const REVIEW_VERSION = '20261117n';
+    const REVIEW_VERSION = '20261117o';
     // Settings live in the project's storage/review-prefs.json too (T-58): bring the server's copy into localStorage
     // *before* the page module reads its own settings, so a new address / computer / browser opens with the saved ones.
     // No login token, or a server that does not answer within 3 seconds, keeps this browser's own settings.

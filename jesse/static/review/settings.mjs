@@ -1,4 +1,5 @@
 export const STORAGE_KEY = 'jesse.review.display.v1';
+export const MARKET_STORAGE_KEY = 'jesse.market.display.v1';
 export const TIMEFRAMES = [1, 3, 5, 15, 30, 45, 60, 120, 180, 240, 360, 480, 720, 1440];
 export const MA_LINE_COUNT = 12;
 export const MA_DEFAULT_PERIODS = [5, 7, 10, 14, 20, 30, 50, 60, 100, 120, 150, 200];
@@ -98,4 +99,20 @@ export function restorePreferences(serialized) {
       // Entry/exit conditions are expanded unless the user collapsed them.
       showConditions: value.showConditions !== false, indicators };
   } catch { return defaults(); }
+}
+
+function hasValidPreferences(serialized) {
+  if (typeof serialized !== 'string' || !serialized) return false;
+  try {
+    return JSON.parse(serialized)?.version === 1;
+  } catch {
+    return false;
+  }
+}
+
+export function marketPreferences(marketRaw, reviewRaw) {
+  if (hasValidPreferences(marketRaw)) {
+    return { preferences: restorePreferences(marketRaw), seeded: false };
+  }
+  return { preferences: restorePreferences(reviewRaw), seeded: true };
 }

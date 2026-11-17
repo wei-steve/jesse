@@ -8,7 +8,7 @@
 // Pure functions plus one primitive class: the grouping (orderMarks), the switch state (readFillPrices / fillPricesOn)
 // and the canvas drawing (drawFillPrices) are tested by tests/review-fill-prices.test.mjs with fake data and a fake
 // 2D context; market.mjs owns the buttons, the localStorage key and the primitive's data.
-import { BUY_MARKER_COLOR, SELL_MARKER_COLOR, fillMarkers, fmtFillNumber } from './market-fills.mjs?v=20261117n';
+import { BUY_MARKER_COLOR, SELL_MARKER_COLOR, fillMarkers, fmtFillNumber } from './market-fills.mjs?v=20261117o';
 
 // Per-timeframe switches, `{tf: true|false}` (T-62). A `jesse.*` key, so prefs-sync.mjs mirrors it into
 // storage/review-prefs.json like every other setting (T-58).

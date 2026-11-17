@@ -1,15 +1,15 @@
 // Reuse the dependency already shipped with this Jesse dashboard. No CDN or
 // third-party requests are needed; the adapter is isolated for future rebuilds.
-import { t as createChart } from './lightweight-charts.mjs?v=20261117n';
-import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261117n';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261117n';
-import { calculateIndicator } from './indicators.mjs?v=20261117n';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261117n';
-import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261117n';
-import { mountControls } from './controls.mjs?v=20261117n';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261117n';
-import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261117n';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117n';
+import { t as createChart } from './lightweight-charts.mjs?v=20261117o';
+import { aggregateCandles, sma, lastClosedCandle, contextAt, executionMarkers, centeredRange, contextPointsFor, linkTimeRanges } from './data.mjs?v=20261117o';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, restorePreferences } from './settings.mjs?v=20261117o';
+import { calculateIndicator } from './indicators.mjs?v=20261117o';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261117o';
+import { tradeInfoIndex, tradeConditions, entrySummary, entryLines, exitLines, tfText } from './tradeinfo.mjs?v=20261117o';
+import { mountControls } from './controls.mjs?v=20261117o';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines } from './rides.mjs?v=20261117o';
+import { listRequest, mergePages, hasMore, sessionRow, formatHolding, sessionFromSearch, searchForSession } from './sessions.mjs?v=20261117o';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117o';
 
 const $ = id => document.getElementById(id);
 const money = value => Number.isFinite(value) ? value.toFixed(2) : '—';

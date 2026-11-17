@@ -7,46 +7,48 @@
 // yields have no push at all: CNBC's one-minute series and its quote are polled every 15 seconds.
 // The chart behaviour (range linking, price zoom, snapshots) and the overlays (the review page's display settings)
 // are reused from the review/finder modules instead of being reimplemented.
-import { t as createChart } from './lightweight-charts.mjs?v=20261117n';
-import { linkTimeRanges } from './data.mjs?v=20261117n';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261117n';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261117n';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261117n';
+import { t as createChart } from './lightweight-charts.mjs?v=20261117o';
+import { linkTimeRanges } from './data.mjs?v=20261117o';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261117o';
+import { STORAGE_KEY, MARKET_STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, marketPreferences } from './settings.mjs?v=20261117o';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261117o';
+import { mountIndicatorEditor } from './controls.mjs?v=20261117o';
+import { legendItems } from './market-legend.mjs?v=20261117o';
 import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages, okxCandleChannels, openOkxKlines,
-  openOkxTicker, openOkxTickers, openDeepcoinTicker, openDeepcoinTickers } from './live-price.mjs?v=20261117n';
-import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117n';
-import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261117n';
+  openOkxTicker, openOkxTickers, openDeepcoinTicker, openDeepcoinTickers } from './live-price.mjs?v=20261117o';
+import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117o';
+import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261117o';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, MARKETS, MARKET_SOURCES, OKX_SOURCE, YIELD_SOURCE, YIELD_INSTRUMENTS,
   DEFAULT_YIELD_SYMBOL, YIELD_POLL_RANGE, aggregateCandles, candleRequest, cnbcSymbolOf, exchangeOf, instrumentName,
   isYieldSource, marketLabel, marketsOf, mergeYieldBars, mergeYieldDailyClose, normalizeMarket, normalizeYieldSymbol,
   parseCnbcBars, parseCnbcQuote, parseMarketCandles, restoreSource, sessionIndicator, sessionTail, signedPoints,
-  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261117n';
+  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261117o';
 import { MARKET_KEYS, MARKET_TIMEFRAMES, MAX_BARS, MAX_WATCHLIST, PRODUCT_PAGE, PROXY_CANDLES,
   PROXY_TICKERS, aggregateAnswer, addToWatchlist, cnbcChartUrl, cnbcQuoteUrl, defaultSymbolFor, endTimeBefore,
   filterProducts, klinesUrlFor, mergeCandles, miniTickerStreamUrl, pageSizeOf, parseKlines, parseMiniTicker,
   parseOkxCandles, proxyTickerRows, removeFromWatchlist, moveWatchItem, orderTimeframes, restoreAsideTab,
   restoreListMarket, restoreSelection, restoreTimeframes, restoreWatchlist, sameWatchItem, shiftLogical,
-  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261117n';
+  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261117o';
 // Candle notes (double-click a bar): the same box, key, 「注」 markers and stored file as the factor finder; the shared
 // module is why a note written on one page shows up on the other.
 import { barLabel, barsFor, createBarNoteBox, createBookPicker, barNoteBody, barNoteKey, barNoteOf, filterNoteRows,
   noteDigest, noteIdentity, noteMarkers, noteRowsFrom, noteSummary, noteTimeText, noteWhere, rememberNote, snapshotOf
-  } from './bar-notes.mjs?v=20261117n';
+  } from './bar-notes.mjs?v=20261117o';
 // The open 备注本 (`storage/labels/<book>.jsonl`): the same notebook as the factor finder, kept in one localStorage key.
-import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261117n';
+import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261117o';
 // The owner's own Deepcoin fills (T-59): 「我的成交」 marks his 开多 / 平多 / 开空 / 平空 on the candles of any crypto
 // source. The instrument mapping, the per-candle buckets, the markers and their line under the chart are pure functions
 // in market-fills.mjs; this page owns the request and the polling.
 import { FILLS_ENDPOINT, FILLS_KEY, FILLS_NOT_CONFIGURED, FILLS_POLL_MS, FILLS_WAIT_ENDPOINT, applyFillsWait,
   bucketFills, configuredOf, fillGroupsText, fillLabelsFit, fillsHave, fillsProgressText, fillsRequest, fillsStatusLine,
   fillsStreamText, fillsWaitBackoff, fillsWaitBody, mergeFillRows, mergeMarkers, parseFills }
-  from './market-fills.mjs?v=20261117n';
+  from './market-fills.mjs?v=20261117o';
 // The 价位 marks (T-62): one small triangle / circle per order at its own average price, drawn as a series primitive so
 // a mark sits on the price instead of under the candle, and switched on / off per timeframe (1h / 4h / 1D start off).
 import { FILL_PRICES_KEY, FillPricesPrimitive, fillArrowMarkers, fillPriceMarksOn, orderMarks, orderMarksText,
-  readFillPrices, toggleFillPrices } from './fill-prices.mjs?v=20261117n';
+  readFillPrices, toggleFillPrices } from './fill-prices.mjs?v=20261117o';
 // Current-candle close countdown (T-64): sits on the price axis right below the 「实时」 label.
-import { CountdownPrimitive } from './bar-countdown.mjs?v=20261117n';
+import { CountdownPrimitive } from './bar-countdown.mjs?v=20261117o';
 
 const $ = id => document.getElementById(id);
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
@@ -213,27 +215,32 @@ function newChart(host) {
   });
 }
 
-const readPreferences = () => {
-  try { return restorePreferences(localStorage.getItem(STORAGE_KEY)); } catch { return restorePreferences(null); }
-};
+const initialPreferences = marketPreferences(read(MARKET_STORAGE_KEY), read(STORAGE_KEY));
+const preferences = initialPreferences.preferences;
+if (initialPreferences.seeded) write(MARKET_STORAGE_KEY, JSON.stringify(preferences));
 
-// Main-chart indicators of the review page's display settings (MA 均线组 / SMA / EMA / BOLL), calculated over the
-// whole loaded history like the finder does. Sub-chart indicators (成交量 / MACD) are not drawn: the finder draws no
-// secondary panes either.
+// Main-chart indicators of the market page's own display settings (MA 均线组 / SMA / EMA / BOLL), calculated over the
+// whole loaded history like the finder does. Sub-chart indicators (成交量 / MACD) are not drawn.
 function drawOverlay(panel) {
   clearOverlay(panel);
-  const preferences = readPreferences();
   for (const config of preferences.indicators) {
     if (INDICATORS[config.type].pane !== 'main') continue;
     const series = [];
+    const lines = [];
     for (const line of (source === YIELD_SOURCE ? sessionIndicator : calculateIndicator)(panel.candles, config, panel.interval).series) {
       const created = panel.chart.addLineSeries({ color: line.color, lineWidth: 1.5, lineStyle: line.dashed ? 2 : 0,
         lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
       created.setData(line.data);
       panel.overlaySeries.push(created);
       series.push(created);
+      const values = new Map();
+      for (const point of line.data) {
+        if (Number.isFinite(point?.value)) values.set(point.time, point.value);
+      }
+      const lastPoint = line.data.at(-1);
+      lines.push({ color: line.color, values, latest: Number.isFinite(lastPoint?.value) ? lastPoint.value : null });
     }
-    panel.overlayGroups.push({ config, series });
+    panel.overlayGroups.push({ config, series, lines });
   }
 }
 
@@ -254,7 +261,63 @@ function paintIndicatorTail(panel, bar) {
     tail.forEach(({ point }, i) => {
       if (!point) return;
       try { group.series[i]?.update(point); } catch { /* chart rebuilt */ }
+      const line = group.lines?.[i];
+      if (!line) return;
+      if (Number.isFinite(point.value)) {
+        line.values.set(point.time, point.value);
+        line.latest = point.value;
+      } else {
+        line.values.delete(point.time);
+        line.latest = null;
+      }
     });
+  }
+}
+
+function paintLegend(panel, time = null) {
+  if (!panel?.legend || panel.empty) return;
+  const groups = legendItems(panel.overlayGroups, time);
+  if (!groups.length) { panel.legend.replaceChildren(); return; }
+  const format = source === YIELD_SOURCE ? fmtYield : fmtPrice;
+  const nodes = [];
+  for (const group of groups) {
+    const groupEl = document.createElement('span');
+    groupEl.className = 'market-legend-group';
+    if (group.type === 'BOLL') {
+      const swatch = document.createElement('span');
+      swatch.className = 'market-legend-swatch';
+      swatch.style.background = group.color;
+      const title = document.createElement('span');
+      title.textContent = group.title;
+      groupEl.append(swatch, title);
+      for (const item of group.items) {
+        const itemEl = document.createElement('span');
+        itemEl.className = 'market-legend-item';
+        itemEl.textContent = `${item.label} ${format(item.value)}`;
+        groupEl.append(itemEl);
+      }
+    } else {
+      for (const item of group.items) {
+        const itemEl = document.createElement('span');
+        itemEl.className = 'market-legend-item';
+        const swatch = document.createElement('span');
+        swatch.className = 'market-legend-swatch';
+        swatch.style.background = item.color;
+        itemEl.append(swatch, document.createTextNode(`${item.label} ${format(item.value)}`));
+        groupEl.append(itemEl);
+      }
+    }
+    nodes.push(groupEl);
+  }
+  panel.legend.replaceChildren(...nodes);
+}
+
+function refreshIndicators() {
+  for (const panel of panels) {
+    if (panel.empty || !panel.chart) continue;
+    drawOverlay(panel);
+    if (panel.forming) paintIndicatorTail(panel, panel.forming);
+    paintLegend(panel, panel.hoverTime ?? null);
   }
 }
 
@@ -268,6 +331,7 @@ function scheduleTail(panel) {
     // while the chart and the watchlist moved on (64,627.70 under the chart, 64,665.90 in the list, 2026-11-17).
     // Left alone while a pointer is on any chart: then the line describes the candle under the crosshair.
     if (!pointerPanel) paintMeta(panel);
+    paintLegend(panel, panel.hoverTime ?? null);
   }, TAIL_MS);
 }
 
@@ -304,6 +368,7 @@ function appendClosed(panel, candle) {
   try { panel.series.update(candleOf(candle)); } catch { return; /* chart rebuilt */ }
   paintIndicatorTail(panel, candle);
   paintMeta(panel);
+  paintLegend(panel, panel.hoverTime ?? null);
 }
 
 const visibleLogical = panel => {
@@ -333,7 +398,9 @@ function makePanel(tf, answer) {
   card.insertBefore(noteBox.row, card.querySelector('.chart-host'));
   $('charts').append(card);
   const host = card.querySelector('.chart-host');
-  const panel = { tf, interval, card, host, noteBox, noteTime: null, empty: false, note: answer.note ?? '',
+  const legend = document.createElement('div');
+  legend.className = 'market-legend';
+  const panel = { tf, interval, card, host, legend, hoverTime: null, noteBox, noteTime: null, empty: false, note: answer.note ?? '',
     candles: answer.closed, closes: new Map(answer.closed.map(candle => [candle.time, candle.close])),
     byTime: new Map(answer.closed.map(candle => [candle.time, candle])),
     overlaySeries: [], overlayGroups: [], forming: answer.forming, tailTimer: null,
@@ -360,10 +427,12 @@ function makePanel(tf, answer) {
   panel.countdownPrimitive = new CountdownPrimitive({ intervalMinutes: interval, color: LIVE_PRICE });
   panel.series.attachPrimitive(panel.countdownPrimitive);
   enablePriceZoom(panel.chart, panel.series, host);
+  host.append(legend);
   drawOverlay(panel);
   if (panel.forming) { try { panel.series.update(candleOf(panel.forming)); } catch { /* chart not ready */ } paintIndicatorTail(panel, panel.forming); }
   paintMarkers(panel);
   paintMeta(panel);
+  paintLegend(panel);
   addSnapshotButton(card, () => snapshotPanel(panel));
   addMaximizeButton(card);
   addFillPricesButton(panel);
@@ -378,6 +447,11 @@ function makePanel(tf, answer) {
     if (pointerPanel !== panel) return;
     pointerPanel = null;
     paintMeta(panel);
+    for (const p of panels) {
+      if (p.empty) continue;
+      p.hoverTime = null;
+      paintLegend(p, null);
+    }
   });
   panel.chart.subscribeCrosshairMove(event => syncCrosshair(panel, typeof event.time === 'number' ? event.time : null,
     event.point ? panel.series.coordinateToPrice(event.point.y) : null));
@@ -470,11 +544,15 @@ function syncCrosshair(from, time, price = null) {
   if (pointerPanel && from !== pointerPanel) return;
   syncing = true;
   try {
+    from.hoverTime = time;
     paintMeta(from, time);
+    paintLegend(from, time);
     for (const panel of panels) {
       if (panel === from || panel.empty) continue;
       const step = panel.interval * 60;
       const t = time === null ? null : Math.floor(time / step) * step;
+      panel.hoverTime = t;
+      paintLegend(panel, t);
       const close = t === null ? undefined : panel.closes.get(t);
       const value = Number.isFinite(price) ? price : close;
       if (Number.isFinite(close) && Number.isFinite(value)) panel.chart.setCrosshairPosition(value, t, panel.series);
@@ -594,6 +672,7 @@ function setBars(panel, next) {
   // After the forming bar is back on the data set: a note can sit on that bar, and a marker needs its candle.
   paintMarkers(panel);
   paintMeta(panel);
+  paintLegend(panel, panel.hoverTime ?? null);
   if (!logical || !Number.isFinite(first)) return;
   const index = panel.candles.findIndex(candle => candle.time === first);
   // -1: the old oldest bar fell off the front (the MAX_BARS cap), so every index moved left by the trimmed bars.
@@ -1965,6 +2044,10 @@ function start() {
   setInterval(paintClock, 1000);
   setInterval(() => { if (!document.hidden) for (const panel of panels) panel.countdownPrimitive?.tick(); }, 1000);
   paintSource(); paintTimeframes(); paintHeight(); paintWatchlist(); paintAside(); paintFillsToggle();
+  const mainTypes = Object.keys(INDICATORS).filter(type => INDICATORS[type].pane === 'main');
+  mountIndicatorEditor(preferences, { storageKey: MARKET_STORAGE_KEY, types: mainTypes, changed: refreshIndicators });
+  $('open-settings').onclick = () => { $('display-settings').open = !$('display-settings').open; };
+  $('display-settings').ontoggle = () => $('open-settings').setAttribute('aria-expanded', String($('display-settings').open));
   buildBookPicker();
   loadBooks();
   for (const button of document.querySelectorAll('.aside-tab')) {

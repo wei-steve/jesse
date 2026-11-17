@@ -199,3 +199,9 @@ main[hidden]{display:none}
 .watch-line .watch-last{font-size:13px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .watch-line .watch-change{font-size:12px;text-align:right;white-space:nowrap;min-width:46px}
 .watch-row{min-width:190px}
+/* Top-left indicator legend on market charts (T-65). */
+.market-legend{position:absolute;top:4px;left:6px;right:54px;z-index:4;pointer-events:none;display:flex;flex-wrap:wrap;gap:2px 8px;padding:2px 6px;border-radius:5px;background:rgba(255,255,255,.82);font-size:11px;line-height:1.45;color:#203047;font-variant-numeric:tabular-nums}
+.market-legend:empty{display:none}
+.market-legend-group{display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px 6px}
+.market-legend-item{display:inline-flex;align-items:center;gap:3px;white-space:nowrap}
+.market-legend-swatch{width:8px;height:8px;border-radius:2px;display:inline-block;flex:none}
