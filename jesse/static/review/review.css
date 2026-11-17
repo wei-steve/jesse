@@ -112,6 +112,8 @@ main[hidden]{display:none}
    The charts reuse the finder's card grid, cards and snapshots; only the sidebar rows and the controls are new. */
 .market main{grid-template-columns:190px minmax(0,1fr)}
 .market-controls .market-last{font-weight:600;color:#2b3a52;font-variant-numeric:tabular-nums}
+/* 我的成交 (T-59): the checkbox next to 图高 that draws the owner's own Deepcoin fills on the crypto charts. */
+.market-fills input{accent-color:#315cd0}
 /* A hidden control (the symbol box while the yields are selected) must not inherit the toolbar's flex display. */
 .market-controls label[hidden],.market-controls input[hidden],.market-controls select[hidden]{display:none}
 .watch-tag{margin-left:5px;font-size:9px;font-weight:400;color:#315cd0;background:#eef3ff;border-radius:3px;padding:1px 4px;vertical-align:1px;display:inline-block;white-space:normal}

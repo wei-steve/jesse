@@ -7,33 +7,38 @@
 // yields have no push at all: CNBC's one-minute series and its quote are polled every 15 seconds.
 // The chart behaviour (range linking, price zoom, snapshots) and the overlays (the review page's display settings)
 // are reused from the review/finder modules instead of being reimplemented.
-import { t as createChart } from './lightweight-charts.mjs?v=20261116q';
-import { linkTimeRanges } from './data.mjs?v=20261116q';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261116q';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261116q';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261116q';
+import { t as createChart } from './lightweight-charts.mjs?v=20261117a';
+import { linkTimeRanges } from './data.mjs?v=20261117a';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261117a';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261117a';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261117a';
 import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages, okxCandleChannels, openOkxKlines,
-  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261116q';
-import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261116q';
-import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261116q';
+  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261117a';
+import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117a';
+import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261117a';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, MARKETS, MARKET_SOURCES, OKX_SOURCE, YIELD_SOURCE, YIELD_INSTRUMENTS,
   DEFAULT_YIELD_SYMBOL, YIELD_POLL_RANGE, aggregateCandles, candleRequest, cnbcSymbolOf, exchangeOf, instrumentName,
   isYieldSource, marketLabel, marketsOf, mergeYieldBars, mergeYieldDailyClose, normalizeMarket, normalizeYieldSymbol,
   parseCnbcBars, parseCnbcQuote, parseMarketCandles, restoreSource, sessionIndicator, sessionTail, signedPoints,
-  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261116q';
+  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261117a';
 import { MARKET_KEYS, MARKET_TIMEFRAMES, MAX_BARS, MAX_WATCHLIST, PRODUCT_PAGE, PROXY_CANDLES,
   PROXY_TICKERS, aggregateAnswer, addToWatchlist, cnbcChartUrl, cnbcQuoteUrl, defaultSymbolFor, endTimeBefore,
   filterProducts, klinesUrlFor, mergeCandles, miniTickerStreamUrl, pageSizeOf, parseKlines, parseMiniTicker,
   parseOkxCandles, proxyTickerRows, removeFromWatchlist, moveWatchItem, orderTimeframes, restoreAsideTab,
   restoreListMarket, restoreSelection, restoreTimeframes, restoreWatchlist, sameWatchItem, shiftLogical,
-  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261116q';
+  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261117a';
 // Candle notes (double-click a bar): the same box, key, 「注」 markers and stored file as the factor finder; the shared
 // module is why a note written on one page shows up on the other.
 import { barLabel, barsFor, createBarNoteBox, createBookPicker, barNoteBody, barNoteKey, barNoteOf, filterNoteRows,
   noteDigest, noteIdentity, noteMarkers, noteRowsFrom, noteSummary, noteTimeText, noteWhere, rememberNote, snapshotOf
-  } from './bar-notes.mjs?v=20261116q';
+  } from './bar-notes.mjs?v=20261117a';
 // The open 备注本 (`storage/labels/<book>.jsonl`): the same notebook as the factor finder, kept in one localStorage key.
-import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261116q';
+import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261117a';
+// The owner's own Deepcoin fills (T-59): 「我的成交」 marks his 开多 / 平多 / 开空 / 平空 on the candles of any crypto
+// source. The instrument mapping, the per-candle buckets, the markers and their line under the chart are pure functions
+// in market-fills.mjs; this page owns the request and the polling.
+import { FILLS_ENDPOINT, FILLS_KEY, FILLS_NOT_CONFIGURED, FILLS_POLL_MS, bucketFills, configuredOf, fillGroupsText,
+  fillMarkers, fillsRequest, mergeMarkers, parseFills } from './market-fills.mjs?v=20261117a';
 
 const $ = id => document.getElementById(id);
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
@@ -116,6 +121,10 @@ let quotes = new Map(), livePrice = null, hiddenAt = 0;
 let pollTimer = null, pollBusy = false, pollError = false;
 let cryptoPollTimer = null, cryptoPollBusy = false;
 let tickerTimer = null, tickerBusy = false;
+// 我的成交: whether the checkbox is on (localStorage `jesse.market.fills.v1`, default on), the fills of the instrument on
+// screen (oldest first), the left edge of the window they were asked for, and the 30-second poll.
+let fillsOn = read(FILLS_KEY) !== '0';
+let fillRows = [], fillsBegin = null, fillsTimer = null, fillsNoticeShown = false;
 let stopKlineStream = null, stopPriceStream = null;
 let klineKey = '', priceKey = '';
 let klineState = '', priceState = '';
@@ -395,6 +404,9 @@ function paintMeta(panel, time = null) {
   if (panel.empty || !panel.candles.length) { box.textContent = panel.note; return; }
   const candle = time === null ? null : panel.byTime.get(time) ?? (panel.forming?.time === time ? panel.forming : null);
   const barNote = time === null ? '' : barNoteOf(panelNotes(), noteKeyAt(panel, time));
+  // The owner's own fills of that candle (T-59), after the candle's numbers: 「开多 2 笔 均价 … 数量 … 手续费 …」.
+  const fills = time === null ? '' : fillGroupsText(fillGroupsAt(panel, time));
+  const trades = fills ? ` · ${fills}` : '';
   if (!candle) {
     const last = panel.forming ?? panel.candles.at(-1);
     paintMetaText(box, `${panel.candles.length.toLocaleString()} 根 K 线 · 最新 ${stamp(last.time)} UTC · 收 ${fmtPrice(last.close)}`
@@ -404,7 +416,7 @@ function paintMeta(panel, time = null) {
   const change = candle.open > 0 ? (candle.close - candle.open) / candle.open : null;
   paintMetaText(box, `${stamp(candle.time)} UTC${panel.forming?.time === candle.time ? '（形成中）' : ''}`
     + ` · 开 ${fmtPrice(candle.open)} · 高 ${fmtPrice(candle.high)} · 低 ${fmtPrice(candle.low)} · 收 ${fmtPrice(candle.close)}`
-    + (Number.isFinite(change) ? ` · ${signedPercent(change)}` : '') + note, barNote);
+    + (Number.isFinite(change) ? ` · ${signedPercent(change)}` : '') + note + trades, barNote);
 }
 
 // `price` is the price under the pointer: every other chart puts its horizontal line at that same price, and falls
@@ -576,6 +588,8 @@ async function loadEarlier(panel) {
     const next = mergeCandles(panel.candles, closed);
     if (next.length === panel.candles.length) { panel.noMore = true; return; }
     setBars(panel, next);
+    // The window grew to the left: an older candle may hold an older fill, so the range is asked for again.
+    if (fillsBegin !== null && Number.isFinite(panel.candles[0]?.time) && panel.candles[0].time < fillsBegin) loadFills();
   } catch {
     // A failed page just leaves the history as it was; the next drag towards the left tries again.
   } finally { panel.loadingEarlier = false; }
@@ -623,6 +637,11 @@ async function render() {
   if (source === YIELD_SOURCE) paintYieldPrice(); else paintLivePrice();
   if (panels[0]) paintMeta(panels[0]);
   paintLastPrice();
+  // 我的成交: the freshly built panels get the fills already read (a timeframe change keeps them), and the window of a
+  // new instrument / a newly opened page is asked for once.
+  paintFills();
+  syncFillsPolling();
+  loadFills();
 }
 
 /**
@@ -654,6 +673,8 @@ async function openSelection(nextSource, nextMarket, input) {
   chosenNote = null;
   if (same) { paintSource(); await render(); return true; }
   source = nextSource; market = wantedMarket; symbol = next;
+  // The fills belonged to the instrument that was on screen; render() asks for this one's.
+  fillRows = []; fillsBegin = null;
   // The product list's sub-tab stays on the market it showed, unless this source has no such market.
   listMarket = normalizeMarket(source, listMarket);
   saveSelection();
@@ -1355,11 +1376,15 @@ const noteKeyAt = (panel, time) => barNoteKey(noteId(), panel.tf, time);
 // The forming bar is a candle too: it can be noted, its snapshot taken mid-bar.
 const hasBar = (panel, time) => !!panel && (panel.closes.has(time) || panel.forming?.time === time);
 
-// The purple 「注」 squares of one chart (only its own timeframe, only candles that are drawn), the jumped-to one amber.
+// The purple 「注」 squares of one chart (only its own timeframe, only candles that are drawn), the jumped-to one amber,
+// and the owner's own Deepcoin fills of the same candles (T-59) in the same call: a stable sort by time keeps a note
+// and a fill of one candle side by side instead of one replacing the other.
 function paintMarkers(panel) {
   if (!panel?.series) return;
   const chosen = chosenNote && chosenNote.tf === panel.tf ? chosenNote.time : null;
-  panel.series.setMarkers(noteMarkers(panelNotes(), panel.tf, time => hasBar(panel, time), chosen));
+  panel.series.setMarkers(mergeMarkers(
+    noteMarkers(panelNotes(), panel.tf, time => hasBar(panel, time), chosen),
+    fillMarkers(panel.fillBuckets ?? [], time => hasBar(panel, time))));
 }
 
 // Without a Jesse login the note calls cannot run at all (unlike the Binance / OKX / CNBC charts), so a failure says
@@ -1380,6 +1405,91 @@ async function loadNotes() {
   }
   for (const panel of panels) paintMarkers(panel);
   if (asideTab === 'notes') paintNoteList();
+}
+
+// ---- 我的成交 (T-59) --------------------------------------------------------
+// The owner's own Deepcoin trades, drawn on the candles of whatever crypto source is on screen: a BTC trade is the same
+// trade on Binance, OKX or Deepcoin, 合约 is the perpetual (SWAP) and 现货 the spot pair (SPOT). The treasury yields are
+// not a market he trades there, so nothing is requested for them. The fill requests and the API key stay on the Jesse
+// side (POST /review/market/fills); the browser only ever sees the parsed fills of the loaded history.
+const fillsCharts = () => !isYieldSource(source);
+
+/** The oldest candle loaded across the panels: the left edge of the window the fills are asked for. */
+function fillsWindowStart() {
+  let oldest = null;
+  for (const panel of panels) {
+    const first = panel.empty ? null : panel.candles[0]?.time;
+    if (Number.isFinite(first) && (oldest === null || first < oldest)) oldest = first;
+  }
+  return oldest;
+}
+
+/** The groups of one candle (`[{label, count, price, size, fee, feeCcy}]`), [] when nothing traded in it. */
+const fillGroupsAt = (panel, time) => (panel.fillBuckets ?? []).find(bucket => bucket.time === time)?.groups ?? [];
+
+/** Re-bucket the fills into every panel's own timeframe, then redraw the markers and the line under each chart. */
+function paintFills() {
+  for (const panel of panels) {
+    panel.fillBuckets = fillsOn ? bucketFills(fillRows, panel.interval) : [];
+    paintMarkers(panel);
+    paintMeta(panel);
+  }
+}
+
+function clearFills() {
+  fillRows = []; fillsBegin = null;
+  paintFills();
+}
+
+// The 30-second poll runs only while the checkbox is on and the charts are a crypto source; a hidden page does not poll
+// and coming back reads once (onVisibility).
+function syncFillsPolling() {
+  const wanted = fillsOn && fillsCharts();
+  if (wanted && !fillsTimer) fillsTimer = setInterval(() => { if (!document.hidden) loadFills(); }, FILLS_POLL_MS);
+  if (!wanted && fillsTimer) { clearInterval(fillsTimer); fillsTimer = null; }
+}
+
+/**
+ * One read of the fills inside the loaded window. An unconfigured project says so once in the status line and draws
+ * nothing (that is not an error); a failed read says why in the same line and leaves the charts and the old marks alone.
+ */
+async function loadFills() {
+  if (!fillsOn || !fillsCharts()) { clearFills(); return; }
+  const begin = fillsWindowStart();
+  if (begin === null) return;
+  const body = fillsRequest(source, market, symbol, begin);
+  if (!body) { clearFills(); return; }
+  const version = loadVersion;
+  try {
+    const answer = await post(FILLS_ENDPOINT, body);
+    if (version !== loadVersion) return;
+    if (!configuredOf(answer)) {
+      clearFills();
+      // Once per page: every poll would say the same thing.
+      if (!fillsNoticeShown) { fillsNoticeShown = true; status(FILLS_NOT_CONFIGURED); }
+      return;
+    }
+    fillRows = parseFills(answer);
+    fillsBegin = body.begin;
+    paintFills();
+  } catch (error) {
+    if (version === loadVersion) status(`Deepcoin 成交读取失败：${error.message}`, true);
+  }
+}
+
+/** The 「我的成交」 checkbox: remembered per browser (and mirrored into storage/review-prefs.json like every jesse.* key). */
+function paintFillsToggle() {
+  const box = $('m-fills');
+  box.checked = fillsOn;
+  box.onchange = () => {
+    fillsOn = box.checked;
+    write(FILLS_KEY, fillsOn ? '1' : '0');
+    if (!fillsOn) { clearFills(); syncFillsPolling(); return; }
+    fillsNoticeShown = false;
+    paintFills();
+    syncFillsPolling();
+    loadFills();
+  };
 }
 
 // ---- Label books -----------------------------------------------------------
@@ -1616,14 +1726,15 @@ function onVisibility() {
   if (source === YIELD_SOURCE) pollYields();
   else if (away > HIDDEN_REFRESH_MS) { refreshAll(); pollYields(); }
   if (asideTab === 'products') loadProducts();
-  // Notes may have been written while this page was in the background.
+  // Notes and the owner's fills may have arrived while this page was in the background.
   loadNotes();
+  if (fillsOn && fillsCharts()) loadFills();
 }
 
 function start() {
   paintClock();
   setInterval(paintClock, 1000);
-  paintSource(); paintTimeframes(); paintHeight(); paintWatchlist(); paintAside();
+  paintSource(); paintTimeframes(); paintHeight(); paintWatchlist(); paintAside(); paintFillsToggle();
   buildBookPicker();
   loadBooks();
   for (const button of document.querySelectorAll('.aside-tab')) {
