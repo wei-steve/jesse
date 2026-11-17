@@ -173,34 +173,6 @@ def hyperparameters(self):
     ]
 ```
 
-## My Deepcoin Fills on the Market Page
-
-The 看行情 page (`/review/market.html`) can mark your own Deepcoin trades on its candles, on any crypto source it shows
-(Binance / OKX / Deepcoin, contract or spot): a trade of a coin is marked on that coin's chart whichever venue the chart
-is drawn from.
-
-**Setup.** Create an API key on Deepcoin with **read-only** permission, then paste its three values into `.env.deepcoin`
-in the project folder you start `jesse run` from:
-
-```
-DEEPCOIN_API_KEY=
-DEEPCOIN_API_SECRET=
-DEEPCOIN_API_PASSPHRASE=
-```
-
-Keep the file at mode `600` and out of version control (`.env.*` is git-ignored). It is read on every request, so the
-values take effect on the page's next poll — no restart — and you can leave the three lines empty to turn the feature
-off. Jesse only ever calls `GET /deepcoin/trade/fills`: no order, cancel or amend endpoint is used anywhere.
-
-**Markers.** 开多 / 平空 sit under the candle as a green up arrow, 平多 / 开空 above it as a red down arrow (a fill
-without `posSide` is just 买 / 卖), one marker per direction per candle. Moving the crosshair onto such a candle adds the
-group's numbers to the info line under the chart: `开多 2 笔 均价 64,320.5 数量 300 手续费 0.12 USDT`. The 「我的成交」
-checkbox in the toolbar (on by default, remembered per browser) turns the markers off.
-
-**Privacy.** The key never reaches the browser: the page posts `POST /review/market/fills` to Jesse, which signs the
-request server-side and answers with parsed fills only. The key is never logged, never put in an error message and never
-returned by any endpoint.
-
 ## Getting Started
 Head over to the "getting started" section of the [documentation](https://docs.jesse.trade/docs/getting-started). The 
 documentation is **short yet very informative**. 
