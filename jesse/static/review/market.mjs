@@ -7,43 +7,44 @@
 // yields have no push at all: CNBC's one-minute series and its quote are polled every 15 seconds.
 // The chart behaviour (range linking, price zoom, snapshots) and the overlays (the review page's display settings)
 // are reused from the review/finder modules instead of being reimplemented.
-import { t as createChart } from './lightweight-charts.mjs?v=20261117f';
-import { linkTimeRanges } from './data.mjs?v=20261117f';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261117f';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261117f';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261117f';
+import { t as createChart } from './lightweight-charts.mjs?v=20261117g';
+import { linkTimeRanges } from './data.mjs?v=20261117g';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261117g';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261117g';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261117g';
 import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages, okxCandleChannels, openOkxKlines,
-  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261117f';
-import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117f';
-import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261117f';
+  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261117g';
+import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117g';
+import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261117g';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, MARKETS, MARKET_SOURCES, OKX_SOURCE, YIELD_SOURCE, YIELD_INSTRUMENTS,
   DEFAULT_YIELD_SYMBOL, YIELD_POLL_RANGE, aggregateCandles, candleRequest, cnbcSymbolOf, exchangeOf, instrumentName,
   isYieldSource, marketLabel, marketsOf, mergeYieldBars, mergeYieldDailyClose, normalizeMarket, normalizeYieldSymbol,
   parseCnbcBars, parseCnbcQuote, parseMarketCandles, restoreSource, sessionIndicator, sessionTail, signedPoints,
-  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261117f';
+  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261117g';
 import { MARKET_KEYS, MARKET_TIMEFRAMES, MAX_BARS, MAX_WATCHLIST, PRODUCT_PAGE, PROXY_CANDLES,
   PROXY_TICKERS, aggregateAnswer, addToWatchlist, cnbcChartUrl, cnbcQuoteUrl, defaultSymbolFor, endTimeBefore,
   filterProducts, klinesUrlFor, mergeCandles, miniTickerStreamUrl, pageSizeOf, parseKlines, parseMiniTicker,
   parseOkxCandles, proxyTickerRows, removeFromWatchlist, moveWatchItem, orderTimeframes, restoreAsideTab,
   restoreListMarket, restoreSelection, restoreTimeframes, restoreWatchlist, sameWatchItem, shiftLogical,
-  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261117f';
+  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261117g';
 // Candle notes (double-click a bar): the same box, key, 「注」 markers and stored file as the factor finder; the shared
 // module is why a note written on one page shows up on the other.
 import { barLabel, barsFor, createBarNoteBox, createBookPicker, barNoteBody, barNoteKey, barNoteOf, filterNoteRows,
   noteDigest, noteIdentity, noteMarkers, noteRowsFrom, noteSummary, noteTimeText, noteWhere, rememberNote, snapshotOf
-  } from './bar-notes.mjs?v=20261117f';
+  } from './bar-notes.mjs?v=20261117g';
 // The open 备注本 (`storage/labels/<book>.jsonl`): the same notebook as the factor finder, kept in one localStorage key.
-import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261117f';
+import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261117g';
 // The owner's own Deepcoin fills (T-59): 「我的成交」 marks his 开多 / 平多 / 开空 / 平空 on the candles of any crypto
 // source. The instrument mapping, the per-candle buckets, the markers and their line under the chart are pure functions
 // in market-fills.mjs; this page owns the request and the polling.
-import { FILLS_ENDPOINT, FILLS_KEY, FILLS_NOT_CONFIGURED, FILLS_POLL_MS, bucketFills, configuredOf, fillGroupsText,
-  fillLabelsFit, fillsHave, fillsProgressText, fillsRequest, mergeFillRows, mergeMarkers,
-  parseFills } from './market-fills.mjs?v=20261117f';
+import { FILLS_ENDPOINT, FILLS_KEY, FILLS_NOT_CONFIGURED, FILLS_POLL_MS, FILLS_WAIT_ENDPOINT, applyFillsWait,
+  bucketFills, configuredOf, fillGroupsText, fillLabelsFit, fillsHave, fillsProgressText, fillsRequest, fillsStatusLine,
+  fillsStreamText, fillsWaitBackoff, fillsWaitBody, mergeFillRows, mergeMarkers, parseFills }
+  from './market-fills.mjs?v=20261117g';
 // The 价位 marks (T-62): one small triangle / circle per order at its own average price, drawn as a series primitive so
 // a mark sits on the price instead of under the candle, and switched on / off per timeframe (1h / 4h / 1D start off).
 import { FILL_PRICES_KEY, FillPricesPrimitive, fillArrowMarkers, fillPriceMarksOn, orderMarks, orderMarksText,
-  readFillPrices, toggleFillPrices } from './fill-prices.mjs?v=20261117f';
+  readFillPrices, toggleFillPrices } from './fill-prices.mjs?v=20261117g';
 
 const $ = id => document.getElementById(id);
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
@@ -127,9 +128,15 @@ let pollTimer = null, pollBusy = false, pollError = false;
 let cryptoPollTimer = null, cryptoPollBusy = false;
 let tickerTimer = null, tickerBusy = false;
 // 我的成交: whether the checkbox is on (localStorage `jesse.market.fills.v1`, default on), the fills of the instrument on
-// screen (oldest first), the left edge of the window they were asked for, and the 30-second poll.
+// screen (oldest first), the left edge of the window they were asked for, and the 60-second poll that keeps the history
+// and is the fallback when the push is down. T-63: the fills themselves arrive over the wait endpoint below.
 let fillsOn = read(FILLS_KEY) !== '0';
-let fillRows = [], fillsBegin = null, fillsTimer = null, fillsNoticeShown = false;
+let fillRows = [], fillsBegin = null, fillsTimer = null, fillsNoticeShown = false, fillsProgress = '';
+// The push (T-63): the counter the page has already drawn (`seq` of the last wait), the push's state in the status line,
+// and the token that ends the wait loop when the instrument changes or the page hides (`fillsWaitRunning` says whether
+// the loop of that token is still alive).
+let fillsSeq = 0, fillsStream = null, fillsWaitToken = 0, fillsWaitRunning = false;
+let fillsWaitTimer = null, fillsWaitWake = null;
 // 价位 (T-62): which timeframes draw one mark per order at its price, `{tf: boolean}` in localStorage
 // `jesse.market.fillPrices.v1`; a timeframe not in there takes its default (1m…30m on, 1h / 4h / 1D off).
 let fillPrices = readFillPrices(read(FILL_PRICES_KEY));
@@ -666,6 +673,7 @@ async function render() {
   // new instrument / a newly opened page is asked for once.
   paintFills();
   syncFillsPolling();
+  syncFillsWait();
   loadFills();
 }
 
@@ -698,8 +706,11 @@ async function openSelection(nextSource, nextMarket, input) {
   chosenNote = null;
   if (same) { paintSource(); await render(); return true; }
   source = nextSource; market = wantedMarket; symbol = next;
-  // The fills belonged to the instrument that was on screen; render() asks for this one's.
-  fillRows = []; fillsBegin = null;
+  // The fills belonged to the instrument that was on screen; render() asks for this one's. The push's counter goes back
+  // to 0 as well, so the next instrument gets the layer's retained fills too (its own REST store dedups them), and the
+  // wait loop of the old instrument is ended — its answer must not land on the new instrument's rows.
+  fillRows = []; fillsBegin = null; fillsSeq = 0;
+  stopFillsWait();
   // The product list's sub-tab stays on the market it showed, unless this source has no such market.
   listMarket = normalizeMarket(source, listMarket);
   saveSelection();
@@ -1516,7 +1527,7 @@ function addFillPricesButton(panel) {
 }
 
 function clearFills() {
-  fillRows = []; fillsBegin = null;
+  fillRows = []; fillsBegin = null; fillsProgress = '';
   paintFills();
   paintFillsStatus('');
 }
@@ -1535,7 +1546,77 @@ function paintFillsStatus(text, error = false) {
   fillsStatus = '';
 }
 
-// The 30-second poll runs only while the checkbox is on and the charts are a crypto source; a hidden page does not poll
+/** The 「我的成交」 line: the backfill text of the last poll, then the push's own state (T-63). Either may be missing, so
+ * the line goes away when neither applies — and a message another feature wrote in the box is left alone. */
+function paintFillsLine() {
+  paintFillsStatus(fillsStatusLine(fillsProgress, fillsStream));
+}
+
+/** The wait's own sleep, which `stopFillsWait` can wake early (a page that hid while the loop was backing off). */
+function fillsWaitSleep(ms) {
+  return new Promise(resolve => {
+    fillsWaitWake = () => { fillsWaitWake = null; resolve(); };
+    fillsWaitTimer = setTimeout(() => { fillsWaitTimer = null; fillsWaitWake?.(); }, ms);
+  });
+}
+
+/**
+ * The push's long poll (T-63): one request open while 「我的成交」 is on, the page is visible and the chart is 合约 (the
+ * venue's private stream is perpetuals only), which is what makes a fill appear in about a second. The 60-second poll
+ * still runs: it carries the history, the backfill progress and a push that is down.
+ */
+function syncFillsWait() {
+  const wanted = fillsOn && fillsCharts() && market !== 'spot' && !document.hidden;
+  if (!wanted) { stopFillsWait(); return; }
+  if (fillsWaitRunning) return;
+  const token = fillsWaitToken;
+  fillsWaitRunning = true;
+  runFillsWait(token).finally(() => { if (token === fillsWaitToken) fillsWaitRunning = false; });
+}
+
+/** End the wait loop (instrument change, page hidden, checkbox off): the in-flight answer of that token is dropped. */
+function stopFillsWait() {
+  fillsWaitToken += 1;
+  fillsWaitRunning = false;
+  if (fillsWaitTimer) { clearTimeout(fillsWaitTimer); fillsWaitTimer = null; }
+  fillsWaitWake?.();
+  fillsWaitWake = null;
+  if (fillsStream) { fillsStream = null; paintFillsLine(); }
+}
+
+/**
+ * The loop behind `syncFillsWait`: a long poll returns at once when a fill was pushed and after ~25 seconds otherwise,
+ * so the page keeps exactly one request open. A failed request (Jesse restarting, a dropped network) is retried after
+ * 2 / 5 / 10 seconds and says 「成交实时：未连接」 while it waits; the 60-second poll keeps drawing in the meantime.
+ */
+async function runFillsWait(token) {
+  let failures = 0;
+  while (token === fillsWaitToken) {
+    const body = fillsWaitBody(source, market, symbol, fillsSeq);
+    if (!body) return;
+    try {
+      const answer = await post(FILLS_WAIT_ENDPOINT, body);
+      if (token !== fillsWaitToken) return;
+      failures = 0;
+      fillsStream = answer?.stream ?? null;
+      const merged = applyFillsWait(fillRows, answer, fillsBegin);
+      fillsSeq = Math.max(fillsSeq, merged.seq);
+      if (parseFills(answer).length) { fillRows = merged.rows; paintFills(); }
+      paintFillsLine();
+      // A push that cannot serve this project (no key, a deleted `.env.deepcoin`) answers at once forever: stop, and let
+      // the 60-second poll show the reason and start the loop again when it can.
+      if (fillsStream?.state === 'off') { stopFillsWait(); return; }
+    } catch {
+      if (token !== fillsWaitToken) return;
+      fillsStream = null;
+      paintFillsLine();
+      await fillsWaitSleep(fillsWaitBackoff(failures));
+      failures += 1;
+    }
+  }
+}
+
+// The 60-second poll runs only while the checkbox is on and the charts are a crypto source; a hidden page does not poll
 // and coming back reads once (onVisibility).
 function syncFillsPolling() {
   const wanted = fillsOn && fillsCharts();
@@ -1575,13 +1656,22 @@ async function loadFills() {
       return;
     }
     // An incremental answer is only the part that changed: it is merged into what is drawn, not assigned over it.
-    // (A backend from before T-61 answers a full list; merging that is the same answer.)
-    fillRows = mergeFillRows(have ? fillRows : [], parseFills(answer), body.begin);
+    // (A backend from before T-61 answers a full list; merging that is the same answer.) A full answer (`have` is null,
+    // after the instrument changed) still merges what is drawn — a pushed fill that arrived while this request was in
+    // flight must not be thrown away, and `openSelection` has already emptied the rows of the old instrument.
+    fillRows = mergeFillRows(fillRows, parseFills(answer), body.begin);
     fillsBegin = body.begin;
     paintFills();
     // '"我的成交：正在补历史，已到 <date>" while the store still walks into the past (the markers of what it has are drawn
-    // anyway), and once it has caught up the line goes away again. A refused request says why instead.
-    paintFillsStatus(answer.error ? `我的成交：${answer.error}` : fillsProgressText(answer), Boolean(answer.error));
+    // anyway), and once it has caught up the line goes away again. A refused request says why instead. The push's own
+    // state is the line's second segment (T-63); a configured answer also lets a stopped wait loop start again.
+    if (answer.error) {
+      paintFillsStatus([`我的成交：${answer.error}`, fillsStreamText(fillsStream)].filter(Boolean).join(' · '), true);
+    } else {
+      fillsProgress = fillsProgressText(answer);
+      paintFillsLine();
+      syncFillsWait();
+    }
   } catch (error) {
     if (version === loadVersion) status(`Deepcoin 成交读取失败：${error.message}`, true);
   }
@@ -1594,10 +1684,11 @@ function paintFillsToggle() {
   box.onchange = () => {
     fillsOn = box.checked;
     write(FILLS_KEY, fillsOn ? '1' : '0');
-    if (!fillsOn) { clearFills(); syncFillsPolling(); return; }
+    if (!fillsOn) { clearFills(); syncFillsPolling(); syncFillsWait(); return; }
     fillsNoticeShown = false;
     paintFills();
     syncFillsPolling();
+    syncFillsWait();
     loadFills();
   };
 }
@@ -1839,6 +1930,8 @@ function onVisibility() {
   // Notes and the owner's fills may have arrived while this page was in the background.
   loadNotes();
   if (fillsOn && fillsCharts()) loadFills();
+  // The push stops while the page is hidden (no request in the background) and comes back with the page.
+  syncFillsWait();
 }
 
 function start() {

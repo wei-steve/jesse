@@ -5,18 +5,31 @@
 // runs every function here with node. The instrument mapping is the interesting part: the fills belong to the owner's
 // Deepcoin account, but a BTC trade is the same trade whichever venue the chart is showing, so Binance's `BTCUSDT`,
 // OKX's `BTC-USDT-SWAP` and Deepcoin's own ids all name the same `{market, symbol}` of the private endpoint.
-import { BINANCE_SOURCE, DEEPCOIN_SOURCE, OKX_SOURCE } from './market-sources.mjs?v=20261117f';
+import { BINANCE_SOURCE, DEEPCOIN_SOURCE, OKX_SOURCE } from './market-sources.mjs?v=20261117g';
 
 // The 「我的成交」 checkbox: on unless the owner turned it off, so the markers are there when the keys are filled in.
 export const FILLS_KEY = 'jesse.market.fills.v1';
-// The page polls every 30 seconds; the backend answers two callers within 5 seconds from its store, so a second tab (or a
-// window that just grew left) costs no request at the venue.
-export const FILLS_POLL_MS = 30000;
+// The page polls every 60 seconds (T-63: the live fills come from the wait endpoint below); the backend answers two
+// callers within 5 seconds from its store, so a second tab (or a window that just grew left) costs no request at the
+// venue. This poll is the history / fallback one: it is what keeps the markers right when the push is down.
+export const FILLS_POLL_MS = 60000;
 export const FILLS_ENDPOINT = '/review/market/fills';
+// The push's own route: a long poll that returns the fills newer than `seq`, at once or after ~25 seconds. The page keeps
+// one open while 「我的成交」 is on, the page is visible and the chart is 合约.
+export const FILLS_WAIT_ENDPOINT = '/review/market/fills/wait';
+// A wait that failed (a restarting Jesse, a lost network) is retried after 2 / 5 / 10 seconds, then every 10.
+export const FILLS_WAIT_BACKOFF = [2000, 5000, 10000];
+// The push's state in the status line, one segment after the backfill text: connected / reconnecting / not connected.
+export const FILLS_STREAM_TEXT = {
+  live: '成交实时：已连接',
+  connecting: '成交实时：重连中',
+  reconnecting: '成交实时：重连中',
+  off: '成交实时：未连接',
+};
 // Shown once in the page's status line when `.env.deepcoin` is missing / incomplete.
 export const FILLS_NOT_CONFIGURED = '未配置 Deepcoin API：在 jesse-project/.env.deepcoin 填三项后刷新';
 // Shown while the backend's store still walks into the past (T-60): the fills it already has are drawn, and the next
-// 30-second poll continues where this one stopped. `<date>` is the oldest fill the store has, so the line says how far
+// 60-second poll continues where this one stopped. `<date>` is the oldest fill the store has, so the line says how far
 // back the markers are trustworthy.
 export const FILLS_BACKFILLING = '我的成交：正在补历史，已到 ';
 export const FILLS_BACKFILLING_EMPTY = '我的成交：正在补历史…';
@@ -72,6 +85,51 @@ export function fillsRequest(source, market, symbol, begin, end = null, have = n
     body.have_to = to;
   }
   return body;
+}
+
+/**
+ * The body of `POST /review/market/fills/wait` for one chart, or null when this chart has no push (the venue's private
+ * stream is perpetuals only, so spot stays on the 60-second poll). `seq` is the counter of the previous answer: a page
+ * that has none yet asks from 0, which the layer still keeps the last two hours of.
+ */
+export function fillsWaitBody(source, market, symbol, seq) {
+  const instrument = fillsInstrument(source, market, symbol);
+  if (!instrument || instrument.market !== 'swap') return null;
+  const value = Math.trunc(Number(seq));
+  return { market: instrument.market, symbol: instrument.symbol, seq: Number.isFinite(value) && value > 0 ? value : 0 };
+}
+
+/** The delay before the next wait after `failures` failures in a row: 2 / 5 / 10 seconds, then every 10. */
+export function fillsWaitBackoff(failures) {
+  const value = Math.trunc(Number(failures));
+  const index = Math.min(Number.isFinite(value) && value > 0 ? value : 0, FILLS_WAIT_BACKOFF.length - 1);
+  return FILLS_WAIT_BACKOFF[index];
+}
+
+/** The counter of one wait answer (negative / missing / text reads as 0, the start of what the layer keeps). */
+export function fillsWaitSeq(payload) {
+  const value = Math.trunc(Number(payload?.seq));
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/**
+ * One wait answer merged into what the page draws: `{rows, seq}`. The pushed fills are merged (never assigned) and cut
+ * to the window's own start like every other answer, so a fill older than the left edge cannot become an off-screen
+ * mark. `seq` comes from the answer, so the page asks the next wait from exactly what it has drawn.
+ */
+export function applyFillsWait(rows, payload, begin = null) {
+  return { rows: mergeFillRows(rows, parseFills(payload), begin), seq: fillsWaitSeq(payload) };
+}
+
+/** The push's segment of the status line, '' when no state was ever reported (an old backend, or a page not waiting). */
+export function fillsStreamText(stream) {
+  if (!stream || typeof stream !== 'object') return '';
+  return FILLS_STREAM_TEXT[String(stream.state ?? '')] ?? '';
+}
+
+/** The status line of 「我的成交」: the backfill text, then the push's state (either of them may be missing). */
+export function fillsStatusLine(progress, stream) {
+  return [String(progress ?? '').trim(), fillsStreamText(stream)].filter(Boolean).join(' · ');
 }
 
 /** The fills of one answer as sane fills, oldest first. A row without a price / size / time is dropped, not drawn. */

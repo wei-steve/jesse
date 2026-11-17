@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from jesse.services import deepcoin_private, market_sources
+from jesse.services import deepcoin_private, deepcoin_stream, market_sources
 from jesse.services.auth import require_auth
 
 router = APIRouter(prefix="/review", tags=["Review"], dependencies=[Depends(require_auth)])
@@ -351,15 +351,66 @@ def market_fills(request_json: MarketFillsRequestJson) -> JSONResponse:
     refuses the request still answers 200 with the stored fills plus an `error`: the markers of earlier reads are drawn.
 
     A page that already has the fills of a range sends `have_from` / `have_to` and gets only the increment of that range
-    (new fills, plus the older ones a backfill just pulled) with `partial: true`, so the 30-second poll no longer carries
+    (new fills, plus the older ones a backfill just pulled) with `partial: true`, so the 60-second poll no longer carries
     the whole history to the browser.
+
+    The pushed fills of T-63 are merged in (deduplicated against the store, see deepcoin_stream) and the answer carries
+    the push's own state and counter: `stream: {state, since, last_frame_at, reconnects}` and `seq`, the number the
+    page's long poll (`/review/market/fills/wait`) asks from.
     """
     try:
         answer = deepcoin_private.read_fills(request_json.market, request_json.symbol, request_json.begin,
                                              request_json.end, request_json.have_from, request_json.have_to)
     except deepcoin_private.DeepcoinError as error:
         return JSONResponse({'error': str(error)}, status_code=error.status_code)
+    if answer.get('configured'):
+        answer = deepcoin_stream.augment(answer, request_json.market, request_json.symbol, request_json.end)
     return JSONResponse(answer)
+
+
+class MarketFillsWaitJson(BaseModel):
+    """The long poll of the realtime fills (T-63): the instrument on screen and the counter the page already has.
+
+    `seq` is the `seq` of the previous wait (or of the fills answer); a request without one asks from the start of
+    what the layer still keeps. It takes text too, so a bad value is the service's own 400 instead of a pydantic error.
+    """
+    market: str
+    symbol: str
+    seq: Optional[Union[int, float, str]] = 0
+
+
+@router.post('/market/fills/wait')
+async def market_fills_wait(request_json: MarketFillsWaitJson) -> JSONResponse:
+    """Wait up to ~25 seconds for a pushed fill newer than the page's `seq`; answer at once when one is already there.
+
+    This is the fast half of 「我的成交」 (T-63): the page keeps one of these requests open while it is visible, so a
+    fill is drawn about a second after the match instead of at the next 60-second poll. The route is async and looks at
+    the in-memory layer every 0.3 seconds, so a waiting request holds no thread-pool thread.
+
+    The spot market has no private stream (the venue's pushes are perps): the answer is the same shape with an `off`
+    stream and a reason, so the page needs no special case. An unconfigured project starts nothing and says so the same
+    way. Nothing here carries a key or a socket URL — `stream` is only the state of the worker.
+    """
+    market = str(request_json.market or '').strip().lower()
+    if market not in ('swap', 'spot'):
+        return JSONResponse({'error': 'market 只能是 swap / spot'}, status_code=400)
+    try:
+        inst_id = deepcoin_stream.instrument_id(market, request_json.symbol)
+    except deepcoin_private.DeepcoinError as error:
+        return JSONResponse({'error': str(error)}, status_code=error.status_code)
+    try:
+        after = int(float(request_json.seq))
+    except (TypeError, ValueError):
+        return JSONResponse({'error': 'seq 必须是数字'}, status_code=400)
+    after = max(0, after)
+    if market == 'spot':
+        return JSONResponse({'seq': deepcoin_stream.seq(), 'fills': [],
+                             'stream': {'state': 'off', 'reason': '现货暂不支持实时'}})
+    if not deepcoin_stream.touch(inst_id):
+        return JSONResponse({'seq': deepcoin_stream.seq(), 'fills': [],
+                             'stream': {**deepcoin_stream.status(), 'reason': '未配置 Deepcoin API'}})
+    fills, current = await deepcoin_stream.wait_fills(inst_id, after)
+    return JSONResponse({'seq': current, 'fills': fills, 'stream': deepcoin_stream.status()})
 
 
 def bar_entry(row: dict) -> dict:
