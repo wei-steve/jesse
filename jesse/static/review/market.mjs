@@ -253,7 +253,12 @@ function scheduleTail(panel) {
   if (panel.tailTimer) return;
   panel.tailTimer = setTimeout(() => {
     panel.tailTimer = null;
-    if (panel.forming) paintIndicatorTail(panel, panel.forming);
+    if (!panel.forming) return;
+    paintIndicatorTail(panel, panel.forming);
+    // The line under the chart says the newest close too: without this it kept the price of the last *closed* bar
+    // while the chart and the watchlist moved on (64,627.70 under the chart, 64,665.90 in the list, 2026-11-17).
+    // Left alone while a pointer is on any chart: then the line describes the candle under the crosshair.
+    if (!pointerPanel) paintMeta(panel);
   }, TAIL_MS);
 }
 
