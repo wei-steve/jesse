@@ -7,44 +7,44 @@
 // yields have no push at all: CNBC's one-minute series and its quote are polled every 15 seconds.
 // The chart behaviour (range linking, price zoom, snapshots) and the overlays (the review page's display settings)
 // are reused from the review/finder modules instead of being reimplemented.
-import { t as createChart } from './lightweight-charts.mjs?v=20261117g';
-import { linkTimeRanges } from './data.mjs?v=20261117g';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261117g';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261117g';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261117g';
+import { t as createChart } from './lightweight-charts.mjs?v=20261117h';
+import { linkTimeRanges } from './data.mjs?v=20261117h';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261117h';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261117h';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261117h';
 import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages, okxCandleChannels, openOkxKlines,
-  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261117g';
-import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117g';
-import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261117g';
+  openOkxTicker, openOkxTickers, openDeepcoinTicker, openDeepcoinTickers } from './live-price.mjs?v=20261117h';
+import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117h';
+import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261117h';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, MARKETS, MARKET_SOURCES, OKX_SOURCE, YIELD_SOURCE, YIELD_INSTRUMENTS,
   DEFAULT_YIELD_SYMBOL, YIELD_POLL_RANGE, aggregateCandles, candleRequest, cnbcSymbolOf, exchangeOf, instrumentName,
   isYieldSource, marketLabel, marketsOf, mergeYieldBars, mergeYieldDailyClose, normalizeMarket, normalizeYieldSymbol,
   parseCnbcBars, parseCnbcQuote, parseMarketCandles, restoreSource, sessionIndicator, sessionTail, signedPoints,
-  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261117g';
+  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261117h';
 import { MARKET_KEYS, MARKET_TIMEFRAMES, MAX_BARS, MAX_WATCHLIST, PRODUCT_PAGE, PROXY_CANDLES,
   PROXY_TICKERS, aggregateAnswer, addToWatchlist, cnbcChartUrl, cnbcQuoteUrl, defaultSymbolFor, endTimeBefore,
   filterProducts, klinesUrlFor, mergeCandles, miniTickerStreamUrl, pageSizeOf, parseKlines, parseMiniTicker,
   parseOkxCandles, proxyTickerRows, removeFromWatchlist, moveWatchItem, orderTimeframes, restoreAsideTab,
   restoreListMarket, restoreSelection, restoreTimeframes, restoreWatchlist, sameWatchItem, shiftLogical,
-  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261117g';
+  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261117h';
 // Candle notes (double-click a bar): the same box, key, 「注」 markers and stored file as the factor finder; the shared
 // module is why a note written on one page shows up on the other.
 import { barLabel, barsFor, createBarNoteBox, createBookPicker, barNoteBody, barNoteKey, barNoteOf, filterNoteRows,
   noteDigest, noteIdentity, noteMarkers, noteRowsFrom, noteSummary, noteTimeText, noteWhere, rememberNote, snapshotOf
-  } from './bar-notes.mjs?v=20261117g';
+  } from './bar-notes.mjs?v=20261117h';
 // The open 备注本 (`storage/labels/<book>.jsonl`): the same notebook as the factor finder, kept in one localStorage key.
-import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261117g';
+import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261117h';
 // The owner's own Deepcoin fills (T-59): 「我的成交」 marks his 开多 / 平多 / 开空 / 平空 on the candles of any crypto
 // source. The instrument mapping, the per-candle buckets, the markers and their line under the chart are pure functions
 // in market-fills.mjs; this page owns the request and the polling.
 import { FILLS_ENDPOINT, FILLS_KEY, FILLS_NOT_CONFIGURED, FILLS_POLL_MS, FILLS_WAIT_ENDPOINT, applyFillsWait,
   bucketFills, configuredOf, fillGroupsText, fillLabelsFit, fillsHave, fillsProgressText, fillsRequest, fillsStatusLine,
   fillsStreamText, fillsWaitBackoff, fillsWaitBody, mergeFillRows, mergeMarkers, parseFills }
-  from './market-fills.mjs?v=20261117g';
+  from './market-fills.mjs?v=20261117h';
 // The 价位 marks (T-62): one small triangle / circle per order at its own average price, drawn as a series primitive so
 // a mark sits on the price instead of under the candle, and switched on / off per timeframe (1h / 4h / 1D start off).
 import { FILL_PRICES_KEY, FillPricesPrimitive, fillArrowMarkers, fillPriceMarksOn, orderMarks, orderMarksText,
-  readFillPrices, toggleFillPrices } from './fill-prices.mjs?v=20261117g';
+  readFillPrices, toggleFillPrices } from './fill-prices.mjs?v=20261117h';
 
 const $ = id => document.getElementById(id);
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
@@ -1208,7 +1208,7 @@ function syncQuoteStreams() {
 
 function quoteSocketSpecs() {
   const specs = new Map();
-  const binance = new Map(), okx = new Map();
+  const binance = new Map(), okx = new Map(), deepcoin = new Set();
   const add = item => {
     if (item.source === BINANCE_SOURCE) {
       const exchange = exchangeOf(item.source, item.market);
@@ -1217,6 +1217,9 @@ function quoteSocketSpecs() {
       binance.get(exchange).symbols.push(item.symbol);
     } else if (item.source === OKX_SOURCE) {
       okx.set(item.symbol, item.market ?? 'swap');
+    } else if (item.source === DEEPCOIN_SOURCE && (item.market ?? 'swap') === 'swap') {
+      // Swap rows ride Deepcoin's public ticker socket; spot rows have none and stay on the 10-second REST read.
+      deepcoin.add(item.symbol);
     }
   };
   for (const item of watchlist) add(item);
@@ -1236,6 +1239,12 @@ function quoteSocketSpecs() {
     specs.set('okx', { key: `${instIds.join(',')}`, open: ({ onQuote, onState }) => openOkxTickers(instIds, { onState,
       onQuote: quote => onQuote({ source: OKX_SOURCE, market: okx.get(quote.symbol) ?? 'swap', symbol: quote.symbol,
         price: quote.price, change: quote.change }) }) });
+  }
+  if (deepcoin.size) {
+    const symbols = [...deepcoin].sort();
+    specs.set('deepcoin', { key: symbols.join(','), open: ({ onQuote, onState }) => openDeepcoinTickers(symbols, { onState,
+      onQuote: quote => onQuote({ source: DEEPCOIN_SOURCE, market: 'swap', symbol: quote.symbol, price: quote.price,
+        change: quote.change }) }) });
   }
   return specs;
 }
@@ -1299,12 +1308,14 @@ async function pollDeepcoin() {
 // The product list and the Deepcoin watchlist quotes share one 10-second ticker read: every 10 seconds while the
 // list is open (the venue's REST list, not a socket per product), and for the Deepcoin rows of the watchlist.
 function syncTickerPolling() {
-  const wanted = (asideTab === 'products' && source !== YIELD_SOURCE) || deepcoinRows().length > 0;
+  const wanted = (asideTab === 'products' && source !== YIELD_SOURCE) || deepcoinRestRows().length > 0;
   if (wanted && !tickerTimer) tickerTimer = setInterval(pollTickers, TICKER_POLL_MS);
   if (!wanted && tickerTimer) { clearInterval(tickerTimer); tickerTimer = null; }
 }
 
 const deepcoinRows = () => watchlist.filter(item => item.source === DEEPCOIN_SOURCE);
+// The Deepcoin rows the socket cannot price (spot: the venue has no spot ticker cluster), read by REST every 10 s.
+const deepcoinRestRows = () => deepcoinRows().filter(item => (item.market ?? 'swap') === 'spot');
 
 async function pollTickers() {
   if (document.hidden || tickerBusy) return;
@@ -1318,13 +1329,13 @@ async function pollTickers() {
 
 /** Deepcoin quotes of the rows that have no socket: one ticker read per market present in the watchlist. */
 async function refreshDeepcoinQuotes() {
-  const markets = new Set(deepcoinRows().map(item => item.market ?? 'swap'));
+  const markets = new Set(deepcoinRestRows().map(item => item.market ?? 'swap'));
   if (asideTab === 'products' && source === DEEPCOIN_SOURCE && listMarket) markets.add(listMarket);
   for (const venueMarket of markets) {
     let rows;
     try { rows = await fetchProducts(DEEPCOIN_SOURCE, venueMarket); } catch { continue; }
     const bySymbol = new Map(rows.map(row => [row.symbol, row]));
-    for (const item of deepcoinRows()) {
+    for (const item of deepcoinRestRows()) {
       if ((item.market ?? 'swap') !== venueMarket) continue;
       const row = bySymbol.get(item.symbol);
       if (!row) continue;

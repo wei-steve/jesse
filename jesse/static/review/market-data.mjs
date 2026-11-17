@@ -4,7 +4,7 @@
 // No DOM, no fetch, no websocket: tests/review-market-data.test.mjs runs every function in this file with node.
 import { BINANCE_SOURCE, DEFAULT_MARKET, DEFAULT_SOURCE, DEFAULT_YIELD_SYMBOLS, OKX_SOURCE, YIELD_SOURCE, MARKETS,
   aggregateCandles, candleRequest, defaultSymbolOf, migrateSource, normalizeMarket, normalizeSymbol,
-  symbolOf } from './market-sources.mjs?v=20261117g';
+  symbolOf } from './market-sources.mjs?v=20261117h';
 
 // Binance USDTⓈ-M futures, public and CORS-open (`access-control-allow-origin: *`), so the browser talks to the
 // exchange directly: any USDT perpetual can be watched, nothing has to be imported into Jesse's database and no

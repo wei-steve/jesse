@@ -278,6 +278,60 @@ export function deepcoinTickerPrice(message) {
   return Number.isFinite(price) && price > 0 ? price : null;
 }
 
+/**
+ * Every ticker of a `PO` push as `{code, price, change}` (`code` = the socket's `BTCUSDT`). One socket carries several
+ * instruments (one subscription frame each, its own LocalNo — checked 2026-11-17 with four swaps on one connection),
+ * so a push says which one it is in `d.I`. `O` is the 24h open (equal to REST `open24h`), so `change` is the same
+ * 24h figure as the REST list's.
+ */
+export function deepcoinTickerQuotes(message) {
+  if (message?.a !== 'PO' || !Array.isArray(message?.r)) return [];
+  const quotes = [];
+  for (const row of message.r) {
+    const data = row?.d ?? {};
+    const code = String(data.I ?? '').toUpperCase();
+    const price = Number(data.N), open = Number(data.O);
+    if (!code || !Number.isFinite(price) || price <= 0) continue;
+    quotes.push({ code, price, change: Number.isFinite(open) && open > 0 ? (price - open) / open : null });
+  }
+  return quotes;
+}
+
+/**
+ * Deepcoin swap tickers of several instruments on one socket (the watchlist's Deepcoin rows), batched like OKX's:
+ * `onQuote({symbol, price, change})` at most once a second per instrument. `symbols` are the watchlist's own names
+ * (`BTC-USDT`); spot has no ticker cluster, so spot rows stay on the 10-second REST read.
+ */
+export function openDeepcoinTickers(symbols, { onQuote, onState, throttleMs = 1000, silenceMs = 30000 }) {
+  const byCode = new Map();
+  for (const symbol of Array.isArray(symbols) ? symbols : []) {
+    if (symbol) byCode.set(deepcoinWsFilter(symbol).replace(/^DeepCoin_/, ''), symbol);
+  }
+  if (!byCode.size) return () => {};
+  let timer = null, latest = new Map(), active = true;
+  const flush = () => {
+    timer = null;
+    if (!active) return;
+    const pending = latest;
+    latest = new Map();
+    for (const quote of pending.values()) onQuote(quote);
+  };
+  const stop = openSocket(DEEPCOIN_WS.swap, {
+    silenceMs, ping: 'ping', pingMs: 10000, onState,
+    handshake: () => [...byCode.values()].map((symbol, index) => JSON.stringify({
+      SendTopicAction: { ...deepcoinSubscription(symbol).SendTopicAction, LocalNo: 111 + index } })),
+    onMessage: message => {
+      for (const quote of deepcoinTickerQuotes(message)) {
+        const symbol = byCode.get(quote.code);
+        if (!symbol) continue;
+        latest.set(symbol, { symbol, price: quote.price, change: quote.change });
+      }
+      if (latest.size && !timer) timer = setTimeout(flush, throttleMs);
+    },
+  });
+  return () => { active = false; clearTimeout(timer); stop(); };
+}
+
 /** Deepcoin's ticker push for one instrument. Returns stop(); spot has no ticker cluster, so it never connects. */
 export function openDeepcoinTicker(market, symbol, { onPrice, onState, throttleMs = 250, silenceMs = 30000 }) {
   // The spot endpoint has no ticker cluster, so a spot instrument simply gets no push (its price comes from the REST

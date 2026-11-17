@@ -10,11 +10,11 @@
 // Pure functions (naming, keys, the 备注 list, the candle snapshot) plus the one-line box every chart uses, so the two
 // pages cannot drift apart; tests/review-bar-notes.test.mjs runs all of it with node.
 import { barKey, barLabel, barMarkers, barNoteOf, BAR_NOTE_COLOR, BAR_NOTE_TEXT, BOOK_MAX, bookName, bookOptionText,
-  validBookName } from './labels.mjs?v=20261117g';
-import { barSnapshot } from './finder-data.mjs?v=20261117g';
-import { atr14 } from './limit-rules.mjs?v=20261117g';
+  validBookName } from './labels.mjs?v=20261117h';
+import { barSnapshot } from './finder-data.mjs?v=20261117h';
+import { atr14 } from './limit-rules.mjs?v=20261117h';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, OKX_SOURCE, YIELD_SOURCE, marketLabel, normalizeYieldSymbol,
-  sourceLabel } from './market-sources.mjs?v=20261117g';
+  sourceLabel } from './market-sources.mjs?v=20261117h';
 
 // The single-candle readers of labels.mjs, re-exported so a page imports the note helpers from one place.
 export { barLabel, barNoteOf, BAR_NOTE_COLOR, BAR_NOTE_TEXT };
