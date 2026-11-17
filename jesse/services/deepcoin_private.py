@@ -171,15 +171,18 @@ def _seconds(value, name: str) -> int:
 
 
 def fills_query(inst_type: str, inst_id: str, begin: Optional[int] = None, end: Optional[int] = None,
-                before: Optional[str] = None, limit: int = PAGE_LIMIT) -> str:
+                older_than: Optional[str] = None, limit: int = PAGE_LIMIT) -> str:
     """The query string of one page (without `?`). The venue counts milliseconds, the page seconds.
 
-    The first page carries the whole window; an older page is asked for by `before` (the oldest billId already loaded)
+    The first page carries the whole window; an older page is asked for by `after` (the oldest billId already loaded)
     alone, so the venue never has to combine the two filters.
     """
     params = [('instType', inst_type), ('instId', inst_id)]
-    if before:
-        params.append(('before', str(before)))
+    if older_than:
+        # Deepcoin's docs say `before` pages to older fills, but the venue behaves like OKX (probed 2026-11-17 with a
+        # real read-only key): `before=<billId>` returns the newest page again, `after=<billId>` returns the fills
+        # older than that bill. So the older-page cursor goes out as `after`.
+        params.append(('after', str(older_than)))
     else:
         params.append(('begin', str(int(begin) * 1000)))
         if end:
@@ -245,7 +248,7 @@ def _number(value) -> Optional[float]:
 
 
 def page_oldest_bill(rows) -> Optional[str]:
-    """The smallest `billId` of one page: the cursor of the page before it (`before`), or None when there is none.
+    """The smallest `billId` of one page: the cursor of the page before it (sent as `after`), or None when there is none.
 
     The venue lists the newest fill first, so this is the last row's id; taking the smallest of the page is the same
     answer without trusting that order, and billIds that are not numbers fall back to the last row that has one.
@@ -315,17 +318,17 @@ def fetch_page(credentials: dict, query: str) -> list:
 
 
 def fetch_fills(request: dict, credentials: dict) -> list:
-    """Every fill of one resolved request: the first page carries the window, older pages page by `before`.
+    """Every fill of one resolved request: the first page carries the window, older pages page by `after` (see fills_query).
 
     Paging stops on the venue's own end (a page shorter than the page size), on a page whose oldest fill is already
     before `begin`, on a page that does not move the cursor, and after MAX_PAGES — whichever comes first, so one old
     chart can never walk the whole account history.
     """
     rows = []
-    before = None
+    older_than = None
     for _ in range(MAX_PAGES):
         page = fetch_page(credentials, fills_query(request['instType'], request['instId'], request['begin'],
-                                                   request['end'], before=before))
+                                                   request['end'], older_than=older_than))
         rows.extend(page)
         if len(page) < PAGE_LIMIT:
             break
@@ -333,9 +336,9 @@ def fetch_fills(request: dict, credentials: dict) -> list:
         if oldest_time is not None and oldest_time < request['begin'] * 1000:
             break
         oldest = page_oldest_bill(page)
-        if not oldest or oldest == before:
+        if not oldest or oldest == older_than:
             break
-        before = oldest
+        older_than = oldest
     return parse_fills(rows, request['instId'], request['begin'], request['end'])
 
 

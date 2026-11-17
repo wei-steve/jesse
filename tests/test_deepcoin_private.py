@@ -216,9 +216,9 @@ def test_anything_outside_the_whitelist_is_a_readable_400():
 def test_the_first_page_carries_the_window_and_older_pages_only_the_cursor():
     first = deepcoin_private.fills_query('SWAP', 'BTC-USDT-SWAP', 1794835200, 1794841200)
     assert first == 'instType=SWAP&instId=BTC-USDT-SWAP&begin=1794835200000&end=1794841200000&limit=100'
-    older = deepcoin_private.fills_query('SWAP', 'BTC-USDT-SWAP', 1794835200, 1794841200, before='7999001')
-    # The cursor alone: the venue never has to combine `before` with the window (the window is enforced locally).
-    assert older == 'instType=SWAP&instId=BTC-USDT-SWAP&before=7999001&limit=100'
+    older = deepcoin_private.fills_query('SWAP', 'BTC-USDT-SWAP', 1794835200, 1794841200, older_than='7999001')
+    # The cursor alone (sent as `after`, the venue's real older-page parameter): it never has to combine it with the window (the window is enforced locally).
+    assert older == 'instType=SWAP&instId=BTC-USDT-SWAP&after=7999001&limit=100'
 
 
 def test_one_page_goes_out_signed_with_the_query_in_the_signed_path(monkeypatch):
@@ -316,7 +316,7 @@ def test_paging_follows_the_oldest_bill_id_until_the_page_reaches_past_begin(mon
     deepcoin_private.fetch_fills(deepcoin_private.resolve_request('swap', 'BTC-USDT', 1794835200), {'KEY': KEY})
     assert len(queries) == 2
     # The second page asks for what is older than the oldest bill of the first, and only that.
-    assert 'before=7901' in queries[1] and 'begin=' not in queries[1] and 'end=' not in queries[1]
+    assert 'after=7901' in queries[1] and 'begin=' not in queries[1] and 'end=' not in queries[1]
 
 
 def test_paging_never_runs_more_than_max_pages(monkeypatch):
