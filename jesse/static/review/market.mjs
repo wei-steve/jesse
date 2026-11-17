@@ -7,44 +7,44 @@
 // yields have no push at all: CNBC's one-minute series and its quote are polled every 15 seconds.
 // The chart behaviour (range linking, price zoom, snapshots) and the overlays (the review page's display settings)
 // are reused from the review/finder modules instead of being reimplemented.
-import { t as createChart } from './lightweight-charts.mjs?v=20261117k';
-import { linkTimeRanges } from './data.mjs?v=20261117k';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261117k';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261117k';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261117k';
+import { t as createChart } from './lightweight-charts.mjs?v=20261117l';
+import { linkTimeRanges } from './data.mjs?v=20261117l';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261117l';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261117l';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261117l';
 import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages, okxCandleChannels, openOkxKlines,
-  openOkxTicker, openOkxTickers, openDeepcoinTicker, openDeepcoinTickers } from './live-price.mjs?v=20261117k';
-import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117k';
-import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261117k';
+  openOkxTicker, openOkxTickers, openDeepcoinTicker, openDeepcoinTickers } from './live-price.mjs?v=20261117l';
+import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117l';
+import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261117l';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, MARKETS, MARKET_SOURCES, OKX_SOURCE, YIELD_SOURCE, YIELD_INSTRUMENTS,
   DEFAULT_YIELD_SYMBOL, YIELD_POLL_RANGE, aggregateCandles, candleRequest, cnbcSymbolOf, exchangeOf, instrumentName,
   isYieldSource, marketLabel, marketsOf, mergeYieldBars, mergeYieldDailyClose, normalizeMarket, normalizeYieldSymbol,
   parseCnbcBars, parseCnbcQuote, parseMarketCandles, restoreSource, sessionIndicator, sessionTail, signedPoints,
-  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261117k';
+  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261117l';
 import { MARKET_KEYS, MARKET_TIMEFRAMES, MAX_BARS, MAX_WATCHLIST, PRODUCT_PAGE, PROXY_CANDLES,
   PROXY_TICKERS, aggregateAnswer, addToWatchlist, cnbcChartUrl, cnbcQuoteUrl, defaultSymbolFor, endTimeBefore,
   filterProducts, klinesUrlFor, mergeCandles, miniTickerStreamUrl, pageSizeOf, parseKlines, parseMiniTicker,
   parseOkxCandles, proxyTickerRows, removeFromWatchlist, moveWatchItem, orderTimeframes, restoreAsideTab,
   restoreListMarket, restoreSelection, restoreTimeframes, restoreWatchlist, sameWatchItem, shiftLogical,
-  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261117k';
+  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261117l';
 // Candle notes (double-click a bar): the same box, key, 「注」 markers and stored file as the factor finder; the shared
 // module is why a note written on one page shows up on the other.
 import { barLabel, barsFor, createBarNoteBox, createBookPicker, barNoteBody, barNoteKey, barNoteOf, filterNoteRows,
   noteDigest, noteIdentity, noteMarkers, noteRowsFrom, noteSummary, noteTimeText, noteWhere, rememberNote, snapshotOf
-  } from './bar-notes.mjs?v=20261117k';
+  } from './bar-notes.mjs?v=20261117l';
 // The open 备注本 (`storage/labels/<book>.jsonl`): the same notebook as the factor finder, kept in one localStorage key.
-import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261117k';
+import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261117l';
 // The owner's own Deepcoin fills (T-59): 「我的成交」 marks his 开多 / 平多 / 开空 / 平空 on the candles of any crypto
 // source. The instrument mapping, the per-candle buckets, the markers and their line under the chart are pure functions
 // in market-fills.mjs; this page owns the request and the polling.
 import { FILLS_ENDPOINT, FILLS_KEY, FILLS_NOT_CONFIGURED, FILLS_POLL_MS, FILLS_WAIT_ENDPOINT, applyFillsWait,
   bucketFills, configuredOf, fillGroupsText, fillLabelsFit, fillsHave, fillsProgressText, fillsRequest, fillsStatusLine,
   fillsStreamText, fillsWaitBackoff, fillsWaitBody, mergeFillRows, mergeMarkers, parseFills }
-  from './market-fills.mjs?v=20261117k';
+  from './market-fills.mjs?v=20261117l';
 // The 价位 marks (T-62): one small triangle / circle per order at its own average price, drawn as a series primitive so
 // a mark sits on the price instead of under the candle, and switched on / off per timeframe (1h / 4h / 1D start off).
 import { FILL_PRICES_KEY, FillPricesPrimitive, fillArrowMarkers, fillPriceMarksOn, orderMarks, orderMarksText,
-  readFillPrices, toggleFillPrices } from './fill-prices.mjs?v=20261117k';
+  readFillPrices, toggleFillPrices } from './fill-prices.mjs?v=20261117l';
 
 const $ = id => document.getElementById(id);
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
@@ -811,8 +811,8 @@ function paintWatchlist() {
     const button = document.createElement('button');
     button.type = 'button'; button.className = 'watch-main';
     button.setAttribute('aria-label', `看 ${item.symbol}（${itemTag(item)}）的行情`);
-    // Two lines (owner's layout, 2026-11-17): the venue in small type on top, then name · price · change on one line,
-    // the price and the change right-aligned in fixed columns so the numbers of every row line up.
+    // Two lines (owner's layout, 2026-11-17): name · price · change on one line, the price and the change right-aligned
+    // so the numbers of every row line up; under it the venue in small type, right-aligned.
     const tag = document.createElement('span');
     tag.className = 'watch-tag';
     tag.textContent = mixed ? itemTag(item) : (item.market ? marketLabel(item.market) : '美债');
@@ -823,7 +823,7 @@ function paintWatchlist() {
     const price = document.createElement('span'); price.className = 'watch-last';
     const change = document.createElement('span'); change.className = 'watch-change';
     line.append(name, price, change);
-    button.append(tag, line);
+    button.append(line, tag);
     button.onclick = () => openSelection(item.source, item.market, item.symbol);
     const remove = document.createElement('button');
     remove.type = 'button'; remove.className = 'watch-del'; remove.textContent = '×';
