@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, OKX_SOURCE, YIELD_SOURCE } from '../jesse/static/review/market-sources.mjs';
 import { BAR_NOTE_COLOR } from '../jesse/static/review/labels.mjs';
 import { BUY_MARKER_COLOR, FILLS_BACKFILLING, FILLS_BACKFILLING_EMPTY, FILLS_KEY, FILLS_NOT_CONFIGURED,
-  SELL_MARKER_COLOR, bucketFills, configuredOf, fillAction, fillGroupText, fillGroupsText, fillKey, fillMarkers,
+  SELL_MARKER_COLOR, bucketFills, configuredOf, fillLabelsFit, fillAction, fillGroupText, fillGroupsText, fillKey, fillMarkers,
   fillsBase, fillsHave, fillsInstrument, fillsProgressText, fillsRequest, fillsStamp, mergeFillRows, mergeMarkers,
   parseFills }
   from '../jesse/static/review/market-fills.mjs';
@@ -147,7 +147,7 @@ test('a buy group is a green up arrow below the candle, a sell group a red down 
   // Only the candles that are drawn: the second bucket is not in this chart's history.
   assert.equal(markers.length, 1);
   assert.deepEqual(markers[0], { time: 1794839400, position: 'belowBar', color: BUY_MARKER_COLOR,
-    shape: 'arrowUp', text: '开多' });
+    shape: 'arrowUp', text: '开多2' });
   const sell = fillMarkers(buckets)[1];
   assert.deepEqual(sell, { time: 1794840300, position: 'aboveBar', color: SELL_MARKER_COLOR,
     shape: 'arrowDown', text: '平多' });
@@ -160,6 +160,26 @@ test('a buy group is a green up arrow below the candle, a sell group a red down 
     ['开空', 'aboveBar', 'arrowDown'], ['平空', 'belowBar', 'arrowUp']]);
 });
 
+test('one candle gets at most one arrow per side; the text sums its actions, and zoomed out it has none', () => {
+  const busy = bucketFills([
+    { time: 1794838800, price: 10, size: 1, side: 'buy', posSide: 'long', fee: 0, feeCcy: '' },
+    { time: 1794838810, price: 10, size: 1, side: 'buy', posSide: 'long', fee: 0, feeCcy: '' },
+    { time: 1794838820, price: 10, size: 1, side: 'buy', posSide: 'short', fee: 0, feeCcy: '' },
+    { time: 1794838830, price: 10, size: 1, side: 'sell', posSide: 'short', fee: 0, feeCcy: '' },
+    { time: 1794838840, price: 10, size: 1, side: 'sell', posSide: 'long', fee: 0, feeCcy: '' },
+  ], 15);
+  const labelled = fillMarkers(busy);
+  assert.equal(labelled.length, 2);
+  assert.deepEqual(labelled.map(marker => [marker.position, marker.text]).sort(),
+    [['aboveBar', labelled.find(m => m.position === 'aboveBar').text], ['belowBar', '开多2 平空']].sort());
+  assert.match(labelled.find(m => m.position === 'aboveBar').text, /^(开空 平多|平多 开空)$/);
+  assert.deepEqual(fillMarkers(busy, () => true, { labels: false }).map(marker => marker.text), ['', '']);
+  // Text only when every candle has room for it.
+  assert.equal(fillLabelsFit(800, 20), true);
+  assert.equal(fillLabelsFit(530, 40), false);
+  assert.equal(fillLabelsFit(NaN, 20), false);
+});
+
 test('the note markers and the fill markers are drawn together, oldest first, neither dropped', () => {
   const notes = [
     { time: 1794839400, position: 'aboveBar', shape: 'square', color: BAR_NOTE_COLOR, text: '注' },
@@ -167,7 +187,7 @@ test('the note markers and the fill markers are drawn together, oldest first, ne
   ];
   const merged = mergeMarkers(notes, fillMarkers(bucketFills(FILLS, 15)));
   assert.deepEqual(merged.map(marker => [marker.time, marker.text]),
-    [[1794839400, '注'], [1794839400, '开多'], [1794840300, '平多'], [1794844800, '注']]);
+    [[1794839400, '注'], [1794839400, '开多2'], [1794840300, '平多'], [1794844800, '注']]);
   // A note and a fill on the same candle are both there: the stable sort keeps the note first, as it was passed.
   assert.equal(merged.filter(marker => marker.time === 1794839400).length, 2);
   // Junk lists are skipped instead of becoming markers without a time.

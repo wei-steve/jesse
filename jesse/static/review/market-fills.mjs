@@ -5,7 +5,7 @@
 // runs every function here with node. The instrument mapping is the interesting part: the fills belong to the owner's
 // Deepcoin account, but a BTC trade is the same trade whichever venue the chart is showing, so Binance's `BTCUSDT`,
 // OKX's `BTC-USDT-SWAP` and Deepcoin's own ids all name the same `{market, symbol}` of the private endpoint.
-import { BINANCE_SOURCE, DEEPCOIN_SOURCE, OKX_SOURCE } from './market-sources.mjs?v=20261117c';
+import { BINANCE_SOURCE, DEEPCOIN_SOURCE, OKX_SOURCE } from './market-sources.mjs?v=20261117e';
 
 // The 「我的成交」 checkbox: on unless the owner turned it off, so the markers are there when the keys are filled in.
 export const FILLS_KEY = 'jesse.market.fills.v1';
@@ -226,20 +226,40 @@ export function bucketFills(fills, interval) {
   }));
 }
 
-/** The markers of a bucket list: a buy-side group below the candle (green, up), a sell-side group above it (red, down). */
-export function fillMarkers(buckets, has = () => true) {
+/**
+ * The markers of a bucket list: at most two per candle — one green up arrow below it for everything bought there
+ * (开多 / 平空), one red down arrow above it for everything sold (开空 / 平多). The owner trades both ways many times a
+ * candle, and one marker per action stacked four labels on almost every 1h / 4h candle until the candles themselves
+ * were hidden (2026-11-17), so the actions of one side share one arrow.
+ *
+ * `labels` says whether the arrow carries text: `开多2 平空1` (an action's count only when it is more than one). The
+ * chart passes false while it is zoomed out (see FILL_LABEL_PX), where any text would overlap the next candle's; the
+ * line under the chart still lists every group of the candle under the crosshair.
+ */
+export function fillMarkers(buckets, has = () => true, { labels = true } = {}) {
   const markers = [];
   for (const bucket of Array.isArray(buckets) ? buckets : []) {
     if (!Number.isFinite(bucket?.time) || !has(bucket.time)) continue;
-    for (const group of bucket.groups ?? []) {
-      const buy = group.kind === 'buy';
+    for (const kind of ['sell', 'buy']) {
+      const groups = (bucket.groups ?? []).filter(group => (group.kind === 'buy') === (kind === 'buy'));
+      if (!groups.length) continue;
+      const buy = kind === 'buy';
+      const text = labels ? groups.map(group => `${group.label}${group.count > 1 ? group.count : ''}`).join(' ') : '';
       markers.push({ time: bucket.time, position: buy ? 'belowBar' : 'aboveBar',
-        color: buy ? BUY_MARKER_COLOR : SELL_MARKER_COLOR, shape: buy ? 'arrowUp' : 'arrowDown',
-        text: group.label });
+        color: buy ? BUY_MARKER_COLOR : SELL_MARKER_COLOR, shape: buy ? 'arrowUp' : 'arrowDown', text });
     }
   }
   return markers;
 }
+
+// Arrows carry their 开多 / 平空 text only while each candle is at least this many pixels wide: narrower, the text of one
+// candle (「开多107 平空39」 on a busy 4h candle) runs into its neighbours'. A pixel width, not a bar count, because the
+// same 40 bars are roomy on a maximised chart and cramped in the 2x2 grid.
+export const FILL_LABEL_PX = 40;
+
+/** Whether arrows get text at this zoom: `width` px of plot showing `bars` candles. */
+export const fillLabelsFit = (width, bars) => Number.isFinite(width) && Number.isFinite(bars) && bars > 0
+  && width / bars >= FILL_LABEL_PX;
 
 /**
  * Several marker lists as one, oldest first: the charts draw the purple 「注」 and these fills with one `setMarkers`
