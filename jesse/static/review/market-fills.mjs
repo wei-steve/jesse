@@ -5,7 +5,7 @@
 // runs every function here with node. The instrument mapping is the interesting part: the fills belong to the owner's
 // Deepcoin account, but a BTC trade is the same trade whichever venue the chart is showing, so Binance's `BTCUSDT`,
 // OKX's `BTC-USDT-SWAP` and Deepcoin's own ids all name the same `{market, symbol}` of the private endpoint.
-import { BINANCE_SOURCE, DEEPCOIN_SOURCE, OKX_SOURCE } from './market-sources.mjs?v=20261117e';
+import { BINANCE_SOURCE, DEEPCOIN_SOURCE, OKX_SOURCE } from './market-sources.mjs?v=20261117f';
 
 // The 「我的成交」 checkbox: on unless the owner turned it off, so the markers are there when the keys are filled in.
 export const FILLS_KEY = 'jesse.market.fills.v1';
