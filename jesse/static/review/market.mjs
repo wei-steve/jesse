@@ -7,38 +7,39 @@
 // yields have no push at all: CNBC's one-minute series and its quote are polled every 15 seconds.
 // The chart behaviour (range linking, price zoom, snapshots) and the overlays (the review page's display settings)
 // are reused from the review/finder modules instead of being reimplemented.
-import { t as createChart } from './lightweight-charts.mjs?v=20261117b';
-import { linkTimeRanges } from './data.mjs?v=20261117b';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261117b';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261117b';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261117b';
+import { t as createChart } from './lightweight-charts.mjs?v=20261117c';
+import { linkTimeRanges } from './data.mjs?v=20261117c';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261117c';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261117c';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261117c';
 import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages, okxCandleChannels, openOkxKlines,
-  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261117b';
-import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117b';
-import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261117b';
+  openOkxTicker, openOkxTickers, openDeepcoinTicker } from './live-price.mjs?v=20261117c';
+import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117c';
+import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261117c';
 import { BINANCE_SOURCE, DEEPCOIN_SOURCE, MARKETS, MARKET_SOURCES, OKX_SOURCE, YIELD_SOURCE, YIELD_INSTRUMENTS,
   DEFAULT_YIELD_SYMBOL, YIELD_POLL_RANGE, aggregateCandles, candleRequest, cnbcSymbolOf, exchangeOf, instrumentName,
   isYieldSource, marketLabel, marketsOf, mergeYieldBars, mergeYieldDailyClose, normalizeMarket, normalizeYieldSymbol,
   parseCnbcBars, parseCnbcQuote, parseMarketCandles, restoreSource, sessionIndicator, sessionTail, signedPoints,
-  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261117b';
+  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261117c';
 import { MARKET_KEYS, MARKET_TIMEFRAMES, MAX_BARS, MAX_WATCHLIST, PRODUCT_PAGE, PROXY_CANDLES,
   PROXY_TICKERS, aggregateAnswer, addToWatchlist, cnbcChartUrl, cnbcQuoteUrl, defaultSymbolFor, endTimeBefore,
   filterProducts, klinesUrlFor, mergeCandles, miniTickerStreamUrl, pageSizeOf, parseKlines, parseMiniTicker,
   parseOkxCandles, proxyTickerRows, removeFromWatchlist, moveWatchItem, orderTimeframes, restoreAsideTab,
   restoreListMarket, restoreSelection, restoreTimeframes, restoreWatchlist, sameWatchItem, shiftLogical,
-  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261117b';
+  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261117c';
 // Candle notes (double-click a bar): the same box, key, 「注」 markers and stored file as the factor finder; the shared
 // module is why a note written on one page shows up on the other.
 import { barLabel, barsFor, createBarNoteBox, createBookPicker, barNoteBody, barNoteKey, barNoteOf, filterNoteRows,
   noteDigest, noteIdentity, noteMarkers, noteRowsFrom, noteSummary, noteTimeText, noteWhere, rememberNote, snapshotOf
-  } from './bar-notes.mjs?v=20261117b';
+  } from './bar-notes.mjs?v=20261117c';
 // The open 备注本 (`storage/labels/<book>.jsonl`): the same notebook as the factor finder, kept in one localStorage key.
-import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261117b';
+import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261117c';
 // The owner's own Deepcoin fills (T-59): 「我的成交」 marks his 开多 / 平多 / 开空 / 平空 on the candles of any crypto
 // source. The instrument mapping, the per-candle buckets, the markers and their line under the chart are pure functions
 // in market-fills.mjs; this page owns the request and the polling.
 import { FILLS_ENDPOINT, FILLS_KEY, FILLS_NOT_CONFIGURED, FILLS_POLL_MS, bucketFills, configuredOf, fillGroupsText,
-  fillMarkers, fillsProgressText, fillsRequest, mergeMarkers, parseFills } from './market-fills.mjs?v=20261117b';
+  fillMarkers, fillsHave, fillsProgressText, fillsRequest, mergeFillRows, mergeMarkers,
+  parseFills } from './market-fills.mjs?v=20261117c';
 
 const $ = id => document.getElementById(id);
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
@@ -1475,12 +1476,18 @@ function syncFillsPolling() {
  * missing the older part of the window: `complete: false` says how far back the store got (`covered_from`), the markers
  * of what is there are drawn anyway, and the next poll continues the backfill. A venue that refused the request answers
  * with the stored fills plus an `error`, which is shown instead of the backfill line.
+ *
+ * The first read of an instrument asks for the whole window; every read after it sends the range the page already has
+ * (`fillsHave`) and merges the increment in (T-61). The range is not reset when the window grows left — `begin` moves
+ * and the backend then returns the older fills the backfill has added — only when the instrument changes, because those
+ * fills belong to another instrument.
  */
 async function loadFills() {
   if (!fillsOn || !fillsCharts()) { clearFills(); return; }
   const begin = fillsWindowStart();
   if (begin === null) return;
-  const body = fillsRequest(source, market, symbol, begin);
+  const have = fillsHave(fillRows);
+  const body = fillsRequest(source, market, symbol, begin, null, have);
   if (!body) { clearFills(); return; }
   const version = loadVersion;
   try {
@@ -1492,7 +1499,9 @@ async function loadFills() {
       if (!fillsNoticeShown) { fillsNoticeShown = true; status(FILLS_NOT_CONFIGURED); }
       return;
     }
-    fillRows = parseFills(answer);
+    // An incremental answer is only the part that changed: it is merged into what is drawn, not assigned over it.
+    // (A backend from before T-61 answers a full list; merging that is the same answer.)
+    fillRows = mergeFillRows(have ? fillRows : [], parseFills(answer), body.begin);
     fillsBegin = body.begin;
     paintFills();
     // '"我的成交：正在补历史，已到 <date>" while the store still walks into the past (the markers of what it has are drawn

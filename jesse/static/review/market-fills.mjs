@@ -5,7 +5,7 @@
 // runs every function here with node. The instrument mapping is the interesting part: the fills belong to the owner's
 // Deepcoin account, but a BTC trade is the same trade whichever venue the chart is showing, so Binance's `BTCUSDT`,
 // OKX's `BTC-USDT-SWAP` and Deepcoin's own ids all name the same `{market, symbol}` of the private endpoint.
-import { BINANCE_SOURCE, DEEPCOIN_SOURCE, OKX_SOURCE } from './market-sources.mjs?v=20261117b';
+import { BINANCE_SOURCE, DEEPCOIN_SOURCE, OKX_SOURCE } from './market-sources.mjs?v=20261117c';
 
 // The 「我的成交」 checkbox: on unless the owner turned it off, so the markers are there when the keys are filled in.
 export const FILLS_KEY = 'jesse.market.fills.v1';
@@ -52,14 +52,26 @@ export function fillsInstrument(source, market, symbol) {
  * The body of `POST /review/market/fills` for one chart, or null for a chart with no counterpart. `begin` is the open
  * time (seconds) of the oldest candle the page has loaded — the fills before it could not be drawn; `end` is left out
  * unless the caller wants a closed window.
+ *
+ * `have` (T-61) is `{from, to}`, the range the page already has (`fillsHave`): sending it turns the answer into the
+ * increment of that range. The first read of an instrument, or the read after switching to another one, has nothing to
+ * send and asks for the whole window.
  */
-export function fillsRequest(source, market, symbol, begin, end = null) {
+export function fillsRequest(source, market, symbol, begin, end = null, have = null) {
   const instrument = fillsInstrument(source, market, symbol);
   const start = Math.floor(Number(begin));
   if (!instrument || !Number.isFinite(start) || start <= 0) return null;
   const stop = Math.floor(Number(end));
-  return { market: instrument.market, symbol: instrument.symbol, begin: start,
+  const body = { market: instrument.market, symbol: instrument.symbol, begin: start,
     ...(Number.isFinite(stop) && stop >= start ? { end: stop } : {}) };
+  const from = Math.floor(Number(have?.from));
+  const to = Math.floor(Number(have?.to));
+  // Both edges or neither: the route refuses half a range, and a page without fills has no range to name.
+  if (Number.isFinite(from) && Number.isFinite(to) && from > 0 && to >= from) {
+    body.have_from = from;
+    body.have_to = to;
+  }
+  return body;
 }
 
 /** The fills of one answer as sane fills, oldest first. A row without a price / size / time is dropped, not drawn. */
@@ -83,6 +95,49 @@ export function parseFills(payload) {
 
 /** Whether the answer says the project has the three credentials (an unconfigured project sends no fills at all). */
 export const configuredOf = payload => payload?.configured === true;
+
+/**
+ * The oldest and newest second of the fills the page already drew, `{from, to}`, or null when it has none — which is
+ * also the state after switching to another instrument, so that read asks for the whole window.
+ */
+export function fillsHave(fills) {
+  let from = null, to = null;
+  for (const fill of Array.isArray(fills) ? fills : []) {
+    const time = Number(fill?.time);
+    if (!Number.isFinite(time) || time <= 0) continue;
+    if (from === null || time < from) from = time;
+    if (to === null || time > to) to = time;
+  }
+  return from === null ? null : { from, to };
+}
+
+/**
+ * The identity of one fill on the page: its trade id, or the row's own numbers when the answer has none (a venue
+ * without trade ids). Two answers that overlap — the 2-minute edge the backend re-sends, a backfill that repeats a
+ * page — must not draw the same trade twice.
+ */
+export function fillKey(fill) {
+  const tradeId = String(fill?.tradeId ?? '');
+  return tradeId || [fill?.ordId ?? '', fill?.time ?? '', fill?.price ?? '', fill?.size ?? ''].join('|');
+}
+
+/**
+ * The page's fills after one answer (T-61): what it already had plus the increment, one row per fill, oldest first,
+ * nothing older than the window's own start (`begin`, the left edge the markers could be drawn on). An incremental
+ * answer is merged, never assigned: the rows it does not repeat are still on screen.
+ */
+export function mergeFillRows(rows, incoming, begin = null) {
+  const start = Number(begin);
+  const hasStart = begin !== null && begin !== undefined && Number.isFinite(start);
+  const merged = new Map();
+  for (const fill of [...(Array.isArray(rows) ? rows : []), ...(Array.isArray(incoming) ? incoming : [])]) {
+    const time = Number(fill?.time), price = Number(fill?.price), size = Number(fill?.size);
+    if (![time, price, size].every(Number.isFinite) || time <= 0 || price <= 0 || size <= 0) continue;
+    if (hasStart && time < Math.floor(start)) continue;
+    merged.set(fillKey(fill), fill);
+  }
+  return [...merged.values()].sort((a, b) => a.time - b.time || fillKey(a).localeCompare(fillKey(b)));
+}
 
 /** UTC `2026-11-17 08:30` of a second stamp, the same shape the charts use for a candle time ('' when it is not one). */
 export function fillsStamp(seconds) {

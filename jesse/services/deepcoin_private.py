@@ -17,8 +17,12 @@ little of the history when the chart's window reaches further back than the olde
 walking backwards answers with `complete: false` and the oldest fill it has (`covered_from`), so the page can say where
 it is while it keeps drawing what is already there.
 
+A page that already drew a range sends it back as `have_from` / `have_to` and gets only the increment (the fills newer
+than that edge, plus the older ones the backfill has just added), flagged `partial: true`: a 13,000-fill history is one
+large first answer, not one per 30-second poll. A sync that changes nothing leaves the file untouched.
+
 Everything that decides what a request means and what comes back is a pure function (`parse_env`, `sign`,
-`resolve_request`, `fills_query`, `parse_fills`, `page_oldest_bill`, `merge_fills`, `store_answer`), so
+`resolve_request`, `fills_query`, `parse_fills`, `page_oldest_bill`, `merge_fills`, `store_signature`, `store_answer`), so
 `tests/test_deepcoin_private.py` runs without a network and without any real key. `fetch_page` is the only function that
 goes out; a sync within 5 seconds of the previous one answers from the store alone, because the page polls every 30
 seconds, asks again when its window grows left, and two tabs must not double the venue's load.
@@ -60,6 +64,10 @@ BACKFILL_PAGES = 10
 # A sync this soon after the previous one is answered from the store: the page polls every 30 seconds and asks again
 # when its window grows left, so this only ever merges callers (two tabs, a reload) into one venue request.
 SYNC_TTL = 5.0
+# The page already has the fills up to `have_to`, so a fill 2 minutes before that edge is sent again (T-61): the venue's
+# clock and the page's own last read can disagree by a little, and a fill that lands in the overlap is deduplicated by
+# the page anyway — a missed one would stay missing until the page was reloaded.
+HAVE_OVERLAP = 120
 TIMEOUT = 10
 # Deepcoin's edge refuses requests' own User-Agent the way its public endpoints do (see market_sources), so the private
 # calls go out with the bare browser token. It says nothing about the owner; the key is in the headers.
@@ -151,12 +159,15 @@ def sign(secret: str, timestamp: str, method: str, request_path: str, body: str 
 
 # --- One fills request --------------------------------------------------------------------------------------------
 
-def resolve_request(market, symbol, begin, end=None) -> dict:
+def resolve_request(market, symbol, begin, end=None, have_from=None, have_to=None) -> dict:
     """The `instType` / `instId` / range of one fills request, or DeepcoinError(400) for anything else.
 
     The page names the instrument the way the market list does (`BTC-USDT`) and the market separately; `swap` maps to
     the perpetual (`BTC-USDT-SWAP`). The result has to pass the same whitelist as the public Deepcoin proxy, so nothing
     but a USDT pair of that market can reach the signed endpoint.
+
+    `have_from` / `have_to` (T-61) are the seconds the page already has fills for: both or neither, because an answer is
+    only an increment when there is an edge to cut it against on both sides.
     """
     market = str(market or '').strip().lower()
     if market not in MARKET_TYPES:
@@ -171,8 +182,12 @@ def resolve_request(market, symbol, begin, end=None) -> dict:
     finish = None if end is None else _seconds(end, 'end')
     if finish is not None and finish < start:
         raise DeepcoinError('end 不能早于 begin')
+    held_from = None if have_from is None else _seconds(have_from, 'have_from')
+    held_to = None if have_to is None else _seconds(have_to, 'have_to')
+    if (held_from is None) != (held_to is None):
+        raise DeepcoinError('have_from 和 have_to 要一起给（页面已有的成交时间范围）')
     return {'market': market, 'instType': MARKET_TYPES[market], 'symbol': base, 'instId': instrument,
-            'begin': start, 'end': finish}
+            'begin': start, 'end': finish, 'have_from': held_from, 'have_to': held_to}
 
 
 def _seconds(value, name: str) -> int:
@@ -451,6 +466,14 @@ def write_store(inst_id: str, store: dict, folder: Optional[str] = None) -> None
                 pass
 
 
+def store_signature(store: dict) -> tuple:
+    """What a rewrite of the store has to change to be worth making: the fills (one key each, oldest first) and the
+    three markers beside them. `updated` is deliberately left out — a sync that found nothing new may keep the stamp of
+    the last real change, which is what the file's mtime then still says."""
+    return (tuple(fill_key(fill) for fill in store.get('fills') or []), store.get('newest_bill'),
+            store.get('oldest_bill'), store.get('history_end') is True)
+
+
 def fill_key(fill: dict) -> str:
     """The identity of one fill in the store: its trade id, or the row's own numbers when the venue sent none."""
     trade_id = str(fill.get('tradeId') or '').strip()
@@ -572,29 +595,38 @@ def store_answer(store: dict, request: dict, cached: bool = False, error: Option
     `covered_from` is the oldest fill the store has (seconds) — and None once `history_end` says nothing older exists, so
     the page only shows a 「正在补历史」 line while a region really is still missing. `complete` says the window's own
     `begin` is inside what the store has, or that no older fill exists at all.
+
+    With `have_from` / `have_to` the answer is the increment of a page that already drew that range (T-61): the fills
+    newer than `have_to` (with HAVE_OVERLAP of slack) plus the ones older than `have_from` (history the backfill has just
+    pulled). Everything still has to be inside `[begin, end]`, so a wider chart window returns the older part too.
     """
     begin, end = request['begin'], request['end']
     fills = [fill for fill in store['fills']
              if fill['time'] >= begin and (end is None or fill['time'] <= end)]
+    partial = request.get('have_from') is not None and request.get('have_to') is not None
+    if partial:
+        newer_than = request['have_to'] - HAVE_OVERLAP
+        fills = [fill for fill in fills if fill['time'] > newer_than or fill['time'] < request['have_from']]
     oldest = store['fills'][0]['time'] if store['fills'] else None
     covered_from = None if store['history_end'] or oldest is None else oldest
     complete = bool(store['history_end'] or (covered_from is not None and covered_from <= begin))
     answer = {'configured': True, 'fills': fills, 'market': request['market'], 'symbol': request['symbol'],
-              'begin': begin, 'covered_from': covered_from, 'complete': complete,
+              'begin': begin, 'covered_from': covered_from, 'complete': complete, 'partial': partial,
               'history_end': store['history_end'], 'fetched_at': int(time.time()), 'cached': cached}
     if error:
         answer['error'] = error
     return answer
 
 
-def read_fills(market, symbol, begin, end=None) -> dict:
-    """The answer of `POST /review/market/fills`: `{configured, fills, covered_from, complete}` (plus what was asked).
+def read_fills(market, symbol, begin, end=None, have_from=None, have_to=None) -> dict:
+    """The answer of `POST /review/market/fills`: `{configured, fills, covered_from, complete, partial}` (plus what
+    was asked).
 
     An unconfigured project answers `{configured: False, fills: []}` — nothing to explain to a reader, and nothing to
     request. The credentials are read here (every call), so a filled-in file works on the next poll. A venue that refuses
     the request is not a failed route: the stored fills are still returned, with an `error` saying why.
     """
-    request = resolve_request(market, symbol, begin, end)
+    request = resolve_request(market, symbol, begin, end, have_from, have_to)
     credentials = read_credentials()
     if credentials is None:
         return {'configured': False, 'fills': []}
@@ -604,16 +636,20 @@ def read_fills(market, symbol, begin, end=None) -> dict:
         cached = time.monotonic() - _SYNCED.get(inst_id, -SYNC_TTL) < SYNC_TTL
         error = None
         if not cached:
+            before = store_signature(store)
             try:
                 store = sync_store(store, request, credentials)
             except DeepcoinError as failure:
                 error = str(failure)
             else:
-                try:
-                    write_store(inst_id, store)
-                except OSError:
-                    # A project folder this process cannot write still draws this answer; the next sync starts from
-                    # whatever is on disk (a read-only volume is not a reason to lose the markers already read).
-                    pass
+                # A poll that brought no new fill and no older one (most of the page's 30-second reads) leaves the file
+                # alone: rewriting it every time is the slow part of a large store, and nothing in it would change.
+                if store_signature(store) != before:
+                    try:
+                        write_store(inst_id, store)
+                    except OSError:
+                        # A project folder this process cannot write still draws this answer; the next sync starts from
+                        # whatever is on disk (a read-only volume is not a reason to lose the markers already read).
+                        pass
             _SYNCED[inst_id] = time.monotonic()
         return store_answer(store, request, cached=cached, error=error)
