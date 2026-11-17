@@ -106,7 +106,8 @@ export function contextPointsFor(charts) {
 // aligned. set(range) gives every chart exactly that range (a new window choice / a fresh build);
 // set(range, { keepSpan: true, at }) moves every chart so the moment at fraction `at` of `range` sits at the
 // same fraction of its own span (selecting a trade/signal keeps each chart's zoom).
-export function linkTimeRanges(panels, onChange = () => {}, groupOf = panel => panel) {
+// rightPad: empty bars a follower may show right of its newest bar (the market page keeps 4, see showNewest).
+export function linkTimeRanges(panels, onChange = () => {}, groupOf = panel => panel, { rightPad = 4 } = {}) {
   let active = null;
   const spans = new Map(); // group -> seconds that group shows (set by set() and by the user's own zoom)
   const valid = range => range && typeof range.from === 'number' && typeof range.to === 'number' && range.to > range.from;
@@ -157,7 +158,14 @@ export function linkTimeRanges(panels, onChange = () => {}, groupOf = panel => p
     const current = scale.getVisibleLogicalRange();
     if (!current) return false;
     const index = indexAt(peer, anchor.time), width = current.to - current.from;
-    scale.setVisibleLogicalRange({ from: index - width * anchor.at, to: index - width * anchor.at + width });
+    // A follower never scrolls past its own newest bar plus the right pad (2026-11-17): dragging a higher timeframe
+    // in its empty future space puts a moment hours ahead under the pointer, and lining that moment up would push a
+    // lower timeframe's every bar off its left edge. It stops with its newest bars on screen instead.
+    const newest = ownerOf(peer).candles.length + rightPad;
+    let from = index - width * anchor.at;
+    const maxTo = Math.max(newest, current.to);
+    if (from + width > maxTo) from = maxTo - width;
+    scale.setVisibleLogicalRange({ from, to: from + width });
     return true;
   }
   for (const panel of panels) panel.chart.timeScale().subscribeVisibleTimeRangeChange(range => {

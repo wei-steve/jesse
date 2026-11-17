@@ -182,9 +182,14 @@ test('dragging one chart scrolls the other timeframes by bars and keeps their ca
   m5.emit({ from: 250 * 300, to: 350 * 300 });
   const at = 325 * 5 / 60;
   assert.deepEqual(h1.logicalWrites.at(-1), { from: at - 30, to: at + 10 });
-  // Past the newest 1h bar (99) the position keeps going into the empty space, same width.
+  // Past the newest 1h bar (99) the 1h chart stops with its newest bars on screen (100 bars + 4 pad), same width,
+  // instead of following into the empty space where none of its bars would show.
   m5.state.logical = { from: 6100, to: 6200 };
   linked.activate(m5);
   m5.emit({ from: 6100 * 300, to: 6200 * 300 });
-  assert.deepEqual(h1.logicalWrites.at(-1), { from: 512.5 - 20, to: 512.5 + 20 });
+  assert.deepEqual(h1.logicalWrites.at(-1), { from: 64, to: 104 });
+  // A follower the user already scrolled further right itself is not pulled back.
+  h1.state.logical = { from: 80, to: 120 };
+  m5.emit({ from: 6100 * 300, to: 6200 * 300 });
+  assert.deepEqual(h1.logicalWrites.at(-1), { from: 80, to: 120 });
 });
