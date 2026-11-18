@@ -87,6 +87,31 @@
     // REVIEW_VERSION: change it (and every "?v=" in the .mjs imports and the stylesheet link) whenever
     // any file in this folder changes. tests/review-version.test.mjs checks that they all match.
     const REVIEW_VERSION = '20261117p';
+    // 本页自带登录：没有登录凭证时，页头出现密码框，填一次（和 Jesse 登录是同一个密码、同一个凭证），不必去 Jesse 主页登录。
+    // 凭证和主页共用 localStorage 的 `main` 键，所以这里登录后主页也是已登录。
+    const hasToken = () => { try { return !!JSON.parse(localStorage.getItem('main') ?? '{}').authToken; } catch { return false; } };
+    if (!hasToken()) {
+      const form = document.createElement('form');
+      form.style.cssText = 'display:flex;gap:8px;align-items:center;margin-left:auto;font-size:13px';
+      form.innerHTML = '<span>登录后可用 Deepcoin、备注、我的成交、设置同步：</span><input type="password" placeholder="Jesse 密码" aria-label="密码" size="14" autocomplete="current-password"><button type="submit">登录</button><span class="login-msg" style="color:#e5484d"></span>';
+      form.addEventListener('submit', async event => {
+        event.preventDefault();
+        const msg = form.querySelector('.login-msg');
+        msg.textContent = '';
+        try {
+          const response = await fetch('/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: form.querySelector('input').value }) });
+          if (response.status === 401) { msg.textContent = '密码不对'; return; }
+          if (!response.ok) { msg.textContent = `登录失败（HTTP ${response.status}）`; return; }
+          const { auth_token: authToken } = await response.json();
+          let main = {};
+          try { main = JSON.parse(localStorage.getItem('main') ?? '{}') ?? {}; } catch { /* start fresh */ }
+          localStorage.setItem('main', JSON.stringify({ ...main, authToken }));
+          location.reload();
+        } catch (error) { msg.textContent = `连不上 Jesse：${error.message}`; }
+      });
+      document.querySelector('header').append(form);
+    }
     // Settings live in the project's storage/review-prefs.json too (T-58): bring the server's copy into localStorage
     // *before* the page module reads its own settings, so a new address / computer / browser opens with the saved ones.
     // No login token, or a server that does not answer within 3 seconds, keeps this browser's own settings.
