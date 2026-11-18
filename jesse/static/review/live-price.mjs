@@ -45,12 +45,30 @@ export function klineInterval(timeframe) {
 
 // One combined kline stream for every timeframe that has one: `…/stream?streams=<pair>@kline_3m/<pair>@kline_1h`.
 // Null when the exchange / symbol has no stream or none of `timeframes` is supported (nothing to subscribe to).
-export function klineStreamUrl(exchange, symbol, timeframes) {
+// When `beijingDaily` is true (used by the market page, not the finder), 1D subscribes to `@kline_1d@+08:00` on spot
+// and `@kline_8h` on perpetual futures (synthesized into Beijing 1D bars).
+export function klineStreamUrl(exchange, symbol, timeframes, { beijingDaily = false } = {}) {
   const make = STREAMS[exchange]?.kline;
   const pair = pairOf(symbol);
   if (!make || !pair) return null;
-  const intervals = [...new Set((Array.isArray(timeframes) ? timeframes : []).map(klineInterval).filter(Boolean))];
-  return intervals.length ? make(intervals.map(interval => `${pair}@kline_${interval}`).join('/')) : null;
+  const streams = [];
+  const seen = new Set();
+  for (const tf of Array.isArray(timeframes) ? timeframes : []) {
+    let stream = null;
+    if (beijingDaily && tf === '1D') {
+      if (exchange === 'Binance Spot') stream = `${pair}@kline_1d@+08:00`;
+      else if (exchange === 'Binance Perpetual Futures') stream = `${pair}@kline_8h`;
+    }
+    if (!stream) {
+      const interval = klineInterval(tf);
+      if (interval) stream = `${pair}@kline_${interval}`;
+    }
+    if (stream && !seen.has(stream)) {
+      seen.add(stream);
+      streams.push(stream);
+    }
+  }
+  return streams.length ? make(streams.join('/')) : null;
 }
 
 // The price of one aggTrade message (`p` is a decimal string), or null for anything else.
@@ -63,7 +81,7 @@ export function tradePrice(message) {
 // `time` is the bar's open in UTC seconds, `closed` says whether the exchange is done with it. Null for anything that
 // is not a full, sane kline of a timeframe we subscribed to (the stream name carries the interval).
 export function klineCandle(message) {
-  const interval = /@kline_([a-z0-9]+)$/.exec(String(message?.stream ?? ''))?.[1];
+  const interval = /@kline_([a-z0-9]+)(?:@\+08:00)?$/.exec(String(message?.stream ?? ''))?.[1];
   const tf = FINDER_LABELS.get(interval);
   const k = message?.data?.k;
   if (!tf || !k) return null;
@@ -159,9 +177,9 @@ export function openMessages(url, { onMessage, onState, silenceMs = 20000 }) {
 // the business channel, tickers on the public one; a websocket is not a cross-origin read, so the browser talks to
 // OKX itself. All of this was checked against the live venue on 2026-11-16.
 const OKX_WS = { business: 'wss://ws.okx.com/ws/v5/business', public: 'wss://ws.okx.com/ws/v5/public' };
-// `1Dutc` is OKX's UTC day bar; plain `1D` opens at the exchange's UTC+8 midnight.
+// `1D` opens at OKX's UTC+8 midnight (16:00 UTC); `1Dutc` is the UTC day bar.
 const OKX_CANDLE_CHANNELS = { '1m': 'candle1m', '3m': 'candle3m', '5m': 'candle5m', '15m': 'candle15m',
-  '30m': 'candle30m', '1h': 'candle1H', '4h': 'candle4H', '1D': 'candle1Dutc' };
+  '30m': 'candle30m', '1h': 'candle1H', '4h': 'candle4H', '1D': 'candle1D' };
 const OKX_CHANNEL_LABELS = new Map(Object.entries(OKX_CANDLE_CHANNELS).map(([label, channel]) => [channel, label]));
 
 /** The candle channel of one page timeframe, or null when OKX pushes none for it. */

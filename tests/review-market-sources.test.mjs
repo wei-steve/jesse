@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MARKET_SOURCES, DEFAULT_SOURCE, DEFAULT_MARKET, MARKETS, YIELD_SOURCE, BINANCE_SOURCE, OKX_SOURCE,
-  DEEPCOIN_SOURCE, migrateSource, restoreSource, sourceLabel, marketsOf, hasMarkets, normalizeMarket, defaultSymbolOf,
+  DEEPCOIN_SOURCE, BEIJING_OFFSET_SECONDS, barOpen, dayOffsetSeconds,
+  migrateSource, restoreSource, sourceLabel, marketsOf, hasMarkets, normalizeMarket, defaultSymbolOf,
   exchangeOf, isYieldSource, marketLabel, normalizeSymbol, normalizeInstId, symbolOf, instrumentName, candleRequest,
   BARS, YIELD_SYMBOLS, YIELD_INSTRUMENTS, DEFAULT_YIELD_SYMBOLS, normalizeYieldSymbol, cnbcSymbolOf, yieldRequest,
   YIELD_POLL_RANGE, aggregateCandles, mergeYieldBars, mergeYieldDailyClose, parseCnbcBars, parseCnbcQuote,
@@ -106,8 +107,8 @@ test('a row shows the base name, and a yield its own code', () => {
 test('each exchange\'s bar spelling of a panel timeframe', () => {
   assert.deepEqual(BARS[OKX_SOURCE]['1h'], '1H');
   assert.deepEqual(BARS[OKX_SOURCE]['4h'], '4H');
-  // The daily bar must be OKX's UTC one: plain 1D opens at the venue's UTC+8 midnight.
-  assert.deepEqual(BARS[OKX_SOURCE]['1D'], '1Dutc');
+  // Plain 1D on OKX opens at the venue's UTC+8 midnight (16:00 UTC), matching Deepcoin.
+  assert.deepEqual(BARS[OKX_SOURCE]['1D'], '1D');
   assert.equal(BARS[DEEPCOIN_SOURCE]['1D'], '1D');
   // Deepcoin has no 3m bar (checked 2026-11-16), so that panel asks for 1m and buckets three; OKX has one.
   assert.deepEqual(candleRequest(DEEPCOIN_SOURCE, '3m'), { interval: '1m', aggregate: 3 });
@@ -388,4 +389,28 @@ test('session indicators bridge the overnight gap and keep real times', () => {
   assert.equal(line[3].value, (4 + 5 + 6) / 3, 'the first bar after the gap averages with the bars before it');
   const tail = sessionTail(bars.slice(0, 9), bars[9], config, 60);
   assert.deepEqual(tail[0].point, { time: bars[9].time, value: (8 + 9 + 10) / 3 });
+});
+
+test('barOpen and dayOffsetSeconds align crypto 1D to UTC+8 midnight (16:00 UTC) and leave others UTC-aligned', () => {
+  assert.equal(BEIJING_OFFSET_SECONDS, 28800);
+  for (const src of [BINANCE_SOURCE, OKX_SOURCE, DEEPCOIN_SOURCE]) {
+    assert.equal(dayOffsetSeconds(1440, src), 28800, src);
+    assert.equal(dayOffsetSeconds(240, src), 0, src);
+    assert.equal(dayOffsetSeconds(60, src), 0, src);
+  }
+  assert.equal(dayOffsetSeconds(1440, YIELD_SOURCE), 0);
+
+  // 2026-11-16 16:00:00 UTC = 1794844800 (1794844800 % 86400 === 57600)
+  const dayStart = 1794844800;
+  const prevDayStart = dayStart - 86400;
+  assert.equal(dayStart % 86400, 57600);
+  assert.equal(barOpen(dayStart - 1, 1440, BINANCE_SOURCE), prevDayStart); // 15:59:59 UTC -> previous day
+  assert.equal(barOpen(dayStart, 1440, BINANCE_SOURCE), dayStart);         // 16:00:00 UTC -> new day
+  assert.equal(barOpen(dayStart + 3600, 1440, OKX_SOURCE), dayStart);
+  assert.equal(barOpen(dayStart + 86399, 1440, DEEPCOIN_SOURCE), dayStart);
+
+  // Non-1D crypto and US yields stay UTC-aligned
+  assert.equal(barOpen(dayStart + 3600, 240, BINANCE_SOURCE), dayStart);
+  assert.equal(barOpen(dayStart - 1, 240, BINANCE_SOURCE), dayStart - 14400);
+  assert.equal(barOpen(dayStart, 1440, YIELD_SOURCE), Math.floor(dayStart / 86400) * 86400);
 });

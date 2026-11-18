@@ -5,7 +5,7 @@ import { klinesUrl, endTimeBefore, parseKlines, mergeCandles, parseMiniTicker,
   orderTimeframes, shiftLogical, spotKlinesUrl, klinesUrlFor, okxCandlesUrl, tickersUrlFor, watchItem, watchKey,
   withDefaultYields, restoreSelection, defaultSymbolFor, restoreAsideTab, restoreListMarket, parseOkxCandles,
   aggregateAnswer, tickerRows, proxyTickerRows, orderProducts, filterProducts, pageSizeOf, sameWatchItem, OKX_LIMIT,
-  OKX_HISTORY_LIMIT, cnbcChartUrl, cnbcQuoteUrl,
+  OKX_HISTORY_LIMIT, cnbcChartUrl, cnbcQuoteUrl, synthesizeBeijingDailyFrom8h,
   PRODUCT_PAGE, DEFAULT_WATCHLIST, DEFAULT_TIMEFRAMES, KLINE_LIMIT, MAX_BARS, MAX_WATCHLIST, MARKET_KEYS } from
   '../jesse/static/review/market-data.mjs';
 import { DEFAULT_YIELD_SYMBOLS, normalizeSymbol } from '../jesse/static/review/market-sources.mjs';
@@ -56,11 +56,11 @@ test('the spot market asks the spot host, and the proxied sources have no exchan
 test('the OKX candles URL uses the venue bar spelling and pages history by `after`', () => {
   assert.equal(okxCandlesUrl('BTC-USDT-SWAP', '15m'),
     'https://www.okx.com/api/v5/market/candles?instId=BTC-USDT-SWAP&bar=15m&limit=300');
-  // 1h -> 1H and 1D -> 1Dutc: the venue's own spelling, and the UTC day bar.
+  // 1h -> 1H and 1D -> 1D (UTC+8 midnight / 16:00 UTC).
   assert.equal(okxCandlesUrl('BTC-USDT', '1h'),
     'https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=1H&limit=300');
   assert.equal(okxCandlesUrl('BTC-USDT', '1D'),
-    'https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=1Dutc&limit=300');
+    'https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=1D&limit=300');
   // An older page comes from history-candles, which is capped at 100 rows and takes the open time in milliseconds.
   assert.equal(okxCandlesUrl('BTC-USDT-SWAP', '15m', { limit: 300, before: 1763199960 }),
     'https://www.okx.com/api/v5/market/history-candles?instId=BTC-USDT-SWAP&bar=15m&limit=100&after=1763199960000');
@@ -442,4 +442,59 @@ test('moveWatchItem reorders the watchlist and ignores bad indexes', () => {
   assert.deepEqual(moveWatchItem(list, 1, 9), ['a', 'c', 'd', 'b'], 'past the end lands last');
   assert.deepEqual(moveWatchItem(list, 5, 0), list);
   assert.deepEqual(list, ['a', 'b', 'c', 'd'], 'the input is not changed');
+});
+
+test('Binance spot 1D requests include timeZone=8 and Binance futures 1D requests use 8h', () => {
+  assert.equal(spotKlinesUrl('BTCUSDT', '1D'),
+    'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000&timeZone=8');
+  assert.equal(klinesUrlFor('binance', 'spot', 'BTCUSDT', '1D'),
+    'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000&timeZone=8');
+  assert.equal(klinesUrlFor('binance', 'swap', 'BTCUSDT', '1D'),
+    'https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=8h&limit=1000');
+});
+
+test('synthesizeBeijingDailyFrom8h aggregates 8h bars into UTC+8 daily bars', () => {
+  const h8 = 8 * 3600;
+  const d1 = 1794844800; // 2026-11-16 16:00 UTC (Beijing day 1 start)
+  const d2 = d1 + 86400; // 2026-11-17 16:00 UTC (Beijing day 2 start)
+  const d3 = d2 + 86400;
+
+  // Complete day (3 closed 8h bars: 16:00, 00:00, 08:00)
+  const barsD1 = [
+    { time: d1, open: 100, high: 110, low: 95, close: 105, volume: 10 },
+    { time: d1 + h8, open: 105, high: 120, low: 100, close: 115, volume: 20 },
+    { time: d1 + 2 * h8, open: 115, high: 118, low: 90, close: 112, volume: 30 },
+  ];
+  const res1 = synthesizeBeijingDailyFrom8h(barsD1, null);
+  assert.deepEqual(res1.closed, [{ time: d1, open: 100, high: 120, low: 90, close: 112, volume: 60 }]);
+  assert.equal(res1.forming, null);
+
+  // Older incomplete day (missing 1 bar) is omitted from closed; latest incomplete day is forming
+  const barsGap = [
+    { time: d1, open: 100, high: 110, low: 95, close: 105, volume: 10 },
+    { time: d1 + h8, open: 105, high: 120, low: 100, close: 115, volume: 20 },
+    // d1 + 2*h8 missing!
+    { time: d2, open: 200, high: 210, low: 190, close: 205, volume: 5 },
+    { time: d2 + h8, open: 205, high: 215, low: 200, close: 210, volume: 7 },
+  ];
+  const resGap = synthesizeBeijingDailyFrom8h(barsGap, null);
+  assert.deepEqual(resGap.closed, []);
+  assert.deepEqual(resGap.forming, { time: d2, open: 200, high: 215, low: 190, close: 210, volume: 12 });
+
+  // Live forming: closed 8h bars of day + forming 8h bar
+  const forming8h = { time: d2 + 2 * h8, open: 210, high: 225, low: 208, close: 220, volume: 9 };
+  const resLive = synthesizeBeijingDailyFrom8h([...barsD1, { time: d2, open: 200, high: 210, low: 190, close: 205, volume: 5 },
+    { time: d2 + h8, open: 205, high: 215, low: 200, close: 210, volume: 7 }], forming8h);
+  assert.equal(resLive.closed.length, 1);
+  assert.equal(resLive.closed[0].time, d1);
+  assert.deepEqual(resLive.forming, { time: d2, open: 200, high: 225, low: 190, close: 220, volume: 21 });
+
+  // Cross-pagination: merging page2 (older) + page1 (newer) completes a split day
+  const page1 = [barsD1[2], { time: d2, open: 200, high: 210, low: 190, close: 205, volume: 5 }];
+  const page2 = [barsD1[0], barsD1[1]];
+  const merged = mergeCandles(page2, page1);
+  const resPaged = synthesizeBeijingDailyFrom8h(merged, null);
+  assert.equal(resPaged.closed.length, 1);
+  assert.equal(resPaged.closed[0].time, d1);
+  assert.equal(resPaged.forming.time, d2);
 });

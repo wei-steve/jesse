@@ -1,4 +1,4 @@
-import { calculateIndicator, formingTail, tailBars } from './indicators.mjs?v=20261117o';
+import { calculateIndicator, formingTail, tailBars } from './indicators.mjs?v=20261117p';
 // The 看行情 page's sources (market.mjs): an exchange-level list (Binance / OKX / Deepcoin) plus the US treasury
 // yields, each with the contract / spot sub-markets it has, the instruments it defaults to, the exchange-side bar
 // spelling of every timeframe, the CNBC chart range of a yield panel, and the interval mapping of the Jesse proxy that
@@ -63,6 +63,29 @@ export const sourceLabel = id => sourceOf(id)?.label ?? id;
 export const marketsOf = id => sourceOf(id)?.markets ?? [];
 export const hasMarkets = id => marketsOf(id).length > 0;
 export const isYieldSource = id => id === YIELD_SOURCE;
+export const isCryptoSource = id => id === BINANCE_SOURCE || id === OKX_SOURCE || id === DEEPCOIN_SOURCE;
+export const BEIJING_OFFSET_SECONDS = 28800;
+
+/**
+ * Alignment offset in seconds for `intervalMinutes` on `sourceId`: crypto 1D candles open at 00:00 UTC+8
+ * (16:00 UTC, offset 28800s); all other timeframes and US treasury yields stay UTC-aligned (0).
+ */
+export function dayOffsetSeconds(intervalMinutes, sourceId) {
+  return Number(intervalMinutes) === 1440 && isCryptoSource(sourceId) ? BEIJING_OFFSET_SECONDS : 0;
+}
+
+/**
+ * Open timestamp (UTC seconds) of the candle containing `time` for `intervalMinutes` on `sourceId`.
+ * Crypto 1D aligns to UTC+8 midnight (`time % 86400 === 57600`); everything else aligns to UTC.
+ */
+export function barOpen(time, intervalMinutes, sourceId) {
+  const t = Number(time);
+  const minutes = Number(intervalMinutes);
+  if (!Number.isFinite(t) || !Number.isFinite(minutes) || minutes <= 0) return NaN;
+  const step = Math.trunc(minutes) * 60;
+  const offset = dayOffsetSeconds(minutes, sourceId);
+  return Math.floor((t + offset) / step) * step - offset;
+}
 
 /** `market` when that source has it (the yields have none: null), otherwise the source's first market. */
 export const normalizeMarket = (id, market) => {
@@ -127,10 +150,10 @@ export function instrumentName(source, symbol) {
 
 // --- Bars ---------------------------------------------------------------------------------------------------------
 // The bar spelling of each panel timeframe per exchange. Binance's is in market-data.mjs (it already had it), and its
-// daily interval is the only one that differs (1d). OKX and Deepcoin both say 1H / 4H in upper case, and OKX's daily
-// bar must be `1Dutc` (plain `1D` opens at the exchange's UTC+8 midnight).
+// daily interval is the only one that differs (1d). OKX and Deepcoin both say 1H / 4H in upper case, and OKX's plain
+// `1D` opens at the exchange's UTC+8 midnight (16:00 UTC), matching Deepcoin's `1D`.
 export const BARS = {
-  [OKX_SOURCE]: { '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1H', '4h': '4H', '1D': '1Dutc' },
+  [OKX_SOURCE]: { '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1H', '4h': '4H', '1D': '1D' },
   [DEEPCOIN_SOURCE]: { '1m': '1m', '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1H', '4h': '4H', '1D': '1D' },
 };
 

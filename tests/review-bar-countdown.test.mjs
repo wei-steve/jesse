@@ -14,6 +14,11 @@ test('barRemaining computes UTC-aligned remaining seconds in 1..period', () => {
   assert.equal(barRemaining(1440, 86400 * 5), 86400);
   assert.equal(barRemaining(1440, 86400 * 5 + 86399), 1);
   assert.equal(barRemaining(1, 0), 60);
+
+  // 1D with UTC+8 offset (28800s -> closes at 16:00:00 UTC)
+  const utc1600 = 1794844800; // 2026-11-16 16:00:00 UTC
+  assert.equal(barRemaining(1440, utc1600 - 1, 28800), 1);     // 15:59:59 UTC -> 1s left
+  assert.equal(barRemaining(1440, utc1600, 28800), 86400);     // 16:00:00 UTC -> 86400s left
 });
 
 test('barRemaining returns null for non-positive or non-finite inputs', () => {

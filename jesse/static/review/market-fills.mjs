@@ -5,7 +5,7 @@
 // runs every function here with node. The instrument mapping is the interesting part: the fills belong to the owner's
 // Deepcoin account, but a BTC trade is the same trade whichever venue the chart is showing, so Binance's `BTCUSDT`,
 // OKX's `BTC-USDT-SWAP` and Deepcoin's own ids all name the same `{market, symbol}` of the private endpoint.
-import { BINANCE_SOURCE, DEEPCOIN_SOURCE, OKX_SOURCE } from './market-sources.mjs?v=20261117o';
+import { BINANCE_SOURCE, DEEPCOIN_SOURCE, OKX_SOURCE } from './market-sources.mjs?v=20261117p';
 
 // The 「我的成交」 checkbox: on unless the owner turned it off, so the markers are there when the keys are filled in.
 export const FILLS_KEY = 'jesse.market.fills.v1';
@@ -255,15 +255,16 @@ const average = (notional, size) => (size > 0 ? notional / size : null);
  * Fills of the same direction in the same candle are one group (one marker, one line under the chart): count, the
  * size-weighted average price, the summed size and fee, and the fee currency.
  */
-export function bucketFills(fills, interval) {
+export function bucketFills(fills, interval, { offsetSeconds = 0 } = {}) {
   const minutes = Number(interval);
   if (!Number.isFinite(minutes) || minutes <= 0) return [];
   const width = Math.trunc(minutes) * 60;
+  const offset = Number.isFinite(offsetSeconds) ? Math.trunc(offsetSeconds) : 0;
   const bars = new Map();
   for (const fill of Array.isArray(fills) ? fills : []) {
     const time = Number(fill?.time), price = Number(fill?.price), size = Number(fill?.size);
     if (![time, price, size].every(Number.isFinite) || time <= 0 || price <= 0 || size <= 0) continue;
-    const bar = Math.floor(time / width) * width;
+    const bar = Math.floor((time + offset) / width) * width - offset;
     let groups = bars.get(bar);
     if (!groups) { groups = new Map(); bars.set(bar, groups); }
     const action = fillAction(fill);

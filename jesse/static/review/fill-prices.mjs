@@ -8,7 +8,7 @@
 // Pure functions plus one primitive class: the grouping (orderMarks), the switch state (readFillPrices / fillPricesOn)
 // and the canvas drawing (drawFillPrices) are tested by tests/review-fill-prices.test.mjs with fake data and a fake
 // 2D context; market.mjs owns the buttons, the localStorage key and the primitive's data.
-import { BUY_MARKER_COLOR, SELL_MARKER_COLOR, fillMarkers, fmtFillNumber } from './market-fills.mjs?v=20261117o';
+import { BUY_MARKER_COLOR, SELL_MARKER_COLOR, fillMarkers, fmtFillNumber } from './market-fills.mjs?v=20261117p';
 
 // Per-timeframe switches, `{tf: true|false}` (T-62). A `jesse.*` key, so prefs-sync.mjs mirrors it into
 // storage/review-prefs.json like every other setting (T-58).
@@ -105,17 +105,18 @@ export function orderAction(fill) {
  * instead, so two market buys at different prices stay two marks. `time` is the candle's open time, i.e. the mark is
  * drawn in the middle of that candle. `open` is 开多 / 开空 (buy+long, sell+short); everything else closes.
  */
-export function orderMarks(fills, interval) {
+export function orderMarks(fills, interval, { offsetSeconds = 0 } = {}) {
   const minutes = Number(interval);
   if (!Number.isFinite(minutes) || minutes <= 0) return [];
   const width = Math.trunc(minutes) * 60;
+  const offset = Number.isFinite(offsetSeconds) ? Math.trunc(offsetSeconds) : 0;
   const groups = new Map();
   for (const fill of Array.isArray(fills) ? fills : []) {
     const time = Number(fill?.time), price = Number(fill?.price), size = Number(fill?.size);
     if (![time, price, size].every(Number.isFinite) || time <= 0 || price <= 0 || size <= 0) continue;
     const action = orderAction(fill);
     if (!action) continue;
-    const bar = Math.floor(time / width) * width;
+    const bar = Math.floor((time + offset) / width) * width - offset;
     const ordId = String(fill?.ordId ?? '');
     const key = `${bar}|${ordId ? `ord:${ordId}` : `${action.id}|${price}`}`;
     let group = groups.get(key);
