@@ -7,48 +7,49 @@
 // yields have no push at all: CNBC's one-minute series and its quote are polled every 15 seconds.
 // The chart behaviour (range linking, price zoom, snapshots) and the overlays (the review page's display settings)
 // are reused from the review/finder modules instead of being reimplemented.
-import { t as createChart } from './lightweight-charts.mjs?v=20261117o';
-import { linkTimeRanges } from './data.mjs?v=20261117o';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261117o';
-import { STORAGE_KEY, MARKET_STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, marketPreferences } from './settings.mjs?v=20261117o';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261117o';
-import { mountIndicatorEditor } from './controls.mjs?v=20261117o';
-import { legendItems } from './market-legend.mjs?v=20261117o';
+import { t as createChart } from './lightweight-charts.mjs?v=20261117p';
+import { linkTimeRanges } from './data.mjs?v=20261117p';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261117p';
+import { STORAGE_KEY, MARKET_STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, marketPreferences } from './settings.mjs?v=20261117p';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261117p';
+import { mountIndicatorEditor } from './controls.mjs?v=20261117p';
+import { legendItems } from './market-legend.mjs?v=20261117p';
 import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages, okxCandleChannels, openOkxKlines,
-  openOkxTicker, openOkxTickers, openDeepcoinTicker, openDeepcoinTickers } from './live-price.mjs?v=20261117o';
-import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117o';
-import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261117o';
-import { BINANCE_SOURCE, DEEPCOIN_SOURCE, MARKETS, MARKET_SOURCES, OKX_SOURCE, YIELD_SOURCE, YIELD_INSTRUMENTS,
-  DEFAULT_YIELD_SYMBOL, YIELD_POLL_RANGE, aggregateCandles, candleRequest, cnbcSymbolOf, exchangeOf, instrumentName,
-  isYieldSource, marketLabel, marketsOf, mergeYieldBars, mergeYieldDailyClose, normalizeMarket, normalizeYieldSymbol,
-  parseCnbcBars, parseCnbcQuote, parseMarketCandles, restoreSource, sessionIndicator, sessionTail, signedPoints,
-  sourceLabel, symbolOf, yieldRequest } from './market-sources.mjs?v=20261117o';
-import { MARKET_KEYS, MARKET_TIMEFRAMES, MAX_BARS, MAX_WATCHLIST, PRODUCT_PAGE, PROXY_CANDLES,
+  openOkxTicker, openOkxTickers, openDeepcoinTicker, openDeepcoinTickers } from './live-price.mjs?v=20261117p';
+import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117p';
+import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261117p';
+import { BINANCE_SOURCE, DAY_BOUNDARY_KEY, DAY_BOUNDARY_UTC8, DEEPCOIN_SOURCE, MARKETS, MARKET_SOURCES, OKX_SOURCE,
+  YIELD_SOURCE, YIELD_INSTRUMENTS, DEFAULT_YIELD_SYMBOL, YIELD_POLL_RANGE, aggregateCandles, barOpen, candleRequest,
+  cnbcSymbolOf, dayOffsetSeconds, exchangeOf, instrumentName, isYieldSource, marketLabel, marketsOf, mergeYieldBars,
+  mergeYieldDailyClose, normalizeDayBoundary, normalizeMarket, normalizeYieldSymbol, parseCnbcBars, parseCnbcQuote,
+  parseMarketCandles, restoreDayBoundary, restoreSource, sessionIndicator, sessionTail, signedPoints, sourceLabel,
+  symbolOf, yieldRequest } from './market-sources.mjs?v=20261117p';
+import { BINANCE_FAPI_MAX_LIMIT, MARKET_KEYS, MARKET_TIMEFRAMES, MAX_BARS, MAX_WATCHLIST, PRODUCT_PAGE, PROXY_CANDLES,
   PROXY_TICKERS, aggregateAnswer, addToWatchlist, cnbcChartUrl, cnbcQuoteUrl, defaultSymbolFor, endTimeBefore,
   filterProducts, klinesUrlFor, mergeCandles, miniTickerStreamUrl, pageSizeOf, parseKlines, parseMiniTicker,
   parseOkxCandles, proxyTickerRows, removeFromWatchlist, moveWatchItem, orderTimeframes, restoreAsideTab,
   restoreListMarket, restoreSelection, restoreTimeframes, restoreWatchlist, sameWatchItem, shiftLogical,
-  tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261117o';
+  synthesizeBeijingDailyFrom8h, tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261117p';
 // Candle notes (double-click a bar): the same box, key, 「注」 markers and stored file as the factor finder; the shared
 // module is why a note written on one page shows up on the other.
 import { barLabel, barsFor, createBarNoteBox, createBookPicker, barNoteBody, barNoteKey, barNoteOf, filterNoteRows,
   noteDigest, noteIdentity, noteMarkers, noteRowsFrom, noteSummary, noteTimeText, noteWhere, rememberNote, snapshotOf
-  } from './bar-notes.mjs?v=20261117o';
+  } from './bar-notes.mjs?v=20261117p';
 // The open 备注本 (`storage/labels/<book>.jsonl`): the same notebook as the factor finder, kept in one localStorage key.
-import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261117o';
+import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261117p';
 // The owner's own Deepcoin fills (T-59): 「我的成交」 marks his 开多 / 平多 / 开空 / 平空 on the candles of any crypto
 // source. The instrument mapping, the per-candle buckets, the markers and their line under the chart are pure functions
 // in market-fills.mjs; this page owns the request and the polling.
 import { FILLS_ENDPOINT, FILLS_KEY, FILLS_NOT_CONFIGURED, FILLS_POLL_MS, FILLS_WAIT_ENDPOINT, applyFillsWait,
   bucketFills, configuredOf, fillGroupsText, fillLabelsFit, fillsHave, fillsProgressText, fillsRequest, fillsStatusLine,
   fillsStreamText, fillsWaitBackoff, fillsWaitBody, mergeFillRows, mergeMarkers, parseFills }
-  from './market-fills.mjs?v=20261117o';
+  from './market-fills.mjs?v=20261117p';
 // The 价位 marks (T-62): one small triangle / circle per order at its own average price, drawn as a series primitive so
 // a mark sits on the price instead of under the candle, and switched on / off per timeframe (1h / 4h / 1D start off).
 import { FILL_PRICES_KEY, FillPricesPrimitive, fillArrowMarkers, fillPriceMarksOn, orderMarks, orderMarksText,
-  readFillPrices, toggleFillPrices } from './fill-prices.mjs?v=20261117o';
+  readFillPrices, toggleFillPrices } from './fill-prices.mjs?v=20261117p';
 // Current-candle close countdown (T-64): sits on the price axis right below the 「实时」 label.
-import { CountdownPrimitive } from './bar-countdown.mjs?v=20261117o';
+import { CountdownPrimitive } from './bar-countdown.mjs?v=20261117p';
 
 const $ = id => document.getElementById(id);
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
@@ -120,6 +121,7 @@ if (!read(MARKET_KEYS.yieldSeed)) {
   write(MARKET_KEYS.yieldSeed, '1');
 }
 let timeframes = restoreTimeframes(read(MARKET_KEYS.timeframes));
+let dayBoundary = restoreDayBoundary(read(DAY_BOUNDARY_KEY));
 // 「自选 | <数据源>」: which of the two left column tabs is open, and the product list's 合约 / 现货 sub-tab.
 let asideTab = restoreAsideTab(read(MARKET_KEYS.aside));
 let listMarket = normalizeMarket(source, restoreListMarket(read(MARKET_KEYS.listMarket)) ?? market);
@@ -406,6 +408,8 @@ function makePanel(tf, answer) {
     overlaySeries: [], overlayGroups: [], forming: answer.forming, tailTimer: null,
     // A yield panel keeps the series it is built from (CNBC's own bars) so the poll can rebuild its newest bars.
     request: source === YIELD_SOURCE ? yieldRequest(tf) : null, raw: answer.raw ?? null,
+    // Binance futures 1D is synthesized from 8h bars; keeping them lets loadEarlier and kline_8h stay exact.
+    raw8h: answer.raw8h ?? null, forming8h: answer.forming8h ?? null,
     // CNBC hands back one range per panel: there is no earlier page to ask for.
     loadingEarlier: false, noMore: source === YIELD_SOURCE, sized: false };
   if (!answer.closed.length) {
@@ -424,7 +428,11 @@ function makePanel(tf, answer) {
   panel.fillPrimitive = new FillPricesPrimitive();
   panel.series.attachPrimitive(panel.fillPrimitive);
   // Bar-close countdown (T-64): axis label directly below the 「实时」 price label, updated every second.
-  panel.countdownPrimitive = new CountdownPrimitive({ intervalMinutes: interval, color: LIVE_PRICE });
+  panel.countdownPrimitive = new CountdownPrimitive({
+    intervalMinutes: interval,
+    offsetSeconds: dayOffsetSeconds(interval, source, dayBoundary),
+    color: LIVE_PRICE,
+  });
   panel.series.attachPrimitive(panel.countdownPrimitive);
   enablePriceZoom(panel.chart, panel.series, host);
   host.append(legend);
@@ -516,6 +524,7 @@ function paintMetaText(box, text, barNote = '') {
 function paintMeta(panel, time = null) {
   const box = panel.card.querySelector('.chart-meta');
   const note = panel.note ? ` · ${panel.note}` : '';
+  const dailyNote = dayOffsetSeconds(panel.interval, source, dayBoundary) ? '（北京时间日线）' : '';
   if (panel.empty || !panel.candles.length) { box.textContent = panel.note; return; }
   const candle = time === null ? null : panel.byTime.get(time) ?? (panel.forming?.time === time ? panel.forming : null);
   const barNote = time === null ? '' : barNoteOf(panelNotes(), noteKeyAt(panel, time));
@@ -528,13 +537,13 @@ function paintMeta(panel, time = null) {
   if (!candle) {
     const last = panel.forming ?? panel.candles.at(-1);
     paintMetaText(box, `${panel.candles.length.toLocaleString()} 根 K 线 · 最新 ${stamp(last.time)} UTC · 收 ${fmtPrice(last.close)}`
-      + (panel.forming ? '（形成中）' : '') + note, barNote);
+      + (panel.forming ? '（形成中）' : '') + note + dailyNote, barNote);
     return;
   }
   const change = candle.open > 0 ? (candle.close - candle.open) / candle.open : null;
   paintMetaText(box, `${stamp(candle.time)} UTC${panel.forming?.time === candle.time ? '（形成中）' : ''}`
     + ` · 开 ${fmtPrice(candle.open)} · 高 ${fmtPrice(candle.high)} · 低 ${fmtPrice(candle.low)} · 收 ${fmtPrice(candle.close)}`
-    + (Number.isFinite(change) ? ` · ${signedPercent(change)}` : '') + note + trades, barNote);
+    + (Number.isFinite(change) ? ` · ${signedPercent(change)}` : '') + note + trades + dailyNote, barNote);
 }
 
 // `price` is the price under the pointer: every other chart puts its horizontal line at that same price, and falls
@@ -549,8 +558,7 @@ function syncCrosshair(from, time, price = null) {
     paintLegend(from, time);
     for (const panel of panels) {
       if (panel === from || panel.empty) continue;
-      const step = panel.interval * 60;
-      const t = time === null ? null : Math.floor(time / step) * step;
+      const t = time === null ? null : barOpen(time, panel.interval, source, dayBoundary);
       panel.hoverTime = t;
       paintLegend(panel, t);
       const close = t === null ? undefined : panel.closes.get(t);
@@ -607,6 +615,46 @@ async function fetchYieldSeries(symbolName, range) {
   return bars;
 }
 
+async function fetchExchangeJson(url, sourceId, symbolName) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    if (response.status === 400) {
+      throw new Error(`${sourceLabel(sourceId)}没有「${symbolName}」这个交易对。输入 btc、BTC-USDT 或 BTC-USDT-SWAP 都可以。`);
+    }
+    if (response.status === 451 || response.status === 403) {
+      throw new Error(`${sourceLabel(sourceId)}拒绝了这次请求（HTTP ${response.status}），这个网络所在地区可能被限制。`);
+    }
+    throw new Error(`${sourceLabel(sourceId)} K 线请求失败（HTTP ${response.status}），稍后再试。`);
+  }
+  return response.json();
+}
+
+/**
+ * Binance futures `/fapi/v1/klines` ignores `timeZone`, so 1D is synthesized from 8h bars (00/08/16 UTC).
+ * Each day needs 3 bars, so we ask for `limit * 3 + 2` 8h bars, paging backwards in chunks of 1500.
+ */
+async function fetchBinanceFuturesDaily(symbolName, { limit = KLINE_LIMIT, endTime = null } = {}) {
+  let remaining = Math.max(1, Math.trunc(limit)) * 3 + 2;
+  let cursor = Number.isFinite(endTime) ? endTime : null;
+  let allClosed8h = [];
+  let forming8h = null;
+  while (remaining > 0) {
+    const batch = Math.min(remaining, BINANCE_FAPI_MAX_LIMIT);
+    const url = klinesUrlFor(BINANCE_SOURCE, 'swap', symbolName, '1D', { limit: batch, endTime: cursor });
+    const payload = await fetchExchangeJson(url, BINANCE_SOURCE, symbolName);
+    const parsed = parseKlines(payload, Date.now());
+    if (cursor === null && parsed.forming) forming8h = parsed.forming;
+    if (!parsed.closed.length && !parsed.forming) break;
+    allClosed8h = mergeCandles(parsed.closed, allClosed8h);
+    remaining -= parsed.closed.length;
+    if (parsed.closed.length + (parsed.forming ? 1 : 0) < batch) break;
+    const oldest = parsed.closed[0]?.time ?? parsed.forming?.time;
+    if (!Number.isFinite(oldest)) break;
+    cursor = endTimeBefore(oldest);
+  }
+  return { ...synthesizeBeijingDailyFrom8h(allClosed8h, forming8h), raw8h: allClosed8h, forming8h, note: '' };
+}
+
 /**
  * One page of candles of one source. Binance answers in one REST page (fapi for the perpetual, api/v3 for spot), OKX
  * in its own envelope; Deepcoin comes from Jesse's proxy, which reads the venue and hands back the series the panel
@@ -619,8 +667,9 @@ async function fetchCandles(sourceId, marketId, symbolName, tf, options = {}) {
     const raw = await fetchYieldSeries(symbolName, options.range ?? request.range);
     return { raw, ...yieldBarsOf(raw, request.aggregate), note: yieldNote(tf) };
   }
-  const request = candleRequest(sourceId, tf);
-  const limit = Math.max(1, Math.trunc((options.limit ?? pageSizeOf(sourceId)) * request.aggregate));
+  const boundary = options.dayBoundary ?? dayBoundary;
+  const request = candleRequest(sourceId, tf, boundary);
+  const limit = Math.max(1, Math.trunc((options.limit ?? pageSizeOf(sourceId)) * (request.scale ?? request.aggregate)));
   if (sourceId === DEEPCOIN_SOURCE) {
     const answer = await post(PROXY_CANDLES, { source: DEEPCOIN_SOURCE, market: marketId, symbol: symbolName,
       interval: request.interval, limit: Math.min(limit, 1000),
@@ -630,17 +679,12 @@ async function fetchCandles(sourceId, marketId, symbolName, tf, options = {}) {
       : { closed: parsed.closed, forming: parsed.forming };
     return { closed: bucketed.closed, forming: bucketed.forming, note: parsed.note };
   }
-  const response = await fetch(klinesUrlFor(sourceId, marketId, symbolName, tf, { ...options, limit }));
-  if (!response.ok) {
-    if (response.status === 400) {
-      throw new Error(`${sourceLabel(sourceId)}没有「${symbolName}」这个交易对。输入 btc、BTC-USDT 或 BTC-USDT-SWAP 都可以。`);
-    }
-    if (response.status === 451 || response.status === 403) {
-      throw new Error(`${sourceLabel(sourceId)}拒绝了这次请求（HTTP ${response.status}），这个网络所在地区可能被限制。`);
-    }
-    throw new Error(`${sourceLabel(sourceId)} K 线请求失败（HTTP ${response.status}），稍后再试。`);
+  if (sourceId === BINANCE_SOURCE && marketId !== 'spot' && tf === '1D' && boundary === DAY_BOUNDARY_UTC8) {
+    return fetchBinanceFuturesDaily(symbolName, { ...options, limit });
   }
-  const payload = await response.json();
+  const payload = await fetchExchangeJson(
+    klinesUrlFor(sourceId, marketId, symbolName, tf, { ...options, limit, dayBoundary: boundary }),
+    sourceId, symbolName);
   if (sourceId === OKX_SOURCE) return { ...parseOkxCandles(payload), note: '' };
   return { ...parseKlines(payload, Date.now()), note: '' };
 }
@@ -701,16 +745,29 @@ async function loadEarlier(panel) {
   panel.loadingEarlier = true;
   try {
     const limit = Math.min(pageSizeOf(source), MAX_BARS - panel.candles.length);
-    const oldest = panel.candles[0].time;
+    const futuresDaily = source === BINANCE_SOURCE && market !== 'spot' && panel.tf === '1D'
+      && dayBoundary === DAY_BOUNDARY_UTC8 && panel.raw8h?.length;
+    const oldest = futuresDaily ? panel.raw8h[0].time : panel.candles[0].time;
     // Binance pages by `endTime` (ms, inclusive, hence the one millisecond); the proxied and OKX sources page by the
     // open time of the oldest bar already loaded.
     const query = source === BINANCE_SOURCE ? { limit, endTime: endTimeBefore(oldest) } : { limit, before: oldest };
-    const { closed } = await fetchCandles(source, market, symbol, panel.tf, query);
+    const answer = await fetchCandles(source, market, symbol, panel.tf, query);
     if (version !== loadVersion || panel.empty) return;
-    if (!closed.length) { panel.noMore = true; return; /* the contract's listing is the end of the history */ }
-    const next = mergeCandles(panel.candles, closed);
-    if (next.length === panel.candles.length) { panel.noMore = true; return; }
-    setBars(panel, next);
+    if (futuresDaily) {
+      if (!answer.raw8h?.length) { panel.noMore = true; return; }
+      const merged8h = mergeCandles(panel.raw8h, answer.raw8h);
+      if (merged8h.length === panel.raw8h.length) { panel.noMore = true; return; }
+      panel.raw8h = merged8h;
+      const synthesized = synthesizeBeijingDailyFrom8h(panel.raw8h, panel.forming8h);
+      const next = mergeCandles(panel.candles, synthesized.closed);
+      setBars(panel, next);
+    } else {
+      const { closed } = answer;
+      if (!closed.length) { panel.noMore = true; return; /* the contract's listing is the end of the history */ }
+      const next = mergeCandles(panel.candles, closed);
+      if (next.length === panel.candles.length) { panel.noMore = true; return; }
+      setBars(panel, next);
+    }
     // The window grew to the left: an older candle may hold an older fill, so the range is asked for again.
     if (fillsBegin !== null && Number.isFinite(panel.candles[0]?.time) && panel.candles[0].time < fillsBegin) loadFills();
   } catch {
@@ -722,12 +779,17 @@ async function loadEarlier(panel) {
 async function refreshPanel(panel, version) {
   if (panel.empty) return;
   try {
-    const { closed, forming } = await fetchCandles(source, market, symbol, panel.tf, { limit: pageSizeOf(source) });
-    if (version !== loadVersion || !closed.length) return;
-    setBars(panel, mergeCandles(panel.candles, closed));
+    const answer = await fetchCandles(source, market, symbol, panel.tf, { limit: pageSizeOf(source) });
+    if (version !== loadVersion) return;
+    if (answer.raw8h) panel.raw8h = mergeCandles(panel.raw8h ?? [], answer.raw8h);
+    if (answer.forming8h && (!panel.forming8h || answer.forming8h.time >= panel.forming8h.time)) {
+      panel.forming8h = answer.forming8h;
+    }
+    if (!answer.closed.length) return;
+    setBars(panel, mergeCandles(panel.candles, answer.closed));
     // The REST answer's forming bar is a snapshot of the same bar the stream is drawing: only replace ours with a
     // newer one, never move it backwards.
-    if (forming && (!panel.forming || forming.time > panel.forming.time)) paintForming(panel, forming);
+    if (answer.forming && (!panel.forming || answer.forming.time > panel.forming.time)) paintForming(panel, answer.forming);
   } catch {
     // A failed catch-up just leaves the history as it was; the socket keeps pushing, and the next reconnect or the
     // next drag towards the left asks again.
@@ -1215,14 +1277,15 @@ function paintLiveNote() {
  *  `open` that returns its stop(). Binance and OKX only; Deepcoin and the yields have no candle stream. */
 function klineStreamFor() {
   if (source === BINANCE_SOURCE) {
-    const url = klineStreamUrl(exchangeOf(source, market), symbol, timeframes);
+    const url = klineStreamUrl(exchangeOf(source, market), symbol, timeframes,
+      { beijingDaily: dayBoundary === DAY_BOUNDARY_UTC8, dayBoundary });
     return url ? { key: url, open: callbacks => openKlines(url, callbacks) } : null;
   }
   if (source === OKX_SOURCE) {
-    const channels = okxCandleChannels(timeframes);
+    const channels = okxCandleChannels(timeframes, dayBoundary);
     if (!channels.length) return null;
     return { key: `${symbol}|${market}|${channels.join(',')}`,
-      open: callbacks => openOkxKlines(symbol, timeframes, callbacks) };
+      open: callbacks => openOkxKlines(symbol, timeframes, { ...callbacks, dayBoundary }) };
   }
   return null;
 }
@@ -1338,7 +1401,32 @@ function quoteSocketSpecs() {
   return specs;
 }
 
+function onBinanceFutures8hKline(panel, candle) {
+  if (candle.closed) {
+    const last8h = panel.raw8h?.at(-1)?.time ?? -Infinity;
+    if (candle.time > last8h + 8 * 3600) { refreshPanel(panel, loadVersion); return; }
+    panel.raw8h = mergeCandles(panel.raw8h ?? [], [candleOf(candle)]);
+    if (panel.forming8h?.time === candle.time) panel.forming8h = null;
+  } else {
+    if (panel.forming8h && candle.time > panel.forming8h.time) {
+      panel.raw8h = mergeCandles(panel.raw8h ?? [], [candleOf(panel.forming8h)]);
+    }
+    panel.forming8h = candle;
+  }
+  const { closed, forming } = synthesizeBeijingDailyFrom8h(panel.raw8h ?? [], panel.forming8h);
+  const lastDay = panel.candles.at(-1)?.time ?? -Infinity;
+  for (const day of closed) {
+    if (day.time > lastDay) appendClosed(panel, day);
+  }
+  if (forming) paintForming(panel, forming);
+}
+
 function onKline(candle) {
+  if (source === BINANCE_SOURCE && market !== 'spot' && dayBoundary === DAY_BOUNDARY_UTC8 && candle.tf === '8h') {
+    const panel = panels.find(item => !item.empty && item.tf === '1D');
+    if (panel) onBinanceFutures8hKline(panel, candle);
+    return;
+  }
   const panel = panels.find(item => !item.empty && item.tf === candle.tf);
   if (!panel) return;
   if (!candle.closed) { paintForming(panel, candle); return; }
@@ -1586,10 +1674,11 @@ const fillPriceMarksAt = (panel, time) => (panel.orderMarks ?? []).filter(mark =
 /** Re-bucket the fills into every panel's own timeframe, then redraw the marks, the arrows and the line under each chart. */
 function paintFills() {
   for (const panel of panels) {
-    panel.fillBuckets = fillsOn ? bucketFills(fillRows, panel.interval) : [];
+    const offsetSeconds = dayOffsetSeconds(panel.interval, source, dayBoundary);
+    panel.fillBuckets = fillsOn ? bucketFills(fillRows, panel.interval, { offsetSeconds }) : [];
     // One mark per order, at its own average price, for every timeframe: the page only draws the timeframes whose
     // 价位 switch is on (the marks are still cheap to group, and the line under the chart needs them).
-    panel.orderMarks = fillsOn ? orderMarks(fillRows, panel.interval) : [];
+    panel.orderMarks = fillsOn ? orderMarks(fillRows, panel.interval, { offsetSeconds }) : [];
     paintFillPrices(panel);
     paintMarkers(panel);
     paintMeta(panel);
@@ -2001,6 +2090,50 @@ function paintTimeframes() {
   }));
 }
 
+function paintDayBoundary() {
+  const select = $('m-day-boundary');
+  if (!select) return;
+  select.value = dayBoundary;
+  select.onchange = () => switchDayBoundary(select.value);
+}
+
+/**
+ * Switches the 1D day boundary between Beijing 00:00 ('utc8') and UTC 00:00 ('utc').
+ * Reloads only the 1D panel (candles, countdown offset, fill buckets, and kline stream); other panels stay untouched.
+ */
+async function switchDayBoundary(nextBoundary) {
+  const next = normalizeDayBoundary(nextBoundary);
+  if (next === dayBoundary) return;
+  dayBoundary = next;
+  write(DAY_BOUNDARY_KEY, dayBoundary);
+  paintDayBoundary();
+  if (source === YIELD_SOURCE) return;
+  syncStreams();
+  const panel = panels.find(item => item.tf === '1D');
+  if (!panel) return;
+  if (panel.empty) { await render(); return; }
+  const version = loadVersion;
+  try {
+    const answer = await fetchCandles(source, market, symbol, '1D', { limit: pageSizeOf(source) });
+    if (version !== loadVersion || panel.empty) return;
+    panel.raw8h = answer.raw8h ?? null;
+    panel.forming8h = answer.forming8h ?? null;
+    panel.noMore = false;
+    panel.loadingEarlier = false;
+    if (panel.countdownPrimitive) {
+      panel.countdownPrimitive.offsetSeconds = dayOffsetSeconds(panel.interval, source, dayBoundary);
+      panel.countdownPrimitive.tick();
+    }
+    clearTimeout(panel.tailTimer); panel.tailTimer = null; panel.forming = null;
+    setBars(panel, panelAnswer(answer).closed);
+    if (answer.forming) paintForming(panel, answer.forming);
+    showNewest(panel);
+    paintFills();
+  } catch (error) {
+    if (version === loadVersion) status(error.message, true);
+  }
+}
+
 const applyHeight = px => {
   document.documentElement.dataset.chartH = String(px);
   document.documentElement.style.setProperty('--chart-h', px ? `${px}px` : FIT_CHART_HEIGHT);
@@ -2043,7 +2176,7 @@ function start() {
   paintClock();
   setInterval(paintClock, 1000);
   setInterval(() => { if (!document.hidden) for (const panel of panels) panel.countdownPrimitive?.tick(); }, 1000);
-  paintSource(); paintTimeframes(); paintHeight(); paintWatchlist(); paintAside(); paintFillsToggle();
+  paintSource(); paintTimeframes(); paintDayBoundary(); paintHeight(); paintWatchlist(); paintAside(); paintFillsToggle();
   const mainTypes = Object.keys(INDICATORS).filter(type => INDICATORS[type].pane === 'main');
   mountIndicatorEditor(preferences, { storageKey: MARKET_STORAGE_KEY, types: mainTypes, changed: refreshIndicators });
   $('open-settings').onclick = () => { $('display-settings').open = !$('display-settings').open; };

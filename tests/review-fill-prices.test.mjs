@@ -296,3 +296,13 @@ test('the primitive redraws when its marks change, draws through the bitmap targ
   primitive.setMarks('nope');
   assert.deepEqual(primitive.marks(), []);
 });
+
+test('orderMarks respects offsetSeconds for Beijing 1D candles (16:00 UTC boundary)', () => {
+  const dayStart = 1794844800; // 2026-11-16 16:00:00 UTC
+  const before = { time: dayStart - 60, price: 64000, size: 1, side: 'buy', posSide: 'long', ordId: '1', tradeId: 't1' };
+  const after = { time: dayStart, price: 64100, size: 2, side: 'buy', posSide: 'long', ordId: '2', tradeId: 't2' };
+  const marks = orderMarks([before, after], 1440, { offsetSeconds: 28800 });
+  assert.equal(marks.length, 2);
+  assert.equal(marks[0].time, dayStart - 86400);
+  assert.equal(marks[1].time, dayStart);
+});

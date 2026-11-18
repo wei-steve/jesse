@@ -363,3 +363,15 @@ test('the status line names the push state after the backfill text', () => {
   assert.equal(fillsStatusLine(backfill, null), backfill);
   assert.equal(fillsStatusLine('', null), '');
 });
+
+test('bucketFills respects offsetSeconds for Beijing 1D candles (16:00 UTC boundary)', () => {
+  const dayStart = 1794844800; // 2026-11-16 16:00:00 UTC
+  const before = { time: dayStart - 60, price: 64000, size: 1, side: 'buy', posSide: 'long', ordId: '1', tradeId: 't1' };
+  const after = { time: dayStart, price: 64100, size: 2, side: 'buy', posSide: 'long', ordId: '2', tradeId: 't2' };
+  const buckets = bucketFills([before, after], 1440, { offsetSeconds: 28800 });
+  assert.equal(buckets.length, 2);
+  assert.equal(buckets[0].time, dayStart - 86400);
+  assert.equal(buckets[0].groups[0].price, 64000);
+  assert.equal(buckets[1].time, dayStart);
+  assert.equal(buckets[1].groups[0].price, 64100);
+});

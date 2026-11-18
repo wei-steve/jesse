@@ -1,4 +1,4 @@
-import { calculateIndicator, formingTail, tailBars } from './indicators.mjs?v=20261117o';
+import { calculateIndicator, formingTail, tailBars } from './indicators.mjs?v=20261117p';
 // The 看行情 page's sources (market.mjs): an exchange-level list (Binance / OKX / Deepcoin) plus the US treasury
 // yields, each with the contract / spot sub-markets it has, the instruments it defaults to, the exchange-side bar
 // spelling of every timeframe, the CNBC chart range of a yield panel, and the interval mapping of the Jesse proxy that
@@ -63,6 +63,44 @@ export const sourceLabel = id => sourceOf(id)?.label ?? id;
 export const marketsOf = id => sourceOf(id)?.markets ?? [];
 export const hasMarkets = id => marketsOf(id).length > 0;
 export const isYieldSource = id => id === YIELD_SOURCE;
+export const isCryptoSource = id => id === BINANCE_SOURCE || id === OKX_SOURCE || id === DEEPCOIN_SOURCE;
+export const BEIJING_OFFSET_SECONDS = 28800;
+export const DAY_BOUNDARY_KEY = 'jesse.market.dayBoundary.v1';
+export const DAY_BOUNDARY_UTC8 = 'utc8';
+export const DAY_BOUNDARY_UTC = 'utc';
+export const DEFAULT_DAY_BOUNDARY = DAY_BOUNDARY_UTC8;
+
+/** Normalizes a saved or selected day boundary to `'utc8'` (default) or `'utc'`. */
+export function normalizeDayBoundary(value) {
+  const raw = String(value ?? '').trim().replace(/^"|"$/g, '').toLowerCase();
+  return raw === DAY_BOUNDARY_UTC ? DAY_BOUNDARY_UTC : DAY_BOUNDARY_UTC8;
+}
+
+/** Restores the saved day boundary from localStorage, falling back to `'utc8'` for missing or invalid values. */
+export const restoreDayBoundary = serialized => normalizeDayBoundary(serialized);
+
+/**
+ * Alignment offset in seconds for `intervalMinutes` on `sourceId` under `dayBoundary`: crypto 1D candles open at
+ * 00:00 UTC+8 (16:00 UTC, offset 28800s) when `dayBoundary` is `'utc8'`; `'utc'`, other timeframes, and US yields
+ * stay UTC-aligned (0).
+ */
+export function dayOffsetSeconds(intervalMinutes, sourceId, dayBoundary = DEFAULT_DAY_BOUNDARY) {
+  return Number(intervalMinutes) === 1440 && isCryptoSource(sourceId)
+    && normalizeDayBoundary(dayBoundary) === DAY_BOUNDARY_UTC8 ? BEIJING_OFFSET_SECONDS : 0;
+}
+
+/**
+ * Open timestamp (UTC seconds) of the candle containing `time` for `intervalMinutes` on `sourceId`.
+ * Crypto 1D aligns to UTC+8 midnight (`time % 86400 === 57600`) when `dayBoundary` is `'utc8'`; otherwise UTC.
+ */
+export function barOpen(time, intervalMinutes, sourceId, dayBoundary = DEFAULT_DAY_BOUNDARY) {
+  const t = Number(time);
+  const minutes = Number(intervalMinutes);
+  if (!Number.isFinite(t) || !Number.isFinite(minutes) || minutes <= 0) return NaN;
+  const step = Math.trunc(minutes) * 60;
+  const offset = dayOffsetSeconds(minutes, sourceId, dayBoundary);
+  return Math.floor((t + offset) / step) * step - offset;
+}
 
 /** `market` when that source has it (the yields have none: null), otherwise the source's first market. */
 export const normalizeMarket = (id, market) => {
@@ -127,10 +165,10 @@ export function instrumentName(source, symbol) {
 
 // --- Bars ---------------------------------------------------------------------------------------------------------
 // The bar spelling of each panel timeframe per exchange. Binance's is in market-data.mjs (it already had it), and its
-// daily interval is the only one that differs (1d). OKX and Deepcoin both say 1H / 4H in upper case, and OKX's daily
-// bar must be `1Dutc` (plain `1D` opens at the exchange's UTC+8 midnight).
+// daily interval is the only one that differs (1d). OKX and Deepcoin both say 1H / 4H in upper case, and OKX's plain
+// `1D` opens at the exchange's UTC+8 midnight (16:00 UTC), matching Deepcoin's `1D`.
 export const BARS = {
-  [OKX_SOURCE]: { '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1H', '4h': '4H', '1D': '1Dutc' },
+  [OKX_SOURCE]: { '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1H', '4h': '4H', '1D': '1D' },
   [DEEPCOIN_SOURCE]: { '1m': '1m', '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1H', '4h': '4H', '1D': '1D' },
 };
 
@@ -139,7 +177,11 @@ export const BARS = {
  * (checked 2026-11-16: `1m 5m 15m 30m 1H 4H 12H 1D 1W 1M 1Y`), so that one panel asks for 1m and buckets three, the
  * way the treasury 3m panel already works.
  */
-export function candleRequest(source, timeframe) {
+export function candleRequest(source, timeframe, dayBoundary = DEFAULT_DAY_BOUNDARY) {
+  const utc = normalizeDayBoundary(dayBoundary) === DAY_BOUNDARY_UTC;
+  if (source === OKX_SOURCE && timeframe === '1D' && utc) return { interval: '1Dutc', aggregate: 1 };
+  // Deepcoin has no UTC daily bar (`1Dutc` is rejected), so UTC 1D is aggregated from six 4H bars (1440 minutes).
+  if (source === DEEPCOIN_SOURCE && timeframe === '1D' && utc) return { interval: '4H', aggregate: 1440, scale: 6 };
   const bars = BARS[source];
   if (!bars) return { interval: String(timeframe ?? ''), aggregate: 1 };
   if (bars[timeframe]) return { interval: bars[timeframe], aggregate: 1 };

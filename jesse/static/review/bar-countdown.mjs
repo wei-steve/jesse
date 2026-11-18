@@ -11,14 +11,17 @@ export const LABEL_OFFSET = 18;
 const EMPTY_VIEWS = [];
 
 /**
- * Whole seconds remaining until the current UTC-aligned candle of `intervalMinutes` closes at `nowSeconds`.
- * Returns a value in `1..intervalMinutes*60` (on an exact boundary, returns the full period), or null for invalid inputs.
+ * Whole seconds remaining until the current candle of `intervalMinutes` (shifted by `offsetSeconds`) closes at
+ * `nowSeconds`. Returns a value in `1..intervalMinutes*60` (on an exact boundary, returns the full period), or null
+ * for invalid inputs.
  */
-export function barRemaining(intervalMinutes, nowSeconds) {
+export function barRemaining(intervalMinutes, nowSeconds, offsetSeconds = 0) {
   if (typeof intervalMinutes !== 'number' || !Number.isFinite(intervalMinutes) || intervalMinutes <= 0) return null;
   if (typeof nowSeconds !== 'number' || !Number.isFinite(nowSeconds) || nowSeconds < 0) return null;
+  const offset = typeof offsetSeconds === 'number' && Number.isFinite(offsetSeconds) ? offsetSeconds : 0;
   const period = intervalMinutes * 60;
-  return period - (Math.floor(nowSeconds) % period);
+  const shifted = Math.floor(nowSeconds) + offset;
+  return period - (((shifted % period) + period) % period);
 }
 
 /**
@@ -41,8 +44,9 @@ export function formatCountdown(seconds) {
  * price lines.
  */
 export class CountdownPrimitive {
-  constructor({ intervalMinutes, color = '#f19aa4', now = () => Date.now() / 1000 } = {}) {
+  constructor({ intervalMinutes, offsetSeconds = 0, color = '#f19aa4', now = () => Date.now() / 1000 } = {}) {
     this.intervalMinutes = intervalMinutes;
+    this.offsetSeconds = typeof offsetSeconds === 'number' && Number.isFinite(offsetSeconds) ? offsetSeconds : 0;
     this.color = color;
     this.now = typeof now === 'function' ? now : () => Date.now() / 1000;
     this.chart = null;
@@ -55,7 +59,7 @@ export class CountdownPrimitive {
         const y = this.coord();
         return y === null ? null : y + LABEL_OFFSET;
       },
-      text: () => formatCountdown(barRemaining(this.intervalMinutes, this.now())),
+      text: () => formatCountdown(barRemaining(this.intervalMinutes, this.now(), this.offsetSeconds)),
       textColor: () => '#ffffff',
       backColor: () => this.color,
       visible: () => this.price !== null && this.series !== null && this.coord() !== null && view.text() !== '',

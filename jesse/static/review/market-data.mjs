@@ -3,8 +3,8 @@
 // `@miniTicker` quotes of the watchlist, and what localStorage holds.
 // No DOM, no fetch, no websocket: tests/review-market-data.test.mjs runs every function in this file with node.
 import { BINANCE_SOURCE, DEFAULT_MARKET, DEFAULT_SOURCE, DEFAULT_YIELD_SYMBOLS, OKX_SOURCE, YIELD_SOURCE, MARKETS,
-  aggregateCandles, candleRequest, defaultSymbolOf, migrateSource, normalizeMarket, normalizeSymbol,
-  symbolOf } from './market-sources.mjs?v=20261117o';
+  aggregateCandles, barOpen, candleRequest, defaultSymbolOf, migrateSource, normalizeMarket, normalizeSymbol,
+  symbolOf } from './market-sources.mjs?v=20261117p';
 
 // Binance USDTⓈ-M futures, public and CORS-open (`access-control-allow-origin: *`), so the browser talks to the
 // exchange directly: any USDT perpetual can be watched, nothing has to be imported into Jesse's database and no
@@ -49,6 +49,7 @@ const DEFAULT_QUOTE_EXCHANGE = 'Binance Perpetual Futures';
 // One REST page is the exchange's maximum for that venue ("limit"). 5000 bars per timeframe is the most this page
 // keeps: earlier pages are only requested while a chart is under it, and a live catch-up keeps the newest bars.
 export const KLINE_LIMIT = 1000;
+export const BINANCE_FAPI_MAX_LIMIT = 1500;
 export const MAX_BARS = 5000;
 /** The page size one request may ask of `source` (`OKX_LIMIT` for OKX, 1000 elsewhere). */
 export const pageSizeOf = source => (source === OKX_SOURCE ? OKX_LIMIT : KLINE_LIMIT);
@@ -93,25 +94,27 @@ export function klinesUrl(symbol, timeframe, { limit = KLINE_LIMIT, endTime = nu
   return `${KLINE_API}?${klineParams(symbol, timeframe, limit, endTime)}`;
 }
 
-/** The same page on `api.binance.com` (spot). Same rows, same interval spelling, other host. */
-export function spotKlinesUrl(symbol, timeframe, { limit = KLINE_LIMIT, endTime = null } = {}) {
-  return `${SPOT_KLINE_API}?${klineParams(symbol, timeframe, limit, endTime)}`;
+/** The same page on `api.binance.com` (spot). Spot 1D defaults to `timeZone=8` unless `dayBoundary === 'utc'`. */
+export function spotKlinesUrl(symbol, timeframe, { limit = KLINE_LIMIT, endTime = null, timeZone = null, dayBoundary = 'utc8' } = {}) {
+  const tz = timeZone !== null ? timeZone : (timeframe === '1D' && dayBoundary !== 'utc' ? '8' : null);
+  return `${SPOT_KLINE_API}?${klineParams(symbol, timeframe, limit, endTime, tz)}`;
 }
 
-function klineParams(symbol, timeframe, limit, endTime) {
+function klineParams(symbol, timeframe, limit, endTime, timeZone = null) {
   const params = new URLSearchParams({ symbol: normalizeSymbol(symbol),
     interval: INTERVALS[timeframe] ?? String(timeframe ?? ''), limit: String(limit) });
   if (Number.isFinite(endTime)) params.set('endTime', String(Math.trunc(endTime)));
+  if (timeZone !== null && timeZone !== undefined && timeZone !== '') params.set('timeZone', String(timeZone));
   return params;
 }
 
 /**
  * The OKX candles request of one timeframe: the newest page from `candles`, an older one from `history-candles`
  * (`after` = strictly older than that bar, which is what `before` means here). The interval is the display spelling
- * (`1h` -> `1H`, `1D` -> `1Dutc`), see candleRequest in market-sources.mjs.
+ * (`1h` -> `1H`, `1D` -> `1D` for UTC+8 daily), see candleRequest in market-sources.mjs.
  */
-export function okxCandlesUrl(instId, timeframe, { limit = OKX_LIMIT, before = null } = {}) {
-  const interval = candleRequest(OKX_SOURCE, timeframe).interval;
+export function okxCandlesUrl(instId, timeframe, { limit = OKX_LIMIT, before = null, dayBoundary = 'utc8' } = {}) {
+  const interval = candleRequest(OKX_SOURCE, timeframe, dayBoundary).interval;
   const path = Number.isFinite(before) ? 'history-candles' : 'candles';
   const size = Number.isFinite(before) ? Math.min(limit, OKX_HISTORY_LIMIT) : Math.min(limit, OKX_LIMIT);
   const params = new URLSearchParams({ instId: String(instId ?? ''), bar: interval, limit: String(size) });
@@ -127,8 +130,11 @@ export const endTimeBefore = earliestSeconds => Math.round(earliestSeconds * 100
  * Deepcoin goes through `POST /review/market/candles`, and the treasury yields come from CNBC (`cnbcChartUrl`).
  */
 export function klinesUrlFor(source, market, symbol, timeframe, options = {}) {
+  const boundary = options.dayBoundary ?? 'utc8';
   if (source === BINANCE_SOURCE) {
-    return market === 'spot' ? spotKlinesUrl(symbol, timeframe, options) : klinesUrl(symbol, timeframe, options);
+    if (market === 'spot') return spotKlinesUrl(symbol, timeframe, options);
+    // Binance futures /fapi/v1/klines ignores timeZone, so UTC+8 1D is synthesized from 8h bars (00/08/16 UTC).
+    return klinesUrl(symbol, timeframe === '1D' && boundary !== 'utc' ? '8h' : timeframe, options);
   }
   if (source === OKX_SOURCE) return okxCandlesUrl(symbol, timeframe, options);
   return null;
@@ -219,6 +225,52 @@ export function aggregateAnswer(closed, forming, minutes) {
   const formingStart = forming ? Math.floor(forming.time / width) * width : null;
   return { closed: buckets.filter(bucket => bucket.time !== formingStart), forming:
     formingStart === null ? null : buckets.find(bucket => bucket.time === formingStart) ?? forming };
+}
+
+function aggregateDayBars(dayTime, bars) {
+  let high = -Infinity, low = Infinity, volume = 0;
+  for (const bar of bars) {
+    if (bar.high > high) high = bar.high;
+    if (bar.low < low) low = bar.low;
+    if (Number.isFinite(bar.volume) && bar.volume >= 0) volume += bar.volume;
+  }
+  return { time: dayTime, open: bars[0].open, high, low, close: bars[bars.length - 1].close, volume };
+}
+
+/**
+ * Synthesizes Beijing-day (UTC+8, opening at 16:00 UTC) 1D candles from 8h bars (00:00, 08:00, 16:00 UTC).
+ * A Beijing day is closed only when all 3 of its 8h bars are closed; older incomplete days are omitted.
+ * When `forming8h` is present, that day (its closed 8h bars + `forming8h`) becomes `forming`; otherwise an incomplete
+ * latest day in `closed8h` (< 3 bars) is returned as `forming`.
+ */
+export function synthesizeBeijingDailyFrom8h(closed8h, forming8h = null) {
+  const closedList = mergeCandles(Array.isArray(closed8h) ? closed8h : []);
+  const byDay = new Map();
+  for (const bar of closedList) {
+    const day = barOpen(bar.time, 1440, BINANCE_SOURCE);
+    let list = byDay.get(day);
+    if (!list) { list = []; byDay.set(day, list); }
+    list.push(bar);
+  }
+  const days = [...byDay.keys()].sort((a, b) => a - b);
+  const formingDay = forming8h && Number.isFinite(forming8h.time)
+    ? barOpen(forming8h.time, 1440, BINANCE_SOURCE) : null;
+  const latestDay = days.length ? days[days.length - 1] : null;
+  const closed = [];
+  for (const day of days) {
+    if (formingDay !== null && day === formingDay) continue;
+    const bars = byDay.get(day);
+    if (bars.length === 3) closed.push(aggregateDayBars(day, bars));
+  }
+  let forming = null;
+  if (formingDay !== null) {
+    const base = (byDay.get(formingDay) ?? []).filter(bar => bar.time < forming8h.time);
+    forming = aggregateDayBars(formingDay, [...base, forming8h]);
+  } else if (latestDay !== null) {
+    const latestBars = byDay.get(latestDay);
+    if (latestBars.length < 3) forming = aggregateDayBars(latestDay, latestBars);
+  }
+  return { closed, forming };
 }
 // --- Product list -------------------------------------------------------------------------------------------------
 // The left column's second tab: every USDT product of a venue, biggest 24h turnover first.
