@@ -1,4 +1,4 @@
-import { indicatorTitle } from './indicators.mjs?v=20261117p';
+import { indicatorTitle } from './indicators.mjs?v=20261118a';
 
 function latestValue(line) {
   if (line && 'latest' in line) return Number.isFinite(line.latest) ? line.latest : null;

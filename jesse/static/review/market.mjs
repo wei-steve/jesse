@@ -7,49 +7,49 @@
 // yields have no push at all: CNBC's one-minute series and its quote are polled every 15 seconds.
 // The chart behaviour (range linking, price zoom, snapshots) and the overlays (the review page's display settings)
 // are reused from the review/finder modules instead of being reimplemented.
-import { t as createChart } from './lightweight-charts.mjs?v=20261117p';
-import { linkTimeRanges } from './data.mjs?v=20261117p';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261117p';
-import { STORAGE_KEY, MARKET_STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, marketPreferences } from './settings.mjs?v=20261117p';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261117p';
-import { mountIndicatorEditor } from './controls.mjs?v=20261117p';
-import { legendItems } from './market-legend.mjs?v=20261117p';
+import { t as createChart } from './lightweight-charts.mjs?v=20261118a';
+import { linkTimeRanges } from './data.mjs?v=20261118a';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261118a';
+import { STORAGE_KEY, MARKET_STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, marketPreferences } from './settings.mjs?v=20261118a';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261118a';
+import { mountIndicatorEditor } from './controls.mjs?v=20261118a';
+import { legendItems } from './market-legend.mjs?v=20261118a';
 import { klineStreamUrl, streamUrl, openTicker, openKlines, openMessages, okxCandleChannels, openOkxKlines,
-  openOkxTicker, openOkxTickers, openDeepcoinTicker, openDeepcoinTickers } from './live-price.mjs?v=20261117p';
-import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117p';
-import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261117p';
+  openOkxTicker, openOkxTickers, openDeepcoinTicker, openDeepcoinTickers } from './live-price.mjs?v=20261118a';
+import { addSnapshotButton, addMaximizeButton, captureCard, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261118a';
+import { CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT, FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261118a';
 import { BINANCE_SOURCE, DAY_BOUNDARY_KEY, DAY_BOUNDARY_UTC8, DEEPCOIN_SOURCE, MARKETS, MARKET_SOURCES, OKX_SOURCE,
   YIELD_SOURCE, YIELD_INSTRUMENTS, DEFAULT_YIELD_SYMBOL, YIELD_POLL_RANGE, aggregateCandles, barOpen, candleRequest,
   cnbcSymbolOf, dayOffsetSeconds, exchangeOf, instrumentName, isYieldSource, marketLabel, marketsOf, mergeYieldBars,
   mergeYieldDailyClose, normalizeDayBoundary, normalizeMarket, normalizeYieldSymbol, parseCnbcBars, parseCnbcQuote,
   parseMarketCandles, restoreDayBoundary, restoreSource, sessionIndicator, sessionTail, signedPoints, sourceLabel,
-  symbolOf, yieldRequest } from './market-sources.mjs?v=20261117p';
+  symbolOf, yieldRequest } from './market-sources.mjs?v=20261118a';
 import { BINANCE_FAPI_MAX_LIMIT, MARKET_KEYS, MARKET_TIMEFRAMES, MAX_BARS, MAX_WATCHLIST, PRODUCT_PAGE, PROXY_CANDLES,
   PROXY_TICKERS, aggregateAnswer, addToWatchlist, cnbcChartUrl, cnbcQuoteUrl, defaultSymbolFor, endTimeBefore,
   filterProducts, klinesUrlFor, mergeCandles, miniTickerStreamUrl, pageSizeOf, parseKlines, parseMiniTicker,
   parseOkxCandles, proxyTickerRows, removeFromWatchlist, moveWatchItem, orderTimeframes, restoreAsideTab,
   restoreListMarket, restoreSelection, restoreTimeframes, restoreWatchlist, sameWatchItem, shiftLogical,
-  synthesizeBeijingDailyFrom8h, tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261117p';
+  synthesizeBeijingDailyFrom8h, tickerRows, tickersUrlFor, watchItem, watchKey, withDefaultYields } from './market-data.mjs?v=20261118a';
 // Candle notes (double-click a bar): the same box, key, 「注」 markers and stored file as the factor finder; the shared
 // module is why a note written on one page shows up on the other.
 import { barLabel, barsFor, createBarNoteBox, createBookPicker, barNoteBody, barNoteKey, barNoteOf, filterNoteRows,
   noteDigest, noteIdentity, noteMarkers, noteRowsFrom, noteSummary, noteTimeText, noteWhere, rememberNote, snapshotOf
-  } from './bar-notes.mjs?v=20261117p';
+  } from './bar-notes.mjs?v=20261118a';
 // The open 备注本 (`storage/labels/<book>.jsonl`): the same notebook as the factor finder, kept in one localStorage key.
-import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261117p';
+import { bookName, readBook, resolveBook, withBook, writeBook } from './labels.mjs?v=20261118a';
 // The owner's own Deepcoin fills (T-59): 「我的成交」 marks his 开多 / 平多 / 开空 / 平空 on the candles of any crypto
 // source. The instrument mapping, the per-candle buckets, the markers and their line under the chart are pure functions
 // in market-fills.mjs; this page owns the request and the polling.
 import { FILLS_ENDPOINT, FILLS_KEY, FILLS_NOT_CONFIGURED, FILLS_POLL_MS, FILLS_WAIT_ENDPOINT, applyFillsWait,
   bucketFills, configuredOf, fillGroupsText, fillLabelsFit, fillsHave, fillsProgressText, fillsRequest, fillsStatusLine,
   fillsStreamText, fillsWaitBackoff, fillsWaitBody, mergeFillRows, mergeMarkers, parseFills }
-  from './market-fills.mjs?v=20261117p';
+  from './market-fills.mjs?v=20261118a';
 // The 价位 marks (T-62): one small triangle / circle per order at its own average price, drawn as a series primitive so
 // a mark sits on the price instead of under the candle, and switched on / off per timeframe (1h / 4h / 1D start off).
 import { FILL_PRICES_KEY, FillPricesPrimitive, fillArrowMarkers, fillPriceMarksOn, orderMarks, orderMarksText,
-  readFillPrices, toggleFillPrices } from './fill-prices.mjs?v=20261117p';
+  readFillPrices, toggleFillPrices } from './fill-prices.mjs?v=20261118a';
 // Current-candle close countdown (T-64): sits on the price axis right below the 「实时」 label.
-import { CountdownPrimitive } from './bar-countdown.mjs?v=20261117p';
+import { CountdownPrimitive } from './bar-countdown.mjs?v=20261118a';
 
 const $ = id => document.getElementById(id);
 const UP = '#16a082', DOWN = '#dd6070', SCALE_WIDTH = 72;
@@ -180,10 +180,10 @@ const tokenOf = () => {
 // for saving a snapshot. The token is read exactly like the finder does it.
 async function post(path, body = {}) {
   const token = tokenOf();
-  if (!token) throw new Error('这个数据源要经 Jesse 代理，需要先在同一地址的 Jesse 页面登录，再刷新此页（币安、OKX、美债的图表不需要登录）。');
+  if (!token) throw new Error('这个数据源要经 Jesse 代理，请先在页面右上角输入 Jesse 密码登录（币安、OKX、美债的图表不需要登录）。');
   const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: token },
     body: JSON.stringify(body), credentials: 'same-origin' });
-  if (response.status === 401) throw new Error('登录已失效：请在同一地址的 Jesse 页面重新登录，再刷新此页。');
+  if (response.status === 401) throw new Error('登录已失效：请清掉浏览器里本站数据后，在右上角重新输入密码。');
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error ?? data.detail ?? `Jesse 请求失败（HTTP ${response.status}）`);
   return data;
@@ -1631,7 +1631,7 @@ function fillLabelsOn(panel) {
 // Without a Jesse login the note calls cannot run at all (unlike the Binance / OKX / CNBC charts), so a failure says
 // what to do instead of the proxy's own wording.
 const noteErrorText = error => (tokenOf() ? error.message
-  : '备注存在 Jesse 的项目文件里：先在同一地址的 Jesse 页面登录，再刷新此页。');
+  : '备注存在 Jesse 的项目文件里：先在页面右上角输入 Jesse 密码登录。');
 
 // Every candle note of the label file: the charts draw their own instrument's, the 备注 tab lists them all.
 async function loadNotes() {

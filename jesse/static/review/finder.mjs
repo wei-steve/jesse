@@ -1,24 +1,24 @@
 // Factor finder page: runs a factor file from the project's factors/ folder (POST /factors/run) on candles read
 // straight from the database, and draws the intervals it finds like the signal mode of the review page.
 // The page knows nothing about any rule; it draws the numbers the factor returns (+N / -N / 0 per bar).
-import { t as createChart } from './lightweight-charts.mjs?v=20261117p';
-import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261117p';
-import { enablePriceZoom } from './pricezoom.mjs?v=20261117p';
-import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261117p';
-import { calculateIndicator, formingTail } from './indicators.mjs?v=20261117p';
-import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261117p';
-import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261117p';
+import { t as createChart } from './lightweight-charts.mjs?v=20261118a';
+import { sma, centeredRange, linkTimeRanges } from './data.mjs?v=20261118a';
+import { enablePriceZoom } from './pricezoom.mjs?v=20261118a';
+import { STORAGE_KEY, INDICATORS, timeframeLabel, timeframeMinutes, restorePreferences } from './settings.mjs?v=20261118a';
+import { calculateIndicator, formingTail } from './indicators.mjs?v=20261118a';
+import { buildRides, rideSeries, maText, arrow, filterRides, neighbour, signalStatus, rideAnnotations, joinRideLines, rideSpan } from './rides.mjs?v=20261118a';
+import { LIMIT_RULES, LIMIT_DEFAULTS, FEES, atr14, simulateOrder, summarize } from './limit-rules.mjs?v=20261118a';
 import { FORM_KEY, RECENT_DAYS, WINDOWS, restoreForm, isoToLocal, clampParam, runBody, importStartDate, rideExtra, importDone,
   nextTickDelay, newKeys, atRightEdge, importId, CHART_HEIGHT_KEY, CHART_HEIGHTS, DEFAULT_CHART_HEIGHT,
-  FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261117p';
-import { streamUrl, openTicker, klineStreamUrl, openKlines } from './live-price.mjs?v=20261117p';
-import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261117p';
+  FIT_CHART_HEIGHT, chartHeightOf } from './finder-data.mjs?v=20261118a';
+import { streamUrl, openTicker, klineStreamUrl, openKlines } from './live-price.mjs?v=20261118a';
+import { addSnapshotButton, addMaximizeButton, captureCard, captureGrid, openAnnotator, screenshotSaver, utcStamp } from './snapshot.mjs?v=20261118a';
 import { labelKey, labelCounts, entryOf, filterByLabel, countsText, LABEL_FILTERS, MARK_TEXT, KIND_TEXT, MARK_KINDS,
-  bookName, readBook, withBook, writeBook, resolveBook } from './labels.mjs?v=20261117p';
+  bookName, readBook, withBook, writeBook, resolveBook } from './labels.mjs?v=20261118a';
 // The candle notes (double-click a bar) are the market page's too: bar-notes.mjs owns the key, the box, the 「注」
 // markers and the numbers a note carries.
 import { barLabel, barNoteBody, barNoteKey, barNoteOf, createBarNoteBox, createBookPicker, noteMarkers, rememberNote,
-  snapshotOf } from './bar-notes.mjs?v=20261117p';
+  snapshotOf } from './bar-notes.mjs?v=20261118a';
 
 const $ = id => document.getElementById(id);
 const stamp = seconds => new Date(seconds * 1000).toISOString().replace('T', ' ').slice(5, 16);

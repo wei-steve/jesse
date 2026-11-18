@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>看行情 · Jesse</title>
   <link rel="icon" href="/favicon.ico">
-  <link rel="stylesheet" href="./review.css?v=20261117p">
+  <link rel="stylesheet" href="./review.css?v=20261118a">
 </head>
 <body class="market">
   <header>
@@ -86,7 +86,7 @@
   <script type="module">
     // REVIEW_VERSION: change it (and every "?v=" in the .mjs imports and the stylesheet link) whenever
     // any file in this folder changes. tests/review-version.test.mjs checks that they all match.
-    const REVIEW_VERSION = '20261117p';
+    const REVIEW_VERSION = '20261118a';
     // 本页自带登录：没有登录凭证时，页头出现密码框，填一次（和 Jesse 登录是同一个密码、同一个凭证），不必去 Jesse 主页登录。
     // 凭证和主页共用 localStorage 的 `main` 键，所以这里登录后主页也是已登录。
     const hasToken = () => { try { return !!JSON.parse(localStorage.getItem('main') ?? '{}').authToken; } catch { return false; } };
