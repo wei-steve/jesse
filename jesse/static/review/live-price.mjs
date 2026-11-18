@@ -47,15 +47,16 @@ export function klineInterval(timeframe) {
 // Null when the exchange / symbol has no stream or none of `timeframes` is supported (nothing to subscribe to).
 // When `beijingDaily` is true (used by the market page, not the finder), 1D subscribes to `@kline_1d@+08:00` on spot
 // and `@kline_8h` on perpetual futures (synthesized into Beijing 1D bars).
-export function klineStreamUrl(exchange, symbol, timeframes, { beijingDaily = false } = {}) {
+export function klineStreamUrl(exchange, symbol, timeframes, { beijingDaily = false, dayBoundary = 'utc8' } = {}) {
   const make = STREAMS[exchange]?.kline;
   const pair = pairOf(symbol);
   if (!make || !pair) return null;
+  const useBeijing = beijingDaily && dayBoundary !== 'utc';
   const streams = [];
   const seen = new Set();
   for (const tf of Array.isArray(timeframes) ? timeframes : []) {
     let stream = null;
-    if (beijingDaily && tf === '1D') {
+    if (useBeijing && tf === '1D') {
       if (exchange === 'Binance Spot') stream = `${pair}@kline_1d@+08:00`;
       else if (exchange === 'Binance Perpetual Futures') stream = `${pair}@kline_8h`;
     }
@@ -180,14 +181,21 @@ const OKX_WS = { business: 'wss://ws.okx.com/ws/v5/business', public: 'wss://ws.
 // `1D` opens at OKX's UTC+8 midnight (16:00 UTC); `1Dutc` is the UTC day bar.
 const OKX_CANDLE_CHANNELS = { '1m': 'candle1m', '3m': 'candle3m', '5m': 'candle5m', '15m': 'candle15m',
   '30m': 'candle30m', '1h': 'candle1H', '4h': 'candle4H', '1D': 'candle1D' };
-const OKX_CHANNEL_LABELS = new Map(Object.entries(OKX_CANDLE_CHANNELS).map(([label, channel]) => [channel, label]));
+const OKX_CHANNEL_LABELS = new Map([
+  ...Object.entries(OKX_CANDLE_CHANNELS).map(([label, channel]) => [channel, label]),
+  ['candle1Dutc', '1D'],
+]);
 
 /** The candle channel of one page timeframe, or null when OKX pushes none for it. */
-export const okxCandleChannel = timeframe => OKX_CANDLE_CHANNELS[String(timeframe ?? '')] ?? null;
+export function okxCandleChannel(timeframe, dayBoundary = 'utc8') {
+  const tf = String(timeframe ?? '');
+  if (tf === '1D' && dayBoundary === 'utc') return 'candle1Dutc';
+  return OKX_CANDLE_CHANNELS[tf] ?? null;
+}
 
 /** The channels to subscribe for a set of page timeframes (deduplicated, in the order given). */
-export function okxCandleChannels(timeframes) {
-  return [...new Set((Array.isArray(timeframes) ? timeframes : []).map(okxCandleChannel).filter(Boolean))];
+export function okxCandleChannels(timeframes, dayBoundary = 'utc8') {
+  return [...new Set((Array.isArray(timeframes) ? timeframes : []).map(tf => okxCandleChannel(tf, dayBoundary)).filter(Boolean))];
 }
 
 /** One candle message of a subscribed channel as the chart's candle; `closed` is false while `confirm` is 0. */
@@ -216,8 +224,8 @@ export function okxTickerQuote(message) {
 export const okxTickerPrice = message => okxTickerQuote(message)?.price ?? null;
 
 /** The forming bar and the bar that just closed of every timeframe OKX pushes. Returns stop(). */
-export function openOkxKlines(instId, timeframes, { onKline, onState, silenceMs = 20000 }) {
-  const channels = okxCandleChannels(timeframes);
+export function openOkxKlines(instId, timeframes, { onKline, onState, silenceMs = 20000, dayBoundary = 'utc8' }) {
+  const channels = okxCandleChannels(timeframes, dayBoundary);
   if (!instId || !channels.length) return () => {};
   return openSocket(OKX_WS.business, {
     silenceMs, ping: 'ping', pingMs: 25000, onState,

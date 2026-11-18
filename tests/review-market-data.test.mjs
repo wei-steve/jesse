@@ -444,13 +444,20 @@ test('moveWatchItem reorders the watchlist and ignores bad indexes', () => {
   assert.deepEqual(list, ['a', 'b', 'c', 'd'], 'the input is not changed');
 });
 
-test('Binance spot 1D requests include timeZone=8 and Binance futures 1D requests use 8h', () => {
+test('Binance spot 1D requests include timeZone=8 under utc8 and omit it under utc; futures uses 8h vs 1d', () => {
   assert.equal(spotKlinesUrl('BTCUSDT', '1D'),
     'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000&timeZone=8');
   assert.equal(klinesUrlFor('binance', 'spot', 'BTCUSDT', '1D'),
     'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000&timeZone=8');
   assert.equal(klinesUrlFor('binance', 'swap', 'BTCUSDT', '1D'),
     'https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=8h&limit=1000');
+
+  assert.equal(klinesUrlFor('binance', 'spot', 'BTCUSDT', '1D', { dayBoundary: 'utc' }),
+    'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000');
+  assert.equal(klinesUrlFor('binance', 'swap', 'BTCUSDT', '1D', { dayBoundary: 'utc' }),
+    'https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1d&limit=1000');
+  assert.equal(okxCandlesUrl('BTC-USDT', '1D', { dayBoundary: 'utc' }),
+    'https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=1Dutc&limit=300');
 });
 
 test('synthesizeBeijingDailyFrom8h aggregates 8h bars into UTC+8 daily bars', () => {

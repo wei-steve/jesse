@@ -23,6 +23,10 @@
     <button id="m-add" type="button">加入自选</button>
     <span id="m-last" class="market-last"></span>
     <span id="m-timeframes" class="market-timeframes" aria-label="周期"></span>
+    <label>日线换线 <select id="m-day-boundary" aria-label="日线换线">
+      <option value="utc8">北京 0 点</option>
+      <option value="utc">UTC 0 点</option>
+    </select></label>
     <label>图高 <select id="m-height" aria-label="K 线图高度"></select></label>
     <!-- 我的成交 (T-59): the owner's own Deepcoin fills, marked on every crypto chart (contract <-> SWAP, spot <-> SPOT). -->
     <label class="market-fills" title="在 K 线上标出你在 Deepcoin 的成交（需要项目的 .env.deepcoin）"><input id="m-fills" type="checkbox"> 我的成交</label>

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MARKET_SOURCES, DEFAULT_SOURCE, DEFAULT_MARKET, MARKETS, YIELD_SOURCE, BINANCE_SOURCE, OKX_SOURCE,
-  DEEPCOIN_SOURCE, BEIJING_OFFSET_SECONDS, barOpen, dayOffsetSeconds,
+  DEEPCOIN_SOURCE, BEIJING_OFFSET_SECONDS, DAY_BOUNDARY_KEY, DAY_BOUNDARY_UTC, DAY_BOUNDARY_UTC8,
+  DEFAULT_DAY_BOUNDARY, barOpen, dayOffsetSeconds, normalizeDayBoundary, restoreDayBoundary,
   migrateSource, restoreSource, sourceLabel, marketsOf, hasMarkets, normalizeMarket, defaultSymbolOf,
   exchangeOf, isYieldSource, marketLabel, normalizeSymbol, normalizeInstId, symbolOf, instrumentName, candleRequest,
   BARS, YIELD_SYMBOLS, YIELD_INSTRUMENTS, DEFAULT_YIELD_SYMBOLS, normalizeYieldSymbol, cnbcSymbolOf, yieldRequest,
@@ -413,4 +414,21 @@ test('barOpen and dayOffsetSeconds align crypto 1D to UTC+8 midnight (16:00 UTC)
   assert.equal(barOpen(dayStart + 3600, 240, BINANCE_SOURCE), dayStart);
   assert.equal(barOpen(dayStart - 1, 240, BINANCE_SOURCE), dayStart - 14400);
   assert.equal(barOpen(dayStart, 1440, YIELD_SOURCE), Math.floor(dayStart / 86400) * 86400);
+
+  // Under dayBoundary === 'utc', crypto 1D also aligns to UTC 00:00 and requests revert to UTC bars
+  assert.equal(dayOffsetSeconds(1440, BINANCE_SOURCE, DAY_BOUNDARY_UTC), 0);
+  assert.equal(barOpen(dayStart, 1440, BINANCE_SOURCE, DAY_BOUNDARY_UTC), Math.floor(dayStart / 86400) * 86400);
+  assert.deepEqual(candleRequest(OKX_SOURCE, '1D', DAY_BOUNDARY_UTC), { interval: '1Dutc', aggregate: 1 });
+  assert.deepEqual(candleRequest(DEEPCOIN_SOURCE, '1D', DAY_BOUNDARY_UTC), { interval: '4H', aggregate: 1440, scale: 6 });
+});
+
+test('restoreDayBoundary defaults to utc8 and recovers from invalid saved values', () => {
+  assert.equal(DAY_BOUNDARY_KEY, 'jesse.market.dayBoundary.v1');
+  assert.equal(DEFAULT_DAY_BOUNDARY, DAY_BOUNDARY_UTC8);
+  assert.equal(restoreDayBoundary('utc'), DAY_BOUNDARY_UTC);
+  assert.equal(restoreDayBoundary('"utc"'), DAY_BOUNDARY_UTC);
+  assert.equal(restoreDayBoundary('utc8'), DAY_BOUNDARY_UTC8);
+  for (const bad of [null, undefined, '', 'garbage', '123', '{}']) {
+    assert.equal(restoreDayBoundary(bad), DAY_BOUNDARY_UTC8, String(bad));
+  }
 });

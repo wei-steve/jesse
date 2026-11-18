@@ -94,9 +94,9 @@ export function klinesUrl(symbol, timeframe, { limit = KLINE_LIMIT, endTime = nu
   return `${KLINE_API}?${klineParams(symbol, timeframe, limit, endTime)}`;
 }
 
-/** The same page on `api.binance.com` (spot). Spot 1D defaults to `timeZone=8` (Beijing 00:00 / UTC 16:00). */
-export function spotKlinesUrl(symbol, timeframe, { limit = KLINE_LIMIT, endTime = null, timeZone = null } = {}) {
-  const tz = timeZone ?? (timeframe === '1D' ? '8' : null);
+/** The same page on `api.binance.com` (spot). Spot 1D defaults to `timeZone=8` unless `dayBoundary === 'utc'`. */
+export function spotKlinesUrl(symbol, timeframe, { limit = KLINE_LIMIT, endTime = null, timeZone = null, dayBoundary = 'utc8' } = {}) {
+  const tz = timeZone !== null ? timeZone : (timeframe === '1D' && dayBoundary !== 'utc' ? '8' : null);
   return `${SPOT_KLINE_API}?${klineParams(symbol, timeframe, limit, endTime, tz)}`;
 }
 
@@ -113,8 +113,8 @@ function klineParams(symbol, timeframe, limit, endTime, timeZone = null) {
  * (`after` = strictly older than that bar, which is what `before` means here). The interval is the display spelling
  * (`1h` -> `1H`, `1D` -> `1D` for UTC+8 daily), see candleRequest in market-sources.mjs.
  */
-export function okxCandlesUrl(instId, timeframe, { limit = OKX_LIMIT, before = null } = {}) {
-  const interval = candleRequest(OKX_SOURCE, timeframe).interval;
+export function okxCandlesUrl(instId, timeframe, { limit = OKX_LIMIT, before = null, dayBoundary = 'utc8' } = {}) {
+  const interval = candleRequest(OKX_SOURCE, timeframe, dayBoundary).interval;
   const path = Number.isFinite(before) ? 'history-candles' : 'candles';
   const size = Number.isFinite(before) ? Math.min(limit, OKX_HISTORY_LIMIT) : Math.min(limit, OKX_LIMIT);
   const params = new URLSearchParams({ instId: String(instId ?? ''), bar: interval, limit: String(size) });
@@ -130,10 +130,11 @@ export const endTimeBefore = earliestSeconds => Math.round(earliestSeconds * 100
  * Deepcoin goes through `POST /review/market/candles`, and the treasury yields come from CNBC (`cnbcChartUrl`).
  */
 export function klinesUrlFor(source, market, symbol, timeframe, options = {}) {
+  const boundary = options.dayBoundary ?? 'utc8';
   if (source === BINANCE_SOURCE) {
     if (market === 'spot') return spotKlinesUrl(symbol, timeframe, options);
-    // Binance futures /fapi/v1/klines ignores timeZone, so 1D is synthesized from 8h bars (00/08/16 UTC).
-    return klinesUrl(symbol, timeframe === '1D' ? '8h' : timeframe, options);
+    // Binance futures /fapi/v1/klines ignores timeZone, so UTC+8 1D is synthesized from 8h bars (00/08/16 UTC).
+    return klinesUrl(symbol, timeframe === '1D' && boundary !== 'utc' ? '8h' : timeframe, options);
   }
   if (source === OKX_SOURCE) return okxCandlesUrl(symbol, timeframe, options);
   return null;

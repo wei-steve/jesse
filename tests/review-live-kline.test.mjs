@@ -152,8 +152,9 @@ test('OKX subscribes with its own candle channels, upper-case hours and the UTC+
   assert.equal(okxCandleChannel('1m'), 'candle1m');
   assert.equal(okxCandleChannel('1h'), 'candle1H');
   assert.equal(okxCandleChannel('4h'), 'candle4H');
-  // Plain 1D opens at the venue's UTC+8 midnight (16:00 UTC).
+  // Plain 1D opens at the venue's UTC+8 midnight (16:00 UTC); dayBoundary='utc' uses candle1Dutc.
   assert.equal(okxCandleChannel('1D'), 'candle1D');
+  assert.equal(okxCandleChannel('1D', 'utc'), 'candle1Dutc');
   assert.equal(okxCandleChannel('45m'), null);
   assert.deepEqual(okxCandleChannels(['4h', '1h', '4h', '45m', '1m']), ['candle4H', 'candle1H', 'candle1m']);
   assert.deepEqual(okxCandleChannels(null), []);
@@ -205,9 +206,13 @@ test('Binance Beijing daily kline streams use @+08:00 on spot and 8h on perpetua
   assert.equal(spotUrl, 'wss://stream.binance.com:9443/stream?streams=btcusdt@kline_4h/btcusdt@kline_1d@+08:00');
   const swapUrl = klineStreamUrl('Binance Perpetual Futures', 'BTCUSDT', ['4h', '1D'], { beijingDaily: true });
   assert.equal(swapUrl, 'wss://fstream.binance.com/market/stream?streams=btcusdt@kline_4h/btcusdt@kline_8h');
-  // Without beijingDaily (finder), 1D stays @kline_1d.
+  // Without beijingDaily (finder) or with dayBoundary='utc', 1D stays @kline_1d.
   assert.equal(klineStreamUrl('Binance Spot', 'BTCUSDT', ['1D']),
     'wss://stream.binance.com:9443/stream?streams=btcusdt@kline_1d');
+  assert.equal(klineStreamUrl('Binance Spot', 'BTCUSDT', ['1D'], { beijingDaily: true, dayBoundary: 'utc' }),
+    'wss://stream.binance.com:9443/stream?streams=btcusdt@kline_1d');
+  assert.equal(klineStreamUrl('Binance Perpetual Futures', 'BTCUSDT', ['1D'], { beijingDaily: true, dayBoundary: 'utc' }),
+    'wss://fstream.binance.com/market/stream?streams=btcusdt@kline_1d');
 
   // klineCandle parses @kline_1d@+08:00 as tf: '1D'
   const msg = { stream: 'btcusdt@kline_1d@+08:00',

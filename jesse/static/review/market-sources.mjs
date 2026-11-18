@@ -65,25 +65,40 @@ export const hasMarkets = id => marketsOf(id).length > 0;
 export const isYieldSource = id => id === YIELD_SOURCE;
 export const isCryptoSource = id => id === BINANCE_SOURCE || id === OKX_SOURCE || id === DEEPCOIN_SOURCE;
 export const BEIJING_OFFSET_SECONDS = 28800;
+export const DAY_BOUNDARY_KEY = 'jesse.market.dayBoundary.v1';
+export const DAY_BOUNDARY_UTC8 = 'utc8';
+export const DAY_BOUNDARY_UTC = 'utc';
+export const DEFAULT_DAY_BOUNDARY = DAY_BOUNDARY_UTC8;
+
+/** Normalizes a saved or selected day boundary to `'utc8'` (default) or `'utc'`. */
+export function normalizeDayBoundary(value) {
+  const raw = String(value ?? '').trim().replace(/^"|"$/g, '').toLowerCase();
+  return raw === DAY_BOUNDARY_UTC ? DAY_BOUNDARY_UTC : DAY_BOUNDARY_UTC8;
+}
+
+/** Restores the saved day boundary from localStorage, falling back to `'utc8'` for missing or invalid values. */
+export const restoreDayBoundary = serialized => normalizeDayBoundary(serialized);
 
 /**
- * Alignment offset in seconds for `intervalMinutes` on `sourceId`: crypto 1D candles open at 00:00 UTC+8
- * (16:00 UTC, offset 28800s); all other timeframes and US treasury yields stay UTC-aligned (0).
+ * Alignment offset in seconds for `intervalMinutes` on `sourceId` under `dayBoundary`: crypto 1D candles open at
+ * 00:00 UTC+8 (16:00 UTC, offset 28800s) when `dayBoundary` is `'utc8'`; `'utc'`, other timeframes, and US yields
+ * stay UTC-aligned (0).
  */
-export function dayOffsetSeconds(intervalMinutes, sourceId) {
-  return Number(intervalMinutes) === 1440 && isCryptoSource(sourceId) ? BEIJING_OFFSET_SECONDS : 0;
+export function dayOffsetSeconds(intervalMinutes, sourceId, dayBoundary = DEFAULT_DAY_BOUNDARY) {
+  return Number(intervalMinutes) === 1440 && isCryptoSource(sourceId)
+    && normalizeDayBoundary(dayBoundary) === DAY_BOUNDARY_UTC8 ? BEIJING_OFFSET_SECONDS : 0;
 }
 
 /**
  * Open timestamp (UTC seconds) of the candle containing `time` for `intervalMinutes` on `sourceId`.
- * Crypto 1D aligns to UTC+8 midnight (`time % 86400 === 57600`); everything else aligns to UTC.
+ * Crypto 1D aligns to UTC+8 midnight (`time % 86400 === 57600`) when `dayBoundary` is `'utc8'`; otherwise UTC.
  */
-export function barOpen(time, intervalMinutes, sourceId) {
+export function barOpen(time, intervalMinutes, sourceId, dayBoundary = DEFAULT_DAY_BOUNDARY) {
   const t = Number(time);
   const minutes = Number(intervalMinutes);
   if (!Number.isFinite(t) || !Number.isFinite(minutes) || minutes <= 0) return NaN;
   const step = Math.trunc(minutes) * 60;
-  const offset = dayOffsetSeconds(minutes, sourceId);
+  const offset = dayOffsetSeconds(minutes, sourceId, dayBoundary);
   return Math.floor((t + offset) / step) * step - offset;
 }
 
@@ -162,7 +177,11 @@ export const BARS = {
  * (checked 2026-11-16: `1m 5m 15m 30m 1H 4H 12H 1D 1W 1M 1Y`), so that one panel asks for 1m and buckets three, the
  * way the treasury 3m panel already works.
  */
-export function candleRequest(source, timeframe) {
+export function candleRequest(source, timeframe, dayBoundary = DEFAULT_DAY_BOUNDARY) {
+  const utc = normalizeDayBoundary(dayBoundary) === DAY_BOUNDARY_UTC;
+  if (source === OKX_SOURCE && timeframe === '1D' && utc) return { interval: '1Dutc', aggregate: 1 };
+  // Deepcoin has no UTC daily bar (`1Dutc` is rejected), so UTC 1D is aggregated from six 4H bars (1440 minutes).
+  if (source === DEEPCOIN_SOURCE && timeframe === '1D' && utc) return { interval: '4H', aggregate: 1440, scale: 6 };
   const bars = BARS[source];
   if (!bars) return { interval: String(timeframe ?? ''), aggregate: 1 };
   if (bars[timeframe]) return { interval: bars[timeframe], aggregate: 1 };
